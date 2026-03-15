@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALGO-DESK</title>
+<style>
+:root{
+  --bg:#07101f;--card:#0d1b2e;--card2:#112238;--border:#1a3050;
+  --tx:#d6eaff;--tx2:#6a9bc4;--tx3:#334d6a;
+  --gr:#00d4a0;--gr2:#009e78;--rd:#ff4466;--am:#f5a623;--bl:#3d96ff;--pu:#9b6dff;
+  --mono:'Consolas','Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:system-ui,sans-serif;font-size:13px;min-height:100vh}
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:var(--border)}
+
+/* AUTH SCREENS */
+.auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-box{width:100%;max-width:420px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:36px}
+.auth-logo{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--gr);letter-spacing:3px;text-align:center;margin-bottom:6px}
+.auth-sub{font-size:12px;color:var(--tx3);text-align:center;margin-bottom:28px}
+.auth-title{font-size:18px;font-weight:600;margin-bottom:6px}
+.auth-desc{font-size:12px;color:var(--tx2);margin-bottom:20px}
+.auth-switch{text-align:center;font-size:12px;color:var(--tx3);margin-top:18px}
+.auth-switch a{color:var(--bl);cursor:pointer;text-decoration:none}
+.auth-switch a:hover{text-decoration:underline}
+
+/* APP LAYOUT */
+.app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{height:46px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:0;position:sticky;top:0;z-index:100;flex-shrink:0}
+.logo{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--gr);letter-spacing:2px;margin-right:8px}
+.ver{font-size:9px;color:var(--tx3);font-family:var(--mono);margin-right:16px;align-self:flex-end;margin-bottom:8px}
+.tabs{display:flex;flex:1;overflow-x:auto}
+.tab{padding:0 13px;height:46px;display:flex;align-items:center;font-size:11px;font-weight:500;color:var(--tx3);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;gap:4px;transition:all .12s}
+.tab:hover{color:var(--tx2)}.tab.on{color:var(--gr);border-bottom-color:var(--gr)}
+.tab.adm{color:var(--am)}.tab.adm.on{color:var(--am);border-bottom-color:var(--am)}
+.uarea{margin-left:auto;display:flex;align-items:center;gap:8px}
+.av{width:28px;height:28px;border-radius:50%;background:var(--card2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--am);cursor:pointer}
+.content{flex:1;padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+.page{display:none;flex-direction:column;gap:12px}.page.on{display:flex}
+
+/* CARDS */
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--card2);border-radius:10px 10px 0 0}
+.ct{font-size:10px;font-weight:600;letter-spacing:.7px;color:var(--tx2);text-transform:uppercase}
+.cb{padding:14px}
+
+/* GRIDS */
+.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.gauto{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+
+/* METRICS */
+.m{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.ml{font-size:9px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px}
+.mv{font-family:var(--mono);font-size:16px;font-weight:700}
+.ms{font-size:9px;color:var(--tx3);margin-top:2px}
+.c-gr{color:var(--gr)}.c-rd{color:var(--rd)}.c-am{color:var(--am)}.c-bl{color:var(--bl)}.c-pu{color:var(--pu)}
+
+/* BADGES */
+.bd{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700}
+.bdg{background:rgba(0,212,160,.12);color:var(--gr)}.bdr{background:rgba(255,68,102,.12);color:var(--rd)}
+.bda{background:rgba(245,166,35,.12);color:var(--am)}.bdb{background:rgba(61,150,255,.12);color:var(--bl)}
+.bdp{background:rgba(155,109,255,.12);color:var(--pu)}.bdx{background:rgba(50,80,110,.1);color:var(--tx2)}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:7px;border:1px solid;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;transition:all .12s;line-height:1}
+.btn-full{width:100%;justify-content:center;padding:11px}
+.btng{background:rgba(0,158,120,.13);color:var(--gr);border-color:rgba(0,158,120,.28)}.btng:hover{background:rgba(0,158,120,.23)}
+.btnr{background:rgba(255,68,102,.1);color:var(--rd);border-color:rgba(255,68,102,.2)}
+.btnb{background:rgba(61,150,255,.1);color:var(--bl);border-color:rgba(61,150,255,.2)}.btnb:hover{background:rgba(61,150,255,.2)}
+.btna{background:rgba(245,166,35,.1);color:var(--am);border-color:rgba(245,166,35,.2)}
+.btnx{background:var(--card2);color:var(--tx2);border-color:var(--border)}.btnx:hover{color:var(--tx)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.brow{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+
+/* FORMS */
+.frow{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.frow label{font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px}
+.frow input,.frow select,.frow textarea{background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--tx);font-size:13px;outline:none;width:100%;font-family:inherit;transition:border .12s}
+.frow input:focus,.frow select:focus{border-color:var(--bl)}
+.frow input[type=password]{font-family:var(--mono);letter-spacing:2px}
+.fhint{font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.5}
+.fhint a{color:var(--bl)}
+
+.divr{border:none;border-top:1px solid var(--border);margin:12px 0}
+.stitle{font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--tx3);text-transform:uppercase;margin:12px 0 8px}
+
+/* ALERTS */
+.abox{border-radius:8px;padding:10px 13px;display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;font-size:12px;line-height:1.6}
+.ai{background:rgba(61,150,255,.07);border:1px solid rgba(61,150,255,.15);color:var(--tx)}
+.aw{background:rgba(245,166,35,.07);border:1px solid rgba(245,166,35,.15);color:var(--tx)}
+.as{background:rgba(0,212,160,.07);border:1px solid rgba(0,212,160,.15);color:var(--tx)}
+.ae{background:rgba(255,68,102,.07);border:1px solid rgba(255,68,102,.15);color:var(--tx)}
+.abox .ic{font-size:15px;flex-shrink:0}
+
+/* BROKER CARDS */
+.broker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px}
+.bkc{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:11px;cursor:pointer;transition:all .12s;position:relative}
+.bkc:hover{border-color:var(--tx3)}.bkc.sel{border-color:var(--bl);background:rgba(61,150,255,.05)}
+.bkc.conn{border-color:var(--gr)}
+.bk-flag{font-size:18px;display:block;margin-bottom:5px}
+.bk-name{font-size:12px;font-weight:600;margin-bottom:2px}
+.bk-mkt{font-size:10px;color:var(--tx3)}
+.bk-ref{font-size:10px;color:var(--gr);margin-top:4px}
+.bk-st{position:absolute;top:8px;right:8px}
+
+/* TABLE */
+.twrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:6px 9px;text-align:left;font-size:9px;font-weight:600;letter-spacing:.7px;color:var(--tx3);text-transform:uppercase;border-bottom:1px solid var(--border)}
+td{padding:7px 9px;border-bottom:1px solid rgba(26,48,80,.4);color:var(--tx2)}
+td.mn{font-family:var(--mono)}
+tr:hover td{background:rgba(255,255,255,.01)}
+
+/* TOGGLES */
+.trow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.tog{position:relative;width:30px;height:17px;flex-shrink:0}
+.tog input{opacity:0;width:0;height:0;position:absolute}
+.tsl{position:absolute;inset:0;background:var(--card2);border-radius:9px;cursor:pointer;transition:.15s;border:1px solid var(--border)}
+.tsl:before{content:'';position:absolute;height:11px;width:11px;left:2px;top:2px;background:var(--tx3);border-radius:50%;transition:.15s}
+input:checked+.tsl{background:var(--gr2);border-color:var(--gr2)}
+input:checked+.tsl:before{transform:translateX(13px);background:#000}
+
+/* SPINNER */
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--gr);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* TOAST */
+.toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.toast.ok{background:var(--gr2);color:#000}
+.toast.err{background:var(--rd);color:#fff}
+.toast.info{background:var(--bl);color:#fff}
+</style>
+</head>
+<body>
+
+<!-- ════ LOGIN ════ -->
+<div class="auth-wrap" id="loginScreen">
+  <div class="auth-box">
+    <div class="auth-logo">⬡ ALGO-DESK</div>
+    <div class="auth-sub">Automated Options Trading Platform</div>
+    <div id="loginErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="loginErrMsg"></span></div>
+    <div class="frow"><label>Email</label><input id="li-email" type="email" placeholder="your@email.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div class="frow"><label>Password</label><input id="li-pass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn btng btn-full" id="loginBtn" onclick="doLogin()">Sign In</button>
+    <div class="auth-switch">
+      <a onclick="showForgot()">Forgot password?</a> &nbsp;·&nbsp;
+      <a onclick="showRegister()">Create account</a>
+    </div>
+  </div>
+</div>
+
+<!-- ════ REGISTER ════ -->
+<div class="auth-wrap" id="registerScreen" style="display:none">
+  <div class="auth-box">
+    <div class="auth-logo">⬡ ALGO-DESK</div>
+    <div class="auth-sub">Create your account</div>
+    <div id="regErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="regErrMsg"></span></div>
+    <div class="frow"><label>Full Name</label><input id="reg-name" placeholder="Your name"></div>
+    <div class="frow"><label>Email</label><input id="reg-email" type="email" placeholder="your@email.com"></div>
+    <div class="frow"><label>Password</label><input id="reg-pass" type="password" placeholder="Min 8 characters"></div>
+    <div class="frow"><label>Confirm Password</label><input id="reg-pass2" type="password" placeholder="Repeat password"></div>
+    <button class="btn btng btn-full" onclick="doRegister()">Create Account</button>
+    <div class="auth-switch">Already have an account? <a onclick="showLogin()">Sign in</a></div>
+  </div>
+</div>
+
+<!-- ════ FORGOT PASSWORD ════ -->
+<div class="auth-wrap" id="forgotScreen" style="display:none">
+  <div class="auth-box">
+    <div class="auth-logo">⬡ ALGO-DESK</div>
+    <div class="auth-sub">Reset your password</div>
+    <div id="forgotMsg" class="abox as" style="display:none"><span class="ic">✓</span><span id="forgotMsgTxt"></span></div>
+    <div class="frow"><label>Your Email</label><input id="forgot-email" type="email" placeholder="your@email.com"></div>
+    <button class="btn btng btn-full" onclick="doForgot()">Send Reset Link</button>
+    <div class="auth-switch"><a onclick="showLogin()">← Back to sign in</a></div>
+  </div>
+</div>
+
+<!-- ════ RESET PASSWORD ════ -->
+<div class="auth-wrap" id="resetScreen" style="display:none">
+  <div class="auth-box">
+    <div class="auth-logo">⬡ ALGO-DESK</div>
+    <div class="auth-sub">Choose a new password</div>
+    <div id="resetErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="resetErrMsg"></span></div>
+    <div class="frow"><label>New Password</label><input id="reset-pass" type="password" placeholder="Min 8 characters"></div>
+    <div class="frow"><label>Confirm Password</label><input id="reset-pass2" type="password" placeholder="Repeat password"></div>
+    <button class="btn btng btn-full" onclick="doReset()">Update Password</button>
+  </div>
+</div>
+
+<!-- ════ MAIN APP ════ -->
+<div class="app" id="mainApp" style="display:none">
+  <div class="topbar">
+    <div class="logo">⬡ ALGO-DESK</div>
+    <div class="ver">v4.0</div>
+    <div class="tabs" id="mainTabs">
+      <div class="tab on" onclick="nav('dashboard')">Dashboard</div>
+      <div class="tab" onclick="nav('brokers')">My Brokers</div>
+      <div class="tab" onclick="nav('automate')">Automate</div>
+      <div class="tab" onclick="nav('live')">Live Monitor</div>
+      <div class="tab" onclick="nav('profile')">My Profile</div>
+      <div class="tab adm" id="adminTab" onclick="nav('admin')" style="display:none">Admin</div>
+    </div>
+    <div class="uarea">
+      <span id="userNameBadge" class="bd bdx"></span>
+      <div class="av" id="userAv" onclick="nav('profile')">?</div>
+      <button class="btn btnx" style="padding:4px 10px;font-size:11px" onclick="logout()">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page on" id="pg-dashboard">
+      <div class="abox as" id="welcomeBox"><span class="ic">👋</span><span id="welcomeMsg"></span></div>
+      <div class="gauto" id="dashStats"></div>
+      <div class="g2">
+        <div class="card">
+          <div class="ch"><span class="ct">Setup Checklist</span></div>
+          <div class="cb" id="checklist"></div>
+        </div>
+        <div class="card">
+          <div class="ch"><span class="ct">Quick Actions</span></div>
+          <div class="cb">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <button class="btn btnb btn-full" onclick="nav('brokers')">Connect a broker →</button>
+              <button class="btn btna btn-full" onclick="nav('automate')">Set up automation →</button>
+              <button class="btn btng btn-full" onclick="nav('live')">Go to Live Monitor →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MY BROKERS ── -->
+    <div class="page" id="pg-brokers">
+      <div class="card">
+        <div class="ch"><span class="ct">Connected Brokers</span></div>
+        <div class="cb" id="connectedBrokersList">
+          <div style="color:var(--tx3);font-size:12px">Loading...</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ch"><span class="ct">Connect a New Broker</span></div>
+        <div class="cb">
+          <div class="abox ai"><span class="ic">🔒</span><div>Your credentials are <strong>AES-256 encrypted</strong> before being stored. Nobody else — including the admin — can ever see them. Token refresh is fully automatic after setup.</div></div>
+          <div class="stitle" style="margin-top:0">Select your broker</div>
+          <div class="broker-grid" id="brokerGrid"></div>
+          <div id="brokerFormWrap" style="display:none">
+            <div class="divr"></div>
+            <div id="brokerFormTitle" class="stitle"></div>
+            <div class="abox ai" id="brokerRefreshNote"><span class="ic">↻</span><span></span></div>
+            <div id="brokerFields"></div>
+            <div id="brokerTestResult" style="display:none"></div>
+            <div class="brow">
+              <button class="btn btng" id="brokerSaveBtn" onclick="saveBroker()">Save & Test Connection</button>
+              <button class="btn btnx" onclick="cancelBroker()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── AUTOMATE ── -->
+    <div class="page" id="pg-automate">
+      <div class="card">
+        <div class="ch"><span class="ct">My Automations</span>
+          <button class="btn btng" style="padding:3px 9px;font-size:10px" onclick="showNewAuto()">+ New</button>
+        </div>
+        <div class="cb" id="autoList"><div style="color:var(--tx3)">Loading...</div></div>
+      </div>
+      <div class="card" id="newAutoCard" style="display:none">
+        <div class="ch"><span class="ct">New Automation</span></div>
+        <div class="cb">
+          <div class="g2">
+            <div class="frow"><label>Symbol</label>
+              <select id="auto-sym">
+                <option>NSE:NIFTY50-INDEX</option><option>NSE:NIFTYBANK-INDEX</option>
+                <option>NSE:FINNIFTY-INDEX</option><option>SPX</option><option>QQQ</option>
+              </select>
+            </div>
+            <div class="frow"><label>Broker</label><select id="auto-broker"></select></div>
+          </div>
+          <div class="stitle">Strategies</div>
+          <div id="autoStratList"></div>
+          <div class="g2" style="margin-top:10px">
+            <div class="frow"><label>Max Daily Loss (₹)</label><input id="auto-maxloss" type="number" value="5000"></div>
+            <div class="frow"><label>Auto Exit Time</label><input id="auto-exit" type="time" value="14:00"></div>
+          </div>
+          <div class="stitle">Mode</div>
+          <div class="abox aw"><span class="ic">⚠</span><span>Always start in <strong>Paper mode</strong> first. This trades with simulated money. Switch to Live only after you are satisfied with the results.</span></div>
+          <div class="brow">
+            <button class="btn btna" onclick="saveAuto('paper')">Save as Paper (Recommended)</button>
+            <button class="btn btnr" onclick="saveAuto('live')">Save as Live (Real Money)</button>
+            <button class="btn btnx" onclick="document.getElementById('newAutoCard').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LIVE MONITOR ── -->
+    <div class="page" id="pg-live">
+      <div class="abox ai"><span class="ic">ℹ</span><span>Connect a broker and create an automation first. Then press Start to begin monitoring.</span></div>
+      <div class="gauto">
+        <div class="m"><div class="ml">Spot</div><div class="mv c-bl" id="lv-s">—</div></div>
+        <div class="m"><div class="ml">ATM</div><div class="mv" id="lv-a">—</div></div>
+        <div class="m"><div class="ml">Combined</div><div class="mv" id="lv-c">—</div></div>
+        <div class="m"><div class="ml">VWAP</div><div class="mv c-bl" id="lv-v">—</div></div>
+        <div class="m"><div class="ml">P&L</div><div class="mv" id="lv-pnl">₹0</div></div>
+        <div class="m"><div class="ml">Engine</div><div class="mv c-am" id="lv-eng">IDLE</div></div>
+      </div>
+      <div class="brow">
+        <button class="btn btng" id="startBtn" onclick="startEngine()">▶ Start Engine</button>
+        <button class="btn btnr" id="stopBtn" onclick="stopEngine()" style="display:none">■ Stop</button>
+      </div>
+    </div>
+
+    <!-- ── MY PROFILE ── -->
+    <div class="page" id="pg-profile">
+      <div class="g2">
+        <div class="card">
+          <div class="ch"><span class="ct">My Profile</span></div>
+          <div class="cb">
+            <div class="frow"><label>Full Name</label><input id="prof-name" placeholder="Your name"></div>
+            <div class="frow"><label>Email</label><input id="prof-email" type="email" readonly style="opacity:.6"></div>
+            <div class="frow"><label>Timezone</label>
+              <select id="prof-tz">
+                <option value="Asia/Kolkata">India (IST)</option>
+                <option value="America/New_York">US Eastern (EST)</option>
+                <option value="Europe/London">UK (GMT)</option>
+                <option value="Europe/Paris">Europe (CET)</option>
+              </select>
+            </div>
+            <div class="frow"><label>Plan</label><input id="prof-plan" readonly style="opacity:.6"></div>
+            <div class="brow"><button class="btn btng" onclick="saveProfile()">Save Profile</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ch"><span class="ct">Change Password</span></div>
+          <div class="cb">
+            <div id="pwErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="pwErrMsg"></span></div>
+            <div id="pwOk" class="abox as" style="display:none"><span class="ic">✓</span><span>Password changed successfully</span></div>
+            <div class="frow"><label>Current Password</label><input id="pw-cur" type="password" placeholder="Current password"></div>
+            <div class="frow"><label>New Password</label><input id="pw-new" type="password" placeholder="New password (min 8 chars)"></div>
+            <div class="frow"><label>Confirm New Password</label><input id="pw-new2" type="password" placeholder="Repeat new password"></div>
+            <div class="brow"><button class="btn btng" onclick="changePassword()">Change Password</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ADMIN ── -->
+    <div class="page" id="pg-admin">
+      <div class="gauto" id="adminStats"></div>
+      <div class="g2">
+        <div class="card">
+          <div class="ch"><span class="ct">All Users</span>
+            <button class="btn btng" style="padding:3px 9px;font-size:10px" onclick="showCreateUser()">+ Create User</button>
+          </div>
+          <div class="cb" id="adminUserCreate" style="display:none">
+            <div class="divr"></div>
+            <div class="stitle" style="margin-top:0">Create New User</div>
+            <div class="g2">
+              <div class="frow"><label>Full Name</label><input id="nu-name" placeholder="Full name"></div>
+              <div class="frow"><label>Email</label><input id="nu-email" type="email" placeholder="user@email.com"></div>
+              <div class="frow"><label>Password</label><input id="nu-pass" type="password" placeholder="Temporary password"></div>
+              <div class="frow"><label>Role</label>
+                <select id="nu-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select>
+              </div>
+              <div class="frow"><label>Plan</label>
+                <select id="nu-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select>
+              </div>
+            </div>
+            <div class="brow">
+              <button class="btn btng" onclick="createUser()">Create User</button>
+              <button class="btn btnx" onclick="document.getElementById('adminUserCreate').style.display='none'">Cancel</button>
+            </div>
+            <div class="divr"></div>
+            <div class="stitle">Or send an invite link</div>
+            <div class="g2">
+              <div class="frow"><label>Role</label><select id="inv-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select></div>
+              <div class="frow"><label>Plan</label><select id="inv-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select></div>
+            </div>
+            <button class="btn btnb" onclick="createInvite()">Generate Invite Link</button>
+            <div id="inviteResult" style="display:none;margin-top:10px"></div>
+          </div>
+          <div class="cb twrap" id="userTableWrap">
+            <table>
+              <thead><tr><th>User</th><th>Role</th><th>Plan</th><th>Status</th><th>Brokers</th><th>Last Login</th><th>Actions</th></tr></thead>
+              <tbody id="userTB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ch"><span class="ct">Platform Stats</span></div>
+          <div class="cb" id="platformStats"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════
+var API = '';  // same origin
+var session = { token:null, user:null };
+var brokerDefs = [];
+var selectedBroker = null;
+var selectedStrategies = new Set(['S7','S1','S2']);
+var myBrokers = [];
+
+// ═══════════════════════════════════════════════════
+// API CALLS
+// ═══════════════════════════════════════════════════
+async function api(method, path, body) {
+  var opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (session.token) opts.headers['Authorization'] = 'Bearer ' + session.token;
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    var r = await fetch(API + path, opts);
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.message || 'Request failed');
+    return d;
+  } catch(e) { throw e; }
+}
+
+// ═══════════════════════════════════════════════════
+// AUTH SCREENS
+// ═══════════════════════════════════════════════════
+function showLogin()    { hide(['registerScreen','forgotScreen','resetScreen','mainApp']); show('loginScreen'); }
+function showRegister() { hide(['loginScreen','forgotScreen','resetScreen']); show('registerScreen'); }
+function showForgot()   { hide(['loginScreen','registerScreen']); show('forgotScreen'); }
+
+function show(id)  { document.getElementById(id).style.display='flex'; }
+function hide(ids) { ids.forEach(id => document.getElementById(id).style.display='none'); }
+
+// Check for reset token in URL
+window.addEventListener('DOMContentLoaded', () => {
+  var params = new URLSearchParams(window.location.search);
+  var resetToken = params.get('token');
+  var inviteToken = params.get('invite');
+  if (resetToken) {
+    window._resetToken = resetToken;
+    hide(['loginScreen']); show('resetScreen');
+  } else if (inviteToken) {
+    window._inviteToken = inviteToken;
+    showRegister();
+  }
+  // Auto-login if token saved
+  var saved = localStorage.getItem('algo_session');
+  if (saved) {
+    try {
+      var s = JSON.parse(saved);
+      session.token = s.token; session.user = s.user;
+      loadApp();
+    } catch(e) { localStorage.removeItem('algo_session'); }
+  }
+});
+
+async function doLogin() {
+  var email = document.getElementById('li-email').value.trim();
+  var pass  = document.getElementById('li-pass').value;
+  if (!email || !pass) { showAuthErr('loginErr','loginErrMsg','Please enter email and password'); return; }
+  var btn = document.getElementById('loginBtn');
+  btn.innerHTML = '<span class="spin"></span> Signing in...'; btn.disabled = true;
+  try {
+    var d = await api('POST', '/api/auth/login', { email, password: pass });
+    session.token = d.token;
+    session.user  = { email: d.email, name: d.name, role: d.role, plan: d.plan };
+    localStorage.setItem('algo_session', JSON.stringify(session));
+    hide(['loginScreen']); loadApp();
+  } catch(e) {
+    showAuthErr('loginErr','loginErrMsg', e.message);
+    btn.innerHTML = 'Sign In'; btn.disabled = false;
+  }
+}
+
+async function doRegister() {
+  var name  = document.getElementById('reg-name').value.trim();
+  var email = document.getElementById('reg-email').value.trim();
+  var pass  = document.getElementById('reg-pass').value;
+  var pass2 = document.getElementById('reg-pass2').value;
+  if (!name||!email||!pass) { showAuthErr('regErr','regErrMsg','Please fill all fields'); return; }
+  if (pass !== pass2) { showAuthErr('regErr','regErrMsg','Passwords do not match'); return; }
+  try {
+    var d = await api('POST', '/api/auth/register', {
+      email, password: pass, name,
+      invite_token: window._inviteToken || null
+    });
+    session.token = d.token;
+    session.user  = { email, name, role: 'USER', plan: 'FREE' };
+    localStorage.setItem('algo_session', JSON.stringify(session));
+    hide(['registerScreen']); loadApp();
+  } catch(e) { showAuthErr('regErr','regErrMsg', e.message); }
+}
+
+async function doForgot() {
+  var email = document.getElementById('forgot-email').value.trim();
+  if (!email) return;
+  try {
+    var d = await api('POST', '/api/auth/reset-request', { email });
+    document.getElementById('forgotMsg').style.display='flex';
+    var msg = 'A reset link has been sent if that email exists.';
+    if (d.reset_url) msg += ' Reset link: ' + d.reset_url;
+    document.getElementById('forgotMsgTxt').textContent = msg;
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function doReset() {
+  var pass  = document.getElementById('reset-pass').value;
+  var pass2 = document.getElementById('reset-pass2').value;
+  if (pass !== pass2) { showAuthErr('resetErr','resetErrMsg','Passwords do not match'); return; }
+  try {
+    await api('POST', '/api/auth/reset-password', { token: window._resetToken, new_password: pass });
+    toast('Password updated! Please sign in.', 'ok');
+    setTimeout(() => { window.location = window.location.pathname; }, 1500);
+  } catch(e) { showAuthErr('resetErr','resetErrMsg', e.message); }
+}
+
+function showAuthErr(boxId, msgId, msg) {
+  document.getElementById(boxId).style.display = 'flex';
+  document.getElementById(msgId).textContent = msg;
+}
+
+function logout() {
+  session = { token:null, user:null };
+  localStorage.removeItem('algo_session');
+  document.getElementById('mainApp').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+}
+
+// ═══════════════════════════════════════════════════
+// APP
+// ═══════════════════════════════════════════════════
+async function loadApp() {
+  document.getElementById('loginScreen').style.display   = 'none';
+  document.getElementById('registerScreen').style.display= 'none';
+  document.getElementById('mainApp').style.display       = 'flex';
+
+  var u = session.user;
+  document.getElementById('userNameBadge').textContent = u.name;
+  document.getElementById('userAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  document.getElementById('welcomeMsg').textContent = 'Welcome back, ' + u.name + '! ' +
+    (u.role === 'SUPER_ADMIN' ? 'You are the Super Admin.' : 'Role: ' + u.role + ' · Plan: ' + u.plan);
+
+  if (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN') {
+    document.getElementById('adminTab').style.display = 'flex';
+  }
+
+  // Load broker definitions
+  try {
+    var bd = await api('GET', '/api/brokers/definitions');
+    brokerDefs = bd.brokers;
+  } catch(e) {}
+
+  renderDashboard();
+  loadMyBrokers();
+  nav('dashboard');
+}
+
+function nav(id) {
+  var ids = ['dashboard','brokers','automate','live','profile','admin'];
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ids[i]===id));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
+  if (id==='brokers') loadMyBrokers();
+  if (id==='automate') loadAutomate();
+  if (id==='admin') loadAdmin();
+  if (id==='profile') loadProfile();
+}
+
+// ═══════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════
+async function renderDashboard() {
+  try {
+    var brokers = await api('GET', '/api/brokers');
+    var autos   = await api('GET', '/api/automations');
+    myBrokers = brokers.brokers || [];
+
+    document.getElementById('dashStats').innerHTML = [
+      {l:'Brokers',v:myBrokers.length,s:'connected',c:'c-gr'},
+      {l:'Automations',v:(autos.automations||[]).length,s:'configured',c:'c-bl'},
+      {l:'Plan',v:session.user.plan,s:session.user.role,c:'c-pu'},
+      {l:'Engine',v:'IDLE',s:'ready to start',c:'c-am'},
+    ].map(x=>`<div class="m"><div class="ml">${x.l}</div><div class="mv ${x.c}">${x.v}</div><div class="ms">${x.s}</div></div>`).join('');
+
+    var checks = [
+      {done: myBrokers.length>0, label:'Connect a broker', action:"nav('brokers')"},
+      {done: (autos.automations||[]).length>0, label:'Create an automation', action:"nav('automate')"},
+      {done: false, label:'Run a backtest', action:""},
+      {done: false, label:'Start paper trading', action:"nav('live')"},
+      {done: false, label:'Go live when ready', action:"nav('automate')"},
+    ];
+    document.getElementById('checklist').innerHTML = checks.map(c=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(26,48,80,.4)">
+        <div style="width:18px;height:18px;border-radius:50%;background:${c.done?'var(--gr2)':'var(--card2)'};border:1px solid ${c.done?'var(--gr)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:${c.done?'#000':'var(--tx3)'};flex-shrink:0">${c.done?'✓':'○'}</div>
+        <span style="flex:1;font-size:12px;${c.done?'color:var(--tx3);text-decoration:line-through':''}">${c.label}</span>
+        ${c.action&&!c.done?`<button class="btn btnb" onclick="${c.action}" style="padding:2px 9px;font-size:10px">Go →</button>`:''}
+      </div>`).join('');
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════
+// BROKERS
+// ═══════════════════════════════════════════════════
+async function loadMyBrokers() {
+  try {
+    var d = await api('GET', '/api/brokers');
+    myBrokers = d.brokers || [];
+    var el = document.getElementById('connectedBrokersList');
+    if (!myBrokers.length) {
+      el.innerHTML = '<div style="color:var(--tx3);font-size:12px">No brokers connected yet. Use the form below to add one.</div>';
+    } else {
+      el.innerHTML = myBrokers.map(b=>`
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card2);border:1px solid ${b.is_connected?'var(--gr)':'var(--border)'};border-radius:8px;margin-bottom:8px">
+          <span style="font-size:18px">${brokerDefs.find(x=>x.id===b.broker_id)?.flag||'🏦'}</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${b.broker_name}</div>
+            <div style="font-size:10px;color:var(--tx3)">${b.market} · ${b.mode?.toUpperCase()||'PAPER'} mode · ${b.fields_set?.length||0} fields configured</div>
+          </div>
+          <span class="bd ${b.is_connected?'bdg':'bda'}">${b.is_connected?'Connected':'Saved'}</span>
+          <button class="btn btnb" style="padding:3px 9px;font-size:10px" onclick="testBroker('${b.broker_id}',this)">Test</button>
+          <button class="btn btnr" style="padding:3px 9px;font-size:10px" onclick="removeBroker('${b.broker_id}')">Remove</button>
+        </div>`).join('');
+    }
+    renderBrokerGrid();
+    // Populate broker dropdown in automation form
+    var sel = document.getElementById('auto-broker');
+    if (sel) {
+      sel.innerHTML = myBrokers.map(b=>`<option value="${b.broker_id}">${b.broker_name}</option>`).join('') ||
+                      '<option value="">No brokers — connect one first</option>';
+    }
+  } catch(e) { console.error(e); }
+}
+
+function renderBrokerGrid() {
+  document.getElementById('brokerGrid').innerHTML = (brokerDefs||[]).map(b=>`
+    <div class="bkc ${selectedBroker===b.id?'sel':''} ${myBrokers.find(x=>x.broker_id===b.id)?'conn':''}" onclick="selectBroker('${b.id}')">
+      <div class="bk-st">${myBrokers.find(x=>x.broker_id===b.id)?'<span class="bd bdg" style="font-size:8px">✓</span>':''}</div>
+      <span class="bk-flag">${b.flag}</span>
+      <div class="bk-name">${b.name}</div>
+      <div class="bk-mkt">${b.market}</div>
+      <div class="bk-ref">↻ ${b.refresh}</div>
+    </div>`).join('');
+}
+
+function selectBroker(id) {
+  selectedBroker = id;
+  renderBrokerGrid();
+  var b = brokerDefs.find(x=>x.id===id);
+  if (!b) return;
+  document.getElementById('brokerFormWrap').style.display = 'block';
+  document.getElementById('brokerFormTitle').textContent  = b.flag + ' ' + b.name;
+  var noteEl = document.getElementById('brokerRefreshNote');
+  noteEl.querySelector('span:last-child').textContent = 'Token refresh: ' + b.refresh + '. Fully automatic after first setup.';
+  document.getElementById('brokerFields').innerHTML = b.fields.map(f => {
+    if (f.type === 'select') return `
+      <div class="frow">
+        <label>${f.label}</label>
+        <select id="bf-${f.key}">${(f.options||[]).map(o=>`<option value="${o}">${o}</option>`).join('')}</select>
+        <div class="fhint">${f.hint}</div>
+      </div>`;
+    return `
+      <div class="frow">
+        <label>${f.label}</label>
+        <input id="bf-${f.key}" type="${f.secret?'password':'text'}" placeholder="${f.hint.substring(0,50)}..." autocomplete="off">
+        <div class="fhint">${f.hint}</div>
+      </div>`;
+  }).join('');
+  document.getElementById('brokerTestResult').style.display = 'none';
+  document.getElementById('brokerFormWrap').scrollIntoView({behavior:'smooth'});
+}
+
+async function saveBroker() {
+  if (!selectedBroker) return;
+  var b = brokerDefs.find(x=>x.id===selectedBroker);
+  var fields = {};
+  b.fields.forEach(f => {
+    var el = document.getElementById('bf-'+f.key);
+    if (el) fields[f.key] = el.value;
+  });
+  var btn = document.getElementById('brokerSaveBtn');
+  btn.innerHTML = '<span class="spin"></span> Saving...'; btn.disabled = true;
+  try {
+    var saved = await api('POST', '/api/brokers', { broker_id: selectedBroker, fields });
+    toast('Credentials saved. Testing connection...', 'info');
+    // Test connection
+    var testResult = await api('POST', `/api/brokers/${selectedBroker}/test`);
+    var el = document.getElementById('brokerTestResult');
+    el.style.display = 'block';
+    el.innerHTML = `<div class="abox ${testResult.connected?'as':'aw'}"><span class="ic">${testResult.connected?'✓':'⚠'}</span><div>${testResult.message}${testResult.note?'<br><small>'+testResult.note+'</small>':''}</div></div>`;
+    toast(testResult.connected ? 'Broker connected ✓' : 'Credentials saved', testResult.connected?'ok':'info');
+    loadMyBrokers();
+  } catch(e) { toast(e.message,'err'); }
+  btn.innerHTML = 'Save & Test Connection'; btn.disabled = false;
+}
+
+function cancelBroker() {
+  selectedBroker = null;
+  document.getElementById('brokerFormWrap').style.display = 'none';
+  renderBrokerGrid();
+}
+
+async function testBroker(id, btn) {
+  var orig = btn.textContent;
+  btn.innerHTML = '<span class="spin"></span>'; btn.disabled = true;
+  try {
+    var r = await api('POST', `/api/brokers/${id}/test`);
+    toast(r.message, r.connected?'ok':'info');
+    loadMyBrokers();
+  } catch(e) { toast(e.message,'err'); }
+  btn.textContent = orig; btn.disabled = false;
+}
+
+async function removeBroker(id) {
+  if (!confirm('Remove this broker?')) return;
+  await api('DELETE', `/api/brokers/${id}`);
+  toast('Broker removed', 'ok');
+  loadMyBrokers();
+}
+
+// ═══════════════════════════════════════════════════
+// AUTOMATE
+// ═══════════════════════════════════════════════════
+async function loadAutomate() {
+  try {
+    var d    = await api('GET', '/api/automations');
+    var strd = await api('GET', '/api/strategies');
+    var autos = d.automations || [];
+    var el = document.getElementById('autoList');
+    el.innerHTML = autos.length ? autos.map(a=>`
+      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:11px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+          <span style="font-size:13px;font-weight:600">${a.name||a.symbol}</span>
+          <div style="display:flex;gap:6px">
+            <span class="bd ${a.mode==='live'?'bdg':'bda'}">${a.mode?.toUpperCase()}</span>
+            <span class="bd bdx">${a.status}</span>
+            <button class="btn btnr" style="padding:2px 7px;font-size:10px" onclick="deleteAuto('${a.id}')">Delete</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;color:var(--tx3)">
+          <div>Symbol: <span style="color:var(--tx2)">${a.symbol}</span></div>
+          <div>Broker: <span style="color:var(--tx2)">${a.broker_id}</span></div>
+          <div>Strategies: <span style="color:var(--tx2)">${(a.strategies||[]).join(', ')}</span></div>
+        </div>
+      </div>`).join('')
+    : '<div style="color:var(--tx3);font-size:12px">No automations yet. Click + New to create one.</div>';
+
+    // Build strategy checklist for new auto form
+    document.getElementById('autoStratList').innerHTML = (strd.strategies||[]).map(s=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card2);border:1px solid ${selectedStrategies.has(s.code)?'var(--gr)':'var(--border)'};border-radius:6px;margin-bottom:5px;cursor:pointer" onclick="togStrat('${s.code}',this)" id="asl-${s.code}">
+        <div style="width:14px;height:14px;border-radius:50%;background:${selectedStrategies.has(s.code)?'var(--gr2)':'var(--card)'};border:1px solid ${selectedStrategies.has(s.code)?'var(--gr)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:8px;color:${selectedStrategies.has(s.code)?'#000':'var(--tx3)'};">${selectedStrategies.has(s.code)?'✓':''}</div>
+        <div style="flex:1"><span style="font-size:12px;font-weight:600">${s.code}: ${s.name}</span> <span class="bd ${s.tier==='PRO'?'bdp':'bdb'}" style="font-size:8px">${s.tier}</span></div>
+      </div>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+function showNewAuto() { document.getElementById('newAutoCard').style.display='block'; loadAutomate(); }
+
+function togStrat(code, el) {
+  selectedStrategies.has(code) ? selectedStrategies.delete(code) : selectedStrategies.add(code);
+  loadAutomate();
+}
+
+async function saveAuto(mode) {
+  var sym   = document.getElementById('auto-sym').value;
+  var brok  = document.getElementById('auto-broker').value;
+  if (!brok) { toast('Connect a broker first', 'err'); return; }
+  if (mode === 'live' && !confirm('Switch to LIVE mode?\n\nReal orders will be placed with real money.\nOnly do this after successful paper testing.')) return;
+  try {
+    await api('POST', '/api/automations', {
+      name: sym + ' — ' + [...selectedStrategies].join('+'),
+      symbol: sym, broker_id: brok,
+      strategies: [...selectedStrategies],
+      mode,
+      config: {
+        max_loss: +document.getElementById('auto-maxloss').value,
+        auto_exit: document.getElementById('auto-exit').value,
+      }
+    });
+    document.getElementById('newAutoCard').style.display = 'none';
+    toast('Automation saved in ' + mode.toUpperCase() + ' mode ✓', 'ok');
+    loadAutomate();
+  } catch(e) { toast(e.message,'err'); }
+}
+
+async function deleteAuto(id) {
+  if (!confirm('Delete this automation?')) return;
+  await api('DELETE', `/api/automations/${id}`);
+  toast('Deleted', 'ok'); loadAutomate();
+}
+
+// ═══════════════════════════════════════════════════
+// PROFILE
+// ═══════════════════════════════════════════════════
+async function loadProfile() {
+  try {
+    var u = await api('GET', '/api/me');
+    document.getElementById('prof-name').value  = u.name||'';
+    document.getElementById('prof-email').value = u.email||'';
+    document.getElementById('prof-plan').value  = (u.plan||'FREE') + ' · ' + (u.role||'USER');
+  } catch(e) {}
+}
+
+async function saveProfile() {
+  var name = document.getElementById('prof-name').value.trim();
+  var tz   = document.getElementById('prof-tz').value;
+  try {
+    await api('PUT', '/api/me', { name, timezone: tz });
+    session.user.name = name;
+    localStorage.setItem('algo_session', JSON.stringify(session));
+    document.getElementById('userNameBadge').textContent = name;
+    toast('Profile saved ✓', 'ok');
+  } catch(e) { toast(e.message,'err'); }
+}
+
+async function changePassword() {
+  var cur  = document.getElementById('pw-cur').value;
+  var nw   = document.getElementById('pw-new').value;
+  var nw2  = document.getElementById('pw-new2').value;
+  document.getElementById('pwErr').style.display='none';
+  document.getElementById('pwOk').style.display='none';
+  if (nw !== nw2) {
+    document.getElementById('pwErr').style.display='flex';
+    document.getElementById('pwErrMsg').textContent='Passwords do not match'; return;
+  }
+  try {
+    await api('POST', '/api/auth/change-password', { current_password: cur, new_password: nw });
+    document.getElementById('pwOk').style.display='flex';
+    document.getElementById('pw-cur').value='';
+    document.getElementById('pw-new').value='';
+    document.getElementById('pw-new2').value='';
+  } catch(e) {
+    document.getElementById('pwErr').style.display='flex';
+    document.getElementById('pwErrMsg').textContent=e.message;
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// ADMIN
+// ═══════════════════════════════════════════════════
+async function loadAdmin() {
+  try {
+    var stats = await api('GET', '/api/admin/stats');
+    var users = await api('GET', '/api/admin/users');
+
+    document.getElementById('adminStats').innerHTML = [
+      {l:'Total Users',v:stats.total_users,c:'c-bl'},
+      {l:'Active',v:stats.active_users,c:'c-gr'},
+      {l:'Brokers',v:stats.total_brokers,c:'c-am'},
+      {l:'Automations',v:stats.total_automations,c:'c-pu'},
+    ].map(x=>`<div class="m"><div class="ml">${x.l}</div><div class="mv ${x.c}">${x.v}</div></div>`).join('');
+
+    document.getElementById('platformStats').innerHTML = `
+      <div class="stitle" style="margin-top:0">Plans</div>
+      ${Object.entries(stats.plans||{}).map(([k,v])=>`
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(26,48,80,.4)">
+          <span>${k}</span><span style="font-family:var(--mono);font-weight:600">${v} users</span>
+        </div>`).join('')}`;
+
+    document.getElementById('userTB').innerHTML = (users.users||[]).map(u=>`
+      <tr>
+        <td><strong>${u.name}</strong><br><span style="font-size:10px;color:var(--tx3)">${u.email}</span></td>
+        <td><span class="bd ${u.role==='SUPER_ADMIN'?'bda':u.role==='ADMIN'?'bdb':'bdx'}">${u.role.replace('_',' ')}</span></td>
+        <td><span class="bd ${u.plan==='PRO'||u.plan==='ENTERPRISE'?'bdp':u.plan==='STARTER'?'bdb':'bdx'}">${u.plan}</span></td>
+        <td><span class="bd ${u.is_active?'bdg':'bdr'}">${u.is_active?'Active':'Suspended'}</span></td>
+        <td class="mn">${u.broker_count||0}</td>
+        <td style="font-size:10px;color:var(--tx3)">${u.last_login?new Date(u.last_login).toLocaleDateString():'Never'}</td>
+        <td>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            ${u.is_active
+              ? `<button class="btn btnr" style="padding:2px 7px;font-size:10px" onclick="suspendUser('${u.email}')">Suspend</button>`
+              : `<button class="btn btng" style="padding:2px 7px;font-size:10px" onclick="activateUser('${u.email}')">Activate</button>`}
+            <button class="btn btnb" style="padding:2px 7px;font-size:10px" onclick="adminResetPw('${u.email}')">Reset PW</button>
+          </div>
+        </td>
+      </tr>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+function showCreateUser() {
+  var el = document.getElementById('adminUserCreate');
+  el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+
+async function createUser() {
+  var name  = document.getElementById('nu-name').value.trim();
+  var email = document.getElementById('nu-email').value.trim();
+  var pass  = document.getElementById('nu-pass').value;
+  var role  = document.getElementById('nu-role').value;
+  var plan  = document.getElementById('nu-plan').value;
+  if (!name||!email||!pass) { toast('Fill all fields','err'); return; }
+  try {
+    await api('POST', '/api/admin/users', { email, name, password:pass, role, plan });
+    toast('User created: ' + email, 'ok');
+    document.getElementById('nu-name').value='';
+    document.getElementById('nu-email').value='';
+    document.getElementById('nu-pass').value='';
+    loadAdmin();
+  } catch(e) { toast(e.message,'err'); }
+}
+
+async function createInvite() {
+  var role = document.getElementById('inv-role').value;
+  var plan = document.getElementById('inv-plan').value;
+  try {
+    var d = await api('POST', '/api/admin/invite', { role, plan });
+    var el = document.getElementById('inviteResult');
+    el.style.display = 'block';
+    el.innerHTML = `<div class="abox as"><span class="ic">✓</span><div>Invite link created:<br><code style="font-size:11px;word-break:break-all;color:var(--gr)">${d.invite_url}</code><br><small>Send this to the new user. They click it to register with ${role} role and ${plan} plan.</small></div></div>`;
+  } catch(e) { toast(e.message,'err'); }
+}
+
+async function suspendUser(email) {
+  if (!confirm('Suspend ' + email + '?')) return;
+  await api('POST', `/api/admin/users/${encodeURIComponent(email)}/suspend`);
+  toast('User suspended', 'ok'); loadAdmin();
+}
+
+async function activateUser(email) {
+  await api('POST', `/api/admin/users/${encodeURIComponent(email)}/activate`);
+  toast('User activated', 'ok'); loadAdmin();
+}
+
+async function adminResetPw(email) {
+  try {
+    var d = await api('POST', `/api/admin/users/${encodeURIComponent(email)}/reset-password`);
+    prompt('Send this reset link to ' + email + ':', d.reset_url);
+  } catch(e) { toast(e.message,'err'); }
+}
+
+// ═══════════════════════════════════════════════════
+// LIVE ENGINE (placeholder)
+// ═══════════════════════════════════════════════════
+function startEngine() {
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('stopBtn').style.display='inline-flex';
+  document.getElementById('lv-eng').textContent='MONITORING';
+  toast('Engine started in paper mode','ok');
+}
+function stopEngine() {
+  document.getElementById('startBtn').style.display='inline-flex';
+  document.getElementById('stopBtn').style.display='none';
+  document.getElementById('lv-eng').textContent='IDLE';
+}
+
+// ═══════════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════════
+function toast(msg, type='ok') {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
