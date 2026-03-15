@@ -1,139 +1,218 @@
 """
-ALGO-DESK v4 — Complete Self-Service Backend
-=============================================
-Everything is database-driven. Nothing is hardcoded.
-
-Features:
-  - Admin creates/manages users from UI
-  - Users self-register or are invited
-  - Users connect their own brokers (encrypted)
-  - Password reset via email
-  - Full role-based access control
-  - Broker connection testing
-  - All config from frontend, nothing in files
+ALGO-DESK v4 — Complete Backend
+=================================
+All endpoints. PostgreSQL. Scheduler. WebSocket.
+Nothing hardcoded. Everything from database.
 """
 
-import os, json, secrets, hashlib, base64, logging
+import os, secrets, hashlib, base64, json, logging, asyncio
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+
+import bcrypt
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
-from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from dotenv import load_dotenv
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
+
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ResetToken, InviteLink
+from fyers import FyersEngine, encrypt, decrypt
+from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("algodesk")
 
+# ═══════════════════════════════════════════════════════════════
+# DATABASE
+# ═══════════════════════════════════════════════════════════════
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://algodesk:algodesk@localhost:5432/algodesk"
+)
+
+engine_db = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5)
+SessionLocal = sessionmaker(bind=engine_db, autocommit=False, autoflush=False)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def init_db():
+    """Create all tables and seed initial data."""
+    Base.metadata.create_all(bind=engine_db)
+    db = SessionLocal()
+    try:
+        # Seed admin user
+        email = os.environ.get("SUPER_ADMIN_EMAIL", "")
+        pw    = os.environ.get("SUPER_ADMIN_PASSWORD", "")
+        name  = os.environ.get("SUPER_ADMIN_NAME", "Admin")
+        if email and not db.query(User).filter(User.email == email).first():
+            pw_hash = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+            db.add(User(
+                email=email, name=name, password_hash=pw_hash,
+                role="SUPER_ADMIN", plan="PRO", is_active=True, is_verified=True,
+            ))
+            log.info(f"Admin created: {email}")
+
+        # Seed broker definitions if empty
+        if not db.query(BrokerDefinition).first():
+            _seed_broker_definitions(db)
+
+        db.commit()
+    except Exception as e:
+        log.error(f"DB init error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+def _seed_broker_definitions(db: Session):
+    """Seed Fyers broker definition. Admin can add more from UI."""
+    brokers = [
+        {
+            "broker_id": "fyers",
+            "name": "Fyers",
+            "flag": "🇮🇳",
+            "market": "INDIA",
+            "refresh_desc": "Auto-TOTP daily at 8:50 AM — no manual login ever needed",
+            "test_method": "totp",
+            "api_base_url": "https://api-t1.fyers.in/api/v3",
+            "sort_order": 1,
+            "fields_config": [
+                {"key": "client_id",     "label": "Client ID",       "secret": False,
+                 "hint": "Go to myapi.fyers.in → your app → Client ID (format: FYXXXXX-100)"},
+                {"key": "secret_key",    "label": "Secret Key",      "secret": True,
+                 "hint": "myapi.fyers.in → your app → Secret Key"},
+                {"key": "redirect_uri",  "label": "Redirect URI",    "secret": False,
+                 "hint": "Paste exactly: https://trade.fyers.in/api-login/redirect-uri/index.html",
+                 "default": "https://trade.fyers.in/api-login/redirect-uri/index.html"},
+                {"key": "username",      "label": "Fyers User ID",   "secret": False,
+                 "hint": "Your Fyers client ID (same as Client ID above, e.g. FYXXXXX)"},
+                {"key": "pin",           "label": "4-digit PIN",     "secret": True,
+                 "hint": "Your Fyers trading PIN"},
+                {"key": "totp_key",      "label": "TOTP Secret Key", "secret": True,
+                 "hint": "Fyers → My Account → Security Settings → Two Factor Auth → Enable TOTP → External Authenticator → copy the 32-character key shown (NOT the QR code)"},
+            ],
+        },
+        {
+            "broker_id": "zerodha",
+            "name": "Zerodha (Kite)",
+            "flag": "🇮🇳",
+            "market": "INDIA",
+            "refresh_desc": "Auto-TOTP daily",
+            "test_method": "totp",
+            "api_base_url": "https://api.kite.trade",
+            "sort_order": 2,
+            "fields_config": [
+                {"key": "api_key",    "label": "API Key",    "secret": False,
+                 "hint": "kite.trade → Apps → your app → API Key"},
+                {"key": "api_secret", "label": "API Secret", "secret": True,
+                 "hint": "kite.trade → Apps → your app → API Secret"},
+                {"key": "user_id",    "label": "User ID",    "secret": False,
+                 "hint": "Your Zerodha client ID (e.g. AB1234)"},
+                {"key": "password",   "label": "Password",   "secret": True,
+                 "hint": "Your Zerodha login password"},
+                {"key": "totp_key",   "label": "TOTP Key",   "secret": True,
+                 "hint": "The text key shown when you set up Google Authenticator for Zerodha"},
+            ],
+        },
+        {
+            "broker_id": "alpaca",
+            "name": "Alpaca (US)",
+            "flag": "🇺🇸",
+            "market": "US",
+            "refresh_desc": "API key never expires — set up once, works forever",
+            "test_method": "api_key",
+            "api_base_url": "https://paper-api.alpaca.markets",
+            "sort_order": 3,
+            "fields_config": [
+                {"key": "api_key_id", "label": "API Key ID",   "secret": False,
+                 "hint": "alpaca.markets → Paper or Live Trading → API Keys → Key ID (starts with PK...)"},
+                {"key": "secret_key", "label": "Secret Key",   "secret": True,
+                 "hint": "alpaca.markets → API Keys → Secret Key (only shown once at creation)"},
+                {"key": "mode",       "label": "Account Mode", "secret": False,
+                 "type": "select", "options": ["paper", "live"],
+                 "hint": "paper = test with fake money, live = real money"},
+            ],
+        },
+    ]
+    for b in brokers:
+        db.add(BrokerDefinition(**b))
+    log.info(f"Seeded {len(brokers)} broker definitions")
+
+# ═══════════════════════════════════════════════════════════════
+# APP + AUTH
+# ═══════════════════════════════════════════════════════════════
+
 app = FastAPI(title="ALGO-DESK", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-bearer  = HTTPBearer(auto_error=False)
-SECRET  = os.environ.get("SECRET_KEY", secrets.token_hex(32))
-ALGO    = "HS256"
-
-# ═══════════════════════════════════════════════════════════════
-# IN-MEMORY DATABASE
-# Replace with PostgreSQL later — same API, just swap the store
-# ═══════════════════════════════════════════════════════════════
-
-DB = {
-    "users": {},        # email -> user dict
-    "brokers": {},      # user_email -> list of broker configs
-    "automations": {},  # user_email -> list of automations
-    "reset_tokens": {}, # token -> email
-    "invites": {},      # token -> {email, role, plan}
-}
-
-def _seed_admin():
-    """Create super admin from .env on first boot."""
-    email = os.environ.get("SUPER_ADMIN_EMAIL", "")
-    pw    = os.environ.get("SUPER_ADMIN_PASSWORD", "")
-    name  = os.environ.get("SUPER_ADMIN_NAME", "Admin")
-    if email and email not in DB["users"]:
-        DB["users"][email] = {
-            "email": email,
-            "name": name,
-            "password_hash": pwd_ctx.hash(pw),
-            "role": "SUPER_ADMIN",
-            "plan": "PRO",
-            "is_active": True,
-            "is_verified": True,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_login": None,
-        }
-        log.info(f"Admin account created: {email}")
-
-_seed_admin()
-
-# ═══════════════════════════════════════════════════════════════
-# AUTH HELPERS
-# ═══════════════════════════════════════════════════════════════
+bearer = HTTPBearer(auto_error=False)
+SECRET = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+ALGO   = "HS256"
 
 def make_token(email: str, role: str) -> str:
-    exp = datetime.utcnow() + timedelta(hours=12)
-    return jwt.encode({"sub": email, "role": role, "exp": exp},
-                      SECRET, algorithm=ALGO)
+    return jwt.encode(
+        {"sub": email, "role": role, "exp": datetime.utcnow() + timedelta(hours=12)},
+        SECRET, algorithm=ALGO
+    )
 
-def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+def get_current_user(
+    creds: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db)
+) -> User:
     if not creds:
         raise HTTPException(401, "Not authenticated")
     try:
         payload = jwt.decode(creds.credentials, SECRET, algorithms=[ALGO])
         email = payload["sub"]
-        user = DB["users"].get(email)
-        if not user or not user["is_active"]:
-            raise HTTPException(401, "User not found or inactive")
-        return user
     except JWTError:
         raise HTTPException(401, "Invalid or expired token")
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not user.is_active:
+        raise HTTPException(401, "User not found or suspended")
+    return user
 
-def require_admin(user=Depends(get_current_user)):
-    if user["role"] not in ("SUPER_ADMIN", "ADMIN"):
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role not in ("SUPER_ADMIN", "ADMIN"):
         raise HTTPException(403, "Admin access required")
     return user
 
-def encrypt_cred(user_email: str, value: str) -> str:
-    """Simple encryption using user-specific key."""
-    master = os.environ.get("ENCRYPTION_KEY", SECRET).encode()
-    key = hashlib.sha256(master + user_email.encode()).digest()
-    fernet_key = base64.urlsafe_b64encode(key)
-    try:
-        from cryptography.fernet import Fernet
-        return Fernet(fernet_key).encrypt(value.encode()).decode()
-    except ImportError:
-        # Fallback if cryptography not installed
-        return base64.b64encode(value.encode()).decode()
+# ═══════════════════════════════════════════════════════════════
+# STARTUP
+# ═══════════════════════════════════════════════════════════════
 
-def decrypt_cred(user_email: str, value: str) -> str:
-    master = os.environ.get("ENCRYPTION_KEY", SECRET).encode()
-    key = hashlib.sha256(master + user_email.encode()).digest()
-    fernet_key = base64.urlsafe_b64encode(key)
-    try:
-        from cryptography.fernet import Fernet
-        return Fernet(fernet_key).decrypt(value.encode()).decode()
-    except Exception:
-        try:
-            return base64.b64decode(value.encode()).decode()
-        except Exception:
-            return ""
+@app.on_event("startup")
+async def startup():
+    init_db()
+    log.info("ALGO-DESK started ✓")
 
 # ═══════════════════════════════════════════════════════════════
 # HEALTH
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/health")
-def health():
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
     return {"status": "ok", "version": "4.0.0",
-            "time": datetime.now().isoformat(),
-            "users": len(DB["users"])}
+            "db": "ok" if db_ok else "error",
+            "time": datetime.now().isoformat()}
 
 # ═══════════════════════════════════════════════════════════════
 # AUTH ENDPOINTS
@@ -144,21 +223,20 @@ class LoginReq(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-def login(req: LoginReq):
-    user = DB["users"].get(req.email.lower().strip())
+def login(req: LoginReq, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email.lower().strip()).first()
     if not user:
         raise HTTPException(401, "Invalid email or password")
-    if not user["is_active"]:
+    if not user.is_active:
         raise HTTPException(401, "Account suspended. Contact admin.")
-    if not pwd_ctx.verify(req.password, user["password_hash"]):
+    if not bcrypt.checkpw(req.password.encode(), user.password_hash.encode()):
         raise HTTPException(401, "Invalid email or password")
-    DB["users"][req.email]["last_login"] = datetime.utcnow().isoformat()
+    user.last_login = datetime.utcnow()
+    db.commit()
     return {
-        "token": make_token(user["email"], user["role"]),
-        "name":  user["name"],
-        "email": user["email"],
-        "role":  user["role"],
-        "plan":  user["plan"],
+        "token": make_token(user.email, user.role),
+        "name": user.name, "email": user.email,
+        "role": user.role, "plan": user.plan,
     }
 
 class RegisterReq(BaseModel):
@@ -168,116 +246,123 @@ class RegisterReq(BaseModel):
     invite_token: Optional[str] = None
 
 @app.post("/api/auth/register")
-def register(req: RegisterReq):
+def register(req: RegisterReq, db: Session = Depends(get_db)):
     email = req.email.lower().strip()
-
-    # Check registration open or valid invite
     reg_open = os.environ.get("REGISTRATION_OPEN", "true").lower() == "true"
-    invite = DB["invites"].get(req.invite_token) if req.invite_token else None
-
+    invite = None
+    if req.invite_token:
+        invite = db.query(InviteLink).filter(
+            InviteLink.token == req.invite_token,
+            InviteLink.used == False
+        ).first()
     if not reg_open and not invite:
         raise HTTPException(403, "Registration is closed. Ask admin for an invite link.")
-
-    if email in DB["users"]:
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already registered")
-
     if len(req.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
-
-    role = invite["role"] if invite else "USER"
-    plan = invite["plan"] if invite else "FREE"
-
-    DB["users"][email] = {
-        "email": email,
-        "name": req.name,
-        "password_hash": pwd_ctx.hash(req.password),
-        "role": role,
-        "plan": plan,
-        "is_active": True,
-        "is_verified": False,
-        "created_at": datetime.utcnow().isoformat(),
-        "last_login": None,
-    }
-
-    # Remove used invite
-    if req.invite_token and req.invite_token in DB["invites"]:
-        del DB["invites"][req.invite_token]
-
-    log.info(f"New user registered: {email} role={role} plan={plan}")
-    return {"ok": True, "message": "Account created. You can now log in.",
-            "token": make_token(email, role)}
+    pw_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
+    user = User(
+        email=email, name=req.name, password_hash=pw_hash,
+        role=invite.role if invite else "USER",
+        plan=invite.plan if invite else "FREE",
+        is_active=True, is_verified=False,
+    )
+    db.add(user)
+    if invite:
+        invite.used = True
+        invite.used_by = email
+    db.commit()
+    return {"ok": True, "token": make_token(email, user.role),
+            "name": req.name, "email": email, "role": user.role, "plan": user.plan}
 
 class ResetRequestReq(BaseModel):
     email: str
 
 @app.post("/api/auth/reset-request")
-def reset_request(req: ResetRequestReq, bg: BackgroundTasks):
-    email = req.email.lower().strip()
-    # Always return success (don't reveal if email exists)
-    if email in DB["users"]:
+def reset_request(req: ResetRequestReq, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email.lower()).first()
+    if user:
         token = secrets.token_urlsafe(32)
-        DB["reset_tokens"][token] = {
-            "email": email,
-            "expires": (datetime.utcnow() + timedelta(hours=1)).isoformat()
-        }
-        reset_url = f"https://{os.environ.get('APP_DOMAIN','localhost')}/reset-password?token={token}"
-        log.info(f"Password reset requested for {email}. URL: {reset_url}")
-        # TODO: Send email via SMTP when configured
-        # For now return token in response (remove in production)
-        return {"ok": True, "message": "Reset link sent if email exists.",
-                "reset_url": reset_url}  # Remove this line in production
-    return {"ok": True, "message": "Reset link sent if email exists."}
+        db.add(ResetToken(
+            user_id=user.id, token=token,
+            expires_at=datetime.utcnow() + timedelta(hours=24)
+        ))
+        db.commit()
+        domain = os.environ.get("APP_DOMAIN", "localhost")
+        reset_url = f"https://{domain}/?reset_token={token}"
+        # Send via Telegram if configured
+        if user.telegram_chat and user.telegram_token:
+            asyncio.create_task(_send_telegram(
+                user.telegram_token, user.telegram_chat,
+                f"🔑 ALGO-DESK Password Reset\n\nClick to reset: {reset_url}\n\nExpires in 24 hours."
+            ))
+        log.info(f"Reset requested for {user.email}: {reset_url}")
+        return {"ok": True, "message": "Reset link sent via Telegram. If no Telegram configured, ask your admin.",
+                "reset_url": reset_url}
+    return {"ok": True, "message": "Reset link sent if account exists."}
 
 class ResetPasswordReq(BaseModel):
     token: str
     new_password: str
 
 @app.post("/api/auth/reset-password")
-def reset_password(req: ResetPasswordReq):
-    record = DB["reset_tokens"].get(req.token)
-    if not record:
+def reset_password(req: ResetPasswordReq, db: Session = Depends(get_db)):
+    rt = db.query(ResetToken).filter(
+        ResetToken.token == req.token,
+        ResetToken.used == False
+    ).first()
+    if not rt or datetime.utcnow() > rt.expires_at:
         raise HTTPException(400, "Invalid or expired reset link")
-    if datetime.utcnow() > datetime.fromisoformat(record["expires"]):
-        del DB["reset_tokens"][req.token]
-        raise HTTPException(400, "Reset link has expired")
     if len(req.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
-    email = record["email"]
-    DB["users"][email]["password_hash"] = pwd_ctx.hash(req.new_password)
-    del DB["reset_tokens"][req.token]
-    return {"ok": True, "message": "Password updated. You can now log in."}
+    user = db.query(User).filter(User.id == rt.user_id).first()
+    user.password_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    rt.used = True
+    db.commit()
+    return {"ok": True, "message": "Password updated. You can now sign in."}
 
 class ChangePasswordReq(BaseModel):
     current_password: str
     new_password: str
 
 @app.post("/api/auth/change-password")
-def change_password(req: ChangePasswordReq, user=Depends(get_current_user)):
-    if not pwd_ctx.verify(req.current_password, user["password_hash"]):
+def change_password(req: ChangePasswordReq,
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    if not bcrypt.checkpw(req.current_password.encode(), user.password_hash.encode()):
         raise HTTPException(400, "Current password is incorrect")
     if len(req.new_password) < 8:
-        raise HTTPException(400, "New password must be at least 8 characters")
-    DB["users"][user["email"]]["password_hash"] = pwd_ctx.hash(req.new_password)
-    return {"ok": True, "message": "Password changed successfully"}
+        raise HTTPException(400, "Password must be at least 8 characters")
+    user.password_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    db.commit()
+    return {"ok": True}
 
 # ═══════════════════════════════════════════════════════════════
 # USER PROFILE
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/me")
-def me(user=Depends(get_current_user)):
-    return {k: v for k, v in user.items() if k != "password_hash"}
+def me(user: User = Depends(get_current_user)):
+    return {"id": user.id, "email": user.email, "name": user.name,
+            "role": user.role, "plan": user.plan, "timezone": user.timezone,
+            "telegram_configured": bool(user.telegram_chat)}
 
 class UpdateProfileReq(BaseModel):
     name: Optional[str] = None
     timezone: Optional[str] = None
+    telegram_token: Optional[str] = None
+    telegram_chat: Optional[str] = None
 
 @app.put("/api/me")
-def update_profile(req: UpdateProfileReq, user=Depends(get_current_user)):
-    if req.name:
-        DB["users"][user["email"]]["name"] = req.name
-    if req.timezone:
-        DB["users"][user["email"]]["timezone"] = req.timezone
+def update_profile(req: UpdateProfileReq,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    if req.name:           user.name = req.name
+    if req.timezone:       user.timezone = req.timezone
+    if req.telegram_token: user.telegram_token = req.telegram_token
+    if req.telegram_chat:  user.telegram_chat = req.telegram_chat
+    db.commit()
     return {"ok": True}
 
 # ═══════════════════════════════════════════════════════════════
@@ -285,14 +370,20 @@ def update_profile(req: UpdateProfileReq, user=Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/admin/users")
-def list_users(admin=Depends(require_admin)):
-    users = []
-    for u in DB["users"].values():
-        safe = {k: v for k, v in u.items() if k != "password_hash"}
-        safe["broker_count"] = len(DB["brokers"].get(u["email"], []))
-        safe["automation_count"] = len(DB["automations"].get(u["email"], []))
-        users.append(safe)
-    return {"users": users, "total": len(users)}
+def list_users(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    result = []
+    for u in users:
+        broker_count = db.query(BrokerConnection).filter(BrokerConnection.user_id == u.id).count()
+        result.append({
+            "id": u.id, "email": u.email, "name": u.name,
+            "role": u.role, "plan": u.plan,
+            "is_active": u.is_active, "is_verified": u.is_verified,
+            "broker_count": broker_count,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+        })
+    return {"users": result, "total": len(result)}
 
 class CreateUserReq(BaseModel):
     email: str
@@ -302,280 +393,232 @@ class CreateUserReq(BaseModel):
     plan: str = "FREE"
 
 @app.post("/api/admin/users")
-def create_user(req: CreateUserReq, admin=Depends(require_admin)):
+def create_user(req: CreateUserReq,
+                admin: User = Depends(require_admin),
+                db: Session = Depends(get_db)):
     email = req.email.lower().strip()
-    if email in DB["users"]:
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already exists")
-    DB["users"][email] = {
-        "email": email,
-        "name": req.name,
-        "password_hash": pwd_ctx.hash(req.password),
-        "role": req.role,
-        "plan": req.plan,
-        "is_active": True,
-        "is_verified": True,
-        "created_at": datetime.utcnow().isoformat(),
-        "last_login": None,
-    }
-    log.info(f"Admin {admin['email']} created user {email}")
+    pw_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
+    user = User(email=email, name=req.name, password_hash=pw_hash,
+                role=req.role, plan=req.plan, is_active=True, is_verified=True)
+    db.add(user)
+    db.commit()
     return {"ok": True, "message": f"User {email} created"}
 
 class UpdateUserReq(BaseModel):
-    name: Optional[str] = None
-    role: Optional[str] = None
-    plan: Optional[str] = None
+    name:      Optional[str]  = None
+    role:      Optional[str]  = None
+    plan:      Optional[str]  = None
     is_active: Optional[bool] = None
-    password: Optional[str] = None
+    password:  Optional[str]  = None
 
-@app.put("/api/admin/users/{email}")
-def update_user(email: str, req: UpdateUserReq, admin=Depends(require_admin)):
-    email = email.lower()
-    if email not in DB["users"]:
-        raise HTTPException(404, "User not found")
-    user = DB["users"][email]
-    if req.name:       user["name"] = req.name
-    if req.role:       user["role"] = req.role
-    if req.plan:       user["plan"] = req.plan
-    if req.is_active is not None: user["is_active"] = req.is_active
-    if req.password:   user["password_hash"] = pwd_ctx.hash(req.password)
-    log.info(f"Admin {admin['email']} updated user {email}")
+@app.put("/api/admin/users/{user_id}")
+def update_user(user_id: str, req: UpdateUserReq,
+                admin: User = Depends(require_admin),
+                db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user: raise HTTPException(404, "User not found")
+    if req.name:           user.name = req.name
+    if req.role:           user.role = req.role
+    if req.plan:           user.plan = req.plan
+    if req.is_active is not None: user.is_active = req.is_active
+    if req.password:
+        user.password_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
+    db.commit()
     return {"ok": True}
 
-@app.delete("/api/admin/users/{email}")
-def delete_user(email: str, admin=Depends(require_admin)):
-    email = email.lower()
-    if email == admin["email"]:
-        raise HTTPException(400, "Cannot delete your own account")
-    if email in DB["users"]:
-        del DB["users"][email]
-        DB["brokers"].pop(email, None)
-        DB["automations"].pop(email, None)
+@app.post("/api/admin/users/{user_id}/suspend")
+def suspend_user(user_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user: user.is_active = False; db.commit()
     return {"ok": True}
 
-@app.post("/api/admin/users/{email}/suspend")
-def suspend_user(email: str, admin=Depends(require_admin)):
-    if email in DB["users"]:
-        DB["users"][email]["is_active"] = False
+@app.post("/api/admin/users/{user_id}/activate")
+def activate_user(user_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user: user.is_active = True; db.commit()
     return {"ok": True}
 
-@app.post("/api/admin/users/{email}/activate")
-def activate_user(email: str, admin=Depends(require_admin)):
-    if email in DB["users"]:
-        DB["users"][email]["is_active"] = True
-    return {"ok": True}
-
-@app.post("/api/admin/users/{email}/reset-password")
-def admin_reset_password(email: str, admin=Depends(require_admin)):
-    """Admin generates a reset link for any user."""
-    if email not in DB["users"]:
-        raise HTTPException(404, "User not found")
+@app.post("/api/admin/users/{user_id}/reset-password")
+def admin_reset_pw(user_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user: raise HTTPException(404, "User not found")
     token = secrets.token_urlsafe(32)
-    DB["reset_tokens"][token] = {
-        "email": email,
-        "expires": (datetime.utcnow() + timedelta(hours=24)).isoformat()
-    }
-    reset_url = f"https://{os.environ.get('APP_DOMAIN','localhost')}/reset-password?token={token}"
-    return {"ok": True, "reset_url": reset_url,
+    db.add(ResetToken(user_id=user.id, token=token,
+                      expires_at=datetime.utcnow() + timedelta(hours=24)))
+    db.commit()
+    domain = os.environ.get("APP_DOMAIN", "localhost")
+    return {"ok": True, "reset_url": f"https://{domain}/?reset_token={token}",
             "message": "Send this link to the user"}
 
-# ── Invite links ─────────────────────────────────────────────────
-class InviteReq(BaseModel):
-    email: Optional[str] = None
-    role: str = "USER"
-    plan: str = "FREE"
-
 @app.post("/api/admin/invite")
-def create_invite(req: InviteReq, admin=Depends(require_admin)):
+def create_invite(req: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     token = secrets.token_urlsafe(24)
-    DB["invites"][token] = {
-        "email": req.email,
-        "role":  req.role,
-        "plan":  req.plan,
-        "created_by": admin["email"],
-        "created_at": datetime.utcnow().isoformat(),
-    }
+    db.add(InviteLink(token=token, created_by=admin.id,
+                      role=req.get("role","USER"), plan=req.get("plan","FREE")))
+    db.commit()
     domain = os.environ.get("APP_DOMAIN", "localhost")
-    invite_url = f"https://{domain}/register?invite={token}"
-    return {"ok": True, "invite_url": invite_url, "token": token}
+    return {"ok": True,
+            "invite_url": f"https://{domain}/?invite={token}",
+            "token": token}
+
+@app.get("/api/admin/stats")
+def admin_stats(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    return {
+        "total_users": len(users),
+        "active_users": sum(1 for u in users if u.is_active),
+        "total_brokers": db.query(BrokerConnection).count(),
+        "total_automations": db.query(Automation).count(),
+        "plans": {
+            p: sum(1 for u in users if u.plan == p)
+            for p in ["FREE","STARTER","PRO","ENTERPRISE"]
+        }
+    }
 
 # ═══════════════════════════════════════════════════════════════
-# BROKER — SELF-SERVICE (users manage their own)
+# BROKER DEFINITIONS (admin manages, users consume)
 # ═══════════════════════════════════════════════════════════════
-
-BROKER_DEFINITIONS = [
-    {"id": "fyers",      "name": "Fyers",          "market": "INDIA", "flag": "🇮🇳",
-     "refresh": "Auto-TOTP daily — no daily login needed",
-     "fields": [
-         {"key": "client_id",    "label": "Client ID",         "hint": "myapi.fyers.in → your app → Client ID (format FYXXXXX-100)", "secret": False},
-         {"key": "secret_key",   "label": "Secret Key",        "hint": "myapi.fyers.in → your app → Secret Key", "secret": True},
-         {"key": "redirect_uri", "label": "Redirect URI",      "hint": "Paste exactly: https://trade.fyers.in/api-login/redirect-uri/index.html", "secret": False},
-         {"key": "username",     "label": "Fyers User ID",     "hint": "Your Fyers client ID (same as Client ID above)", "secret": False},
-         {"key": "pin",          "label": "4-digit PIN",        "hint": "Your Fyers trading PIN", "secret": True},
-         {"key": "totp_key",     "label": "TOTP Secret Key",   "hint": "Fyers → My Account → Security → Enable TOTP → External App → copy the 32-character key shown", "secret": True},
-     ]},
-    {"id": "zerodha",    "name": "Zerodha (Kite)", "market": "INDIA", "flag": "🇮🇳",
-     "refresh": "Auto-TOTP daily",
-     "fields": [
-         {"key": "api_key",    "label": "API Key",     "hint": "kite.trade → Apps → your app → API Key", "secret": False},
-         {"key": "api_secret", "label": "API Secret",  "hint": "kite.trade → Apps → your app → API Secret", "secret": True},
-         {"key": "user_id",    "label": "User ID",     "hint": "Your Zerodha client ID (e.g. AB1234)", "secret": False},
-         {"key": "password",   "label": "Password",    "hint": "Your Zerodha login password", "secret": True},
-         {"key": "totp_key",   "label": "TOTP Key",    "hint": "From your Google Authenticator setup — the text key shown when you set up 2FA", "secret": True},
-     ]},
-    {"id": "angelone",   "name": "Angel One",      "market": "INDIA", "flag": "🇮🇳",
-     "refresh": "Rolling 30-day token",
-     "fields": [
-         {"key": "api_key",   "label": "API Key",     "hint": "smartapi.angelbroking.com → Apps → API Key", "secret": False},
-         {"key": "client_id", "label": "Client ID",   "hint": "Your Angel One client ID", "secret": False},
-         {"key": "password",  "label": "Password",    "hint": "Your Angel One trading password", "secret": True},
-         {"key": "totp_key",  "label": "TOTP Key",    "hint": "From Angel One → My Profile → Enable TOTP → copy the key", "secret": True},
-     ]},
-    {"id": "dhan",       "name": "Dhan",            "market": "INDIA", "flag": "🇮🇳",
-     "refresh": "30-day access token — no TOTP needed",
-     "fields": [
-         {"key": "client_id",    "label": "Client ID",     "hint": "Your Dhan client ID", "secret": False},
-         {"key": "access_token", "label": "Access Token",  "hint": "Dhan → API → Generate Access Token (valid 30 days)", "secret": True},
-     ]},
-    {"id": "upstox",     "name": "Upstox",          "market": "INDIA", "flag": "🇮🇳",
-     "refresh": "Auto-TOTP daily",
-     "fields": [
-         {"key": "api_key",      "label": "API Key",       "hint": "upstox.com/developer → Apps → API Key", "secret": False},
-         {"key": "api_secret",   "label": "API Secret",    "hint": "upstox.com/developer → Apps → API Secret", "secret": True},
-         {"key": "redirect_uri", "label": "Redirect URI",  "hint": "Must match exactly what you set in Upstox app settings", "secret": False},
-         {"key": "mobile",       "label": "Mobile Number", "hint": "Your registered mobile with country code e.g. +919999999999", "secret": False},
-         {"key": "password",     "label": "Password",      "hint": "Your Upstox login password", "secret": True},
-         {"key": "totp_key",     "label": "TOTP Key",      "hint": "From Upstox → Security → Enable TOTP → copy the key", "secret": True},
-     ]},
-    {"id": "alpaca",     "name": "Alpaca (US)",     "market": "US",    "flag": "🇺🇸",
-     "refresh": "API key never expires",
-     "fields": [
-         {"key": "api_key_id",  "label": "API Key ID",   "hint": "alpaca.markets → Paper Trading or Live → API Keys → Key ID (starts with PK...)", "secret": False},
-         {"key": "secret_key",  "label": "Secret Key",   "hint": "alpaca.markets → API Keys → Secret Key (shown only once)", "secret": True},
-         {"key": "mode",        "label": "Mode",         "hint": "paper = fake money for testing, live = real money", "secret": False, "type": "select", "options": ["paper", "live"]},
-     ]},
-    {"id": "ig",         "name": "IG Index (UK)",   "market": "UK",    "flag": "🇬🇧",
-     "refresh": "Auto session renewal every 8 hours",
-     "fields": [
-         {"key": "api_key",      "label": "API Key",      "hint": "labs.ig.com → My Applications → API Key", "secret": False},
-         {"key": "username",     "label": "Username",     "hint": "Your IG account username", "secret": False},
-         {"key": "password",     "label": "Password",     "hint": "Your IG account password", "secret": True},
-         {"key": "account_type", "label": "Account Type", "hint": "demo = test account, live = real money", "secret": False, "type": "select", "options": ["demo", "live"]},
-     ]},
-    {"id": "trading212", "name": "Trading 212 (UK)","market": "UK",    "flag": "🇬🇧",
-     "refresh": "API key never expires",
-     "fields": [
-         {"key": "api_key",      "label": "API Key",      "hint": "Trading 212 app → Settings → API (beta) → Generate Key", "secret": True},
-         {"key": "account_type", "label": "Account Type", "hint": "demo or live", "secret": False, "type": "select", "options": ["demo", "live"]},
-     ]},
-]
 
 @app.get("/api/brokers/definitions")
-def broker_definitions(user=Depends(get_current_user)):
-    """Return all broker definitions with field descriptions.
-    Users see this to know what to fill in — no secrets returned."""
-    return {"brokers": BROKER_DEFINITIONS}
+def broker_definitions(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    defs = db.query(BrokerDefinition).filter(BrokerDefinition.is_active == True)\
+             .order_by(BrokerDefinition.sort_order).all()
+    return {"brokers": [
+        {"id": d.broker_id, "name": d.name, "flag": d.flag,
+         "market": d.market, "refresh": d.refresh_desc,
+         "test_method": d.test_method, "fields": d.fields_config}
+        for d in defs
+    ]}
+
+class AddBrokerDefReq(BaseModel):
+    broker_id:     str
+    name:          str
+    flag:          str = "🏦"
+    market:        str = "INDIA"
+    refresh_desc:  str = "Auto-managed"
+    test_method:   str = "totp"
+    api_base_url:  Optional[str] = None
+    fields_config: list
+
+@app.post("/api/admin/broker-definitions")
+def add_broker_def(req: AddBrokerDefReq,
+                   admin: User = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    if db.query(BrokerDefinition).filter(BrokerDefinition.broker_id == req.broker_id).first():
+        raise HTTPException(400, "Broker ID already exists")
+    db.add(BrokerDefinition(**req.dict()))
+    db.commit()
+    return {"ok": True}
+
+@app.put("/api/admin/broker-definitions/{broker_id}")
+def update_broker_def(broker_id: str, req: dict,
+                      admin: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    bd = db.query(BrokerDefinition).filter(BrokerDefinition.broker_id == broker_id).first()
+    if not bd: raise HTTPException(404, "Not found")
+    for k, v in req.items():
+        if hasattr(bd, k): setattr(bd, k, v)
+    db.commit()
+    return {"ok": True}
+
+# ═══════════════════════════════════════════════════════════════
+# BROKER CONNECTIONS (user self-service)
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/brokers")
-def list_my_brokers(user=Depends(get_current_user)):
-    """List user's connected brokers — never returns secret values."""
-    brokers = DB["brokers"].get(user["email"], [])
-    safe = []
-    for b in brokers:
-        safe.append({
-            "id":           b["id"],
-            "broker_id":    b["broker_id"],
-            "broker_name":  b["broker_name"],
-            "market":       b["market"],
-            "is_connected": b.get("is_connected", False),
-            "last_tested":  b.get("last_tested"),
-            "mode":         b.get("mode", "paper"),
-            # Show masked values only
-            "fields_set":   list(b.get("encrypted_fields", {}).keys()),
-        })
-    return {"brokers": safe}
+def list_my_brokers(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    brokers = db.query(BrokerConnection).filter(BrokerConnection.user_id == user.id).all()
+    return {"brokers": [
+        {"id": b.id, "broker_id": b.broker_id, "broker_name": b.broker_name,
+         "market": b.market, "mode": b.mode, "is_connected": b.is_connected,
+         "last_tested": b.last_tested.isoformat() if b.last_tested else None,
+         "last_token_refresh": b.last_token_refresh.isoformat() if b.last_token_refresh else None,
+         "fields_count": len(b.encrypted_fields or {})}
+        for b in brokers
+    ]}
 
 class SaveBrokerReq(BaseModel):
     broker_id: str
-    fields: dict  # field_key -> plain text value
+    fields:    dict
+    mode:      str = "paper"
 
 @app.post("/api/brokers")
-def save_broker(req: SaveBrokerReq, user=Depends(get_current_user)):
-    """User saves their own broker credentials — encrypted before storage."""
-    defn = next((b for b in BROKER_DEFINITIONS if b["id"] == req.broker_id), None)
-    if not defn:
-        raise HTTPException(400, f"Unknown broker: {req.broker_id}")
+def save_broker(req: SaveBrokerReq,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    bd = db.query(BrokerDefinition).filter(BrokerDefinition.broker_id == req.broker_id).first()
+    if not bd: raise HTTPException(400, f"Unknown broker: {req.broker_id}")
 
-    # Encrypt all field values
+    # Encrypt all fields
     encrypted = {}
-    for key, value in req.fields.items():
-        if value and value.strip():
-            encrypted[key] = encrypt_cred(user["email"], value.strip())
+    for k, v in req.fields.items():
+        if v and str(v).strip():
+            encrypted[k + "_enc"] = encrypt(user.id, str(v).strip())
 
-    broker_record = {
-        "id":              secrets.token_hex(8),
-        "broker_id":       req.broker_id,
-        "broker_name":     defn["name"],
-        "market":          defn["market"],
-        "encrypted_fields": encrypted,
-        "is_connected":    False,
-        "last_tested":     None,
-        "mode":            req.fields.get("mode", "paper"),
-        "created_at":      datetime.utcnow().isoformat(),
-    }
+    # Upsert
+    existing = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == req.broker_id
+    ).first()
 
-    if user["email"] not in DB["brokers"]:
-        DB["brokers"][user["email"]] = []
+    if existing:
+        existing.encrypted_fields = encrypted
+        existing.mode = req.mode
+        existing.is_connected = False
+        bc = existing
+    else:
+        bc = BrokerConnection(
+            user_id=user.id, broker_id=req.broker_id,
+            broker_name=bd.name, market=bd.market,
+            mode=req.mode, encrypted_fields=encrypted,
+        )
+        db.add(bc)
 
-    # Replace if same broker_id exists, else add
-    existing = DB["brokers"][user["email"]]
-    existing = [b for b in existing if b["broker_id"] != req.broker_id]
-    existing.append(broker_record)
-    DB["brokers"][user["email"]] = existing
-
-    log.info(f"Broker saved: {req.broker_id} for {user['email']}")
-    return {"ok": True, "message": "Broker credentials saved and encrypted",
-            "broker_record_id": broker_record["id"]}
+    db.commit()
+    db.refresh(bc)
+    return {"ok": True, "message": "Credentials saved and encrypted", "connection_id": bc.id}
 
 @app.post("/api/brokers/{broker_id}/test")
-async def test_broker(broker_id: str, user=Depends(get_current_user)):
-    """Test broker connection using saved credentials."""
-    brokers = DB["brokers"].get(user["email"], [])
-    broker = next((b for b in brokers if b["broker_id"] == broker_id), None)
-    if not broker:
-        raise HTTPException(404, "Broker not configured")
+async def test_broker(broker_id: str,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    bc = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == broker_id
+    ).first()
+    if not bc: raise HTTPException(404, "Broker not configured")
 
-    # Decrypt fields for testing
-    fields = {k: decrypt_cred(user["email"], v)
-              for k, v in broker["encrypted_fields"].items()}
+    bd = db.query(BrokerDefinition).filter(BrokerDefinition.broker_id == broker_id).first()
 
-    result = await _test_broker_connection(broker_id, fields, user["email"])
+    result = await _test_connection(broker_id, bc, bd, user.id)
 
-    # Update connection status
-    broker["is_connected"] = result["connected"]
-    broker["last_tested"]  = datetime.utcnow().isoformat()
+    bc.is_connected = result["connected"]
+    bc.last_tested  = datetime.utcnow()
+    db.commit()
 
     return result
 
-async def _test_broker_connection(broker_id: str, fields: dict, email: str) -> dict:
-    """Actually test the broker API connection."""
-    try:
-        import httpx
-        if broker_id == "fyers":
-            # Test Fyers connection
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get("https://api-t1.fyers.in/api/v3/profile",
-                    headers={"Authorization": f"Bearer {fields.get('access_token','')}"})
-            if r.status_code == 200:
-                return {"connected": True, "message": "Fyers connected ✓"}
-            # Try auth flow
-            return {"connected": False,
-                    "message": "Credentials saved. Token will be generated at 8:50 AM tomorrow automatically.",
-                    "note": "TOTP-based auth runs daily — connection will be active from tomorrow morning"}
+async def _test_connection(broker_id: str, bc: BrokerConnection,
+                            bd: Optional[BrokerDefinition], user_id: str) -> dict:
+    """Generic connection test based on test_method from broker definition."""
+    import httpx
 
-        elif broker_id == "alpaca":
-            mode = fields.get("mode", "paper")
-            base = ("https://paper-api.alpaca.markets" if mode == "paper"
-                    else "https://api.alpaca.markets")
+    test_method = bd.test_method if bd else "totp"
+
+    if broker_id == "fyers" or test_method == "totp":
+        # For TOTP brokers: validate credentials format without making API calls
+        eng = FyersEngine(user_id, bc.encrypted_fields or {}, mode=bc.mode)
+        return await eng.validate_credentials()
+
+    elif test_method == "api_key" and broker_id == "alpaca":
+        fields = {k.replace("_enc",""): decrypt(user_id, v)
+                  for k, v in (bc.encrypted_fields or {}).items()}
+        mode = fields.get("mode","paper")
+        base = ("https://paper-api.alpaca.markets" if mode=="paper"
+                else "https://api.alpaca.markets")
+        try:
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.get(f"{base}/v2/account",
                     headers={"APCA-API-KEY-ID":     fields.get("api_key_id",""),
@@ -583,91 +626,73 @@ async def _test_broker_connection(broker_id: str, fields: dict, email: str) -> d
             if r.status_code == 200:
                 acc = r.json()
                 return {"connected": True,
-                        "message": f"Alpaca connected ✓ Account: {acc.get('account_number','')} | Cash: ${acc.get('cash',0)}"}
-            return {"connected": False,
-                    "message": f"Alpaca connection failed — check your API Key ID and Secret Key"}
+                        "message": f"✓ Alpaca connected. Account: {acc.get('account_number','')} | Cash: ${float(acc.get('cash',0)):.2f}"}
+            return {"connected": False, "message": f"Alpaca auth failed (HTTP {r.status_code}). Check API keys."}
+        except Exception as e:
+            return {"connected": False, "message": f"Connection error: {str(e)}"}
 
-        elif broker_id == "ig":
-            base = ("https://api.ig.com/gateway/deal" if fields.get("account_type")=="live"
-                    else "https://demo-api.ig.com/gateway/deal")
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(f"{base}/session",
-                    headers={"X-IG-API-KEY": fields.get("api_key",""),
-                             "Content-Type": "application/json", "Version": "2"},
-                    json={"identifier": fields.get("username",""),
-                          "password":   fields.get("password","")})
-            if r.status_code == 200:
-                return {"connected": True, "message": "IG Index connected ✓"}
-            return {"connected": False, "message": "IG connection failed — check credentials"}
-
-        elif broker_id == "trading212":
-            base = ("https://demo.trading212.com" if fields.get("account_type")=="demo"
-                    else "https://live.trading212.com")
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(f"{base}/api/v0/equity/account/info",
-                    headers={"Authorization": fields.get("api_key","")})
-            if r.status_code == 200:
-                return {"connected": True, "message": "Trading 212 connected ✓"}
-            return {"connected": False, "message": "Trading 212 connection failed — check API key"}
-
-        else:
-            # For other brokers (Zerodha, Angel, etc) — credentials saved, auth runs at market open
-            return {"connected": True,
-                    "message": f"Credentials saved ✓ {broker_id.title()} will authenticate automatically at 8:50 AM on the next trading day"}
-
-    except Exception as e:
-        return {"connected": False, "message": f"Connection error: {str(e)}"}
+    else:
+        # Generic — just check fields present
+        required = [f["key"] for f in (bd.fields_config or []) if not f.get("optional")]
+        missing = [k for k in required if not (bc.encrypted_fields or {}).get(k+"_enc")]
+        if missing:
+            return {"connected": False, "message": f"Missing fields: {', '.join(missing)}"}
+        return {"connected": True,
+                "message": f"✓ Credentials saved for {bd.name if bd else broker_id}. Will authenticate at market open."}
 
 @app.delete("/api/brokers/{broker_id}")
-def delete_broker(broker_id: str, user=Depends(get_current_user)):
-    if user["email"] in DB["brokers"]:
-        DB["brokers"][user["email"]] = [
-            b for b in DB["brokers"][user["email"]]
-            if b["broker_id"] != broker_id
-        ]
+def delete_broker(broker_id: str,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == broker_id
+    ).delete()
+    db.commit()
     return {"ok": True}
 
 # ═══════════════════════════════════════════════════════════════
-# AUTOMATIONS — self-service
+# AUTOMATIONS
 # ═══════════════════════════════════════════════════════════════
 
-class SaveAutomationReq(BaseModel):
-    name: str
-    symbol: str
-    broker_id: str
-    strategies: list
-    mode: str = "paper"
-    config: dict = {}
-
 @app.get("/api/automations")
-def list_automations(user=Depends(get_current_user)):
-    return {"automations": DB["automations"].get(user["email"], [])}
+def list_automations(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    autos = db.query(Automation).filter(Automation.user_id == user.id).all()
+    return {"automations": [
+        {"id": a.id, "name": a.name, "symbol": a.symbol,
+         "broker_id": a.broker_id, "strategies": a.strategies,
+         "mode": a.mode, "status": a.status, "config": a.config,
+         "created_at": a.created_at.isoformat() if a.created_at else None}
+        for a in autos
+    ]}
+
+class SaveAutomationReq(BaseModel):
+    name:       str
+    symbol:     str
+    broker_id:  str
+    strategies: list
+    mode:       str = "paper"
+    config:     dict = {}
 
 @app.post("/api/automations")
-def save_automation(req: SaveAutomationReq, user=Depends(get_current_user)):
-    if user["email"] not in DB["automations"]:
-        DB["automations"][user["email"]] = []
-    auto = {
-        "id":         secrets.token_hex(8),
-        "name":       req.name,
-        "symbol":     req.symbol,
-        "broker_id":  req.broker_id,
-        "strategies": req.strategies,
-        "mode":       req.mode,
-        "config":     req.config,
-        "status":     "IDLE",
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    DB["automations"][user["email"]].append(auto)
-    return {"ok": True, "automation": auto}
+def save_automation(req: SaveAutomationReq,
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    a = Automation(user_id=user.id, name=req.name, symbol=req.symbol,
+                   broker_id=req.broker_id, strategies=req.strategies,
+                   mode=req.mode, config=req.config, status="IDLE")
+    db.add(a); db.commit(); db.refresh(a)
+    return {"ok": True, "automation": {"id": a.id, "name": a.name}}
 
 @app.delete("/api/automations/{auto_id}")
-def delete_automation(auto_id: str, user=Depends(get_current_user)):
-    if user["email"] in DB["automations"]:
-        DB["automations"][user["email"]] = [
-            a for a in DB["automations"][user["email"]]
-            if a["id"] != auto_id
-        ]
+def delete_automation(auto_id: str,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    db.query(Automation).filter(
+        Automation.id == auto_id,
+        Automation.user_id == user.id
+    ).delete()
+    db.commit()
     return {"ok": True}
 
 # ═══════════════════════════════════════════════════════════════
@@ -675,57 +700,543 @@ def delete_automation(auto_id: str, user=Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/strategies")
-def get_strategies(user=Depends(get_current_user)):
+def get_strategies(user: User = Depends(get_current_user)):
     return {"strategies": [
-        {"code": "S7", "name": "All-Strike Iron Butterfly", "tier": "PRO",    "enabled": True,  "auto": True},
-        {"code": "S1", "name": "ORB Breakdown Sell",        "tier": "STARTER","enabled": True},
-        {"code": "S2", "name": "VWAP Squeeze + EMA Cross",  "tier": "STARTER","enabled": True},
-        {"code": "S8", "name": "Opening Gap Fade",           "tier": "STARTER","enabled": True},
-        {"code": "S3", "name": "Breakout Reversal",          "tier": "STARTER","enabled": True},
-        {"code": "S4", "name": "Iron Condor",                "tier": "PRO",    "enabled": True},
-        {"code": "S5", "name": "Ratio Spread",               "tier": "PRO",    "enabled": False},
-        {"code": "S6", "name": "Theta Decay Strangle",       "tier": "PRO",    "enabled": True},
-        {"code": "S9", "name": "Pre-Expiry Theta Crush",     "tier": "PRO",    "enabled": True},
+        {"code":"S7","name":"All-Strike Iron Butterfly","tier":"PRO","auto":True},
+        {"code":"S1","name":"ORB Breakdown Sell",       "tier":"STARTER"},
+        {"code":"S2","name":"VWAP Squeeze + EMA Cross", "tier":"STARTER"},
+        {"code":"S8","name":"Opening Gap Fade",          "tier":"STARTER"},
+        {"code":"S3","name":"Breakout Reversal",         "tier":"STARTER"},
+        {"code":"S4","name":"Iron Condor",               "tier":"PRO"},
+        {"code":"S5","name":"Ratio Spread",              "tier":"PRO"},
+        {"code":"S6","name":"Theta Decay Strangle",      "tier":"PRO"},
+        {"code":"S9","name":"Pre-Expiry Theta Crush",    "tier":"PRO"},
     ]}
 
 # ═══════════════════════════════════════════════════════════════
-# ADMIN — PLATFORM STATS
+# TRADES
 # ═══════════════════════════════════════════════════════════════
 
-@app.get("/api/admin/stats")
-def admin_stats(admin=Depends(require_admin)):
+@app.get("/api/trades")
+def get_trades(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    trades = db.query(Trade).filter(Trade.user_id == user.id)\
+               .order_by(Trade.created_at.desc()).limit(100).all()
+    return {"trades": [
+        {"id": t.id, "date": t.trade_date, "symbol": t.symbol,
+         "strategy": t.strategy_code, "mode": t.mode,
+         "atm": t.atm_strike, "entry": t.entry_combined,
+         "exit": t.exit_combined, "pnl": t.net_pnl,
+         "exit_reason": t.exit_reason, "is_open": t.is_open}
+        for t in trades
+    ]}
+
+# ═══════════════════════════════════════════════════════════════
+# ENGINE WebSocket — real-time updates
+# ═══════════════════════════════════════════════════════════════
+
+# Active engine states per user
+active_engines: dict[str, EngineState] = {}
+ws_clients: dict[str, list[WebSocket]] = {}
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await websocket.accept()
+    if user_id not in ws_clients:
+        ws_clients[user_id] = []
+    ws_clients[user_id].append(websocket)
+    try:
+        while True:
+            # Send engine state every 5 seconds
+            if user_id in active_engines:
+                state = active_engines[user_id]
+                atm = state.atm
+                await websocket.send_json({
+                    "type": "tick",
+                    "spot": state.spot_history[-1] if state.spot_history else 0,
+                    "atm": state.atm_strike,
+                    "combined": atm.current if atm else 0,
+                    "vwap": atm.vwap_val if atm else 0,
+                    "ema75": atm.ema75 if atm else 0,
+                    "orb_low": atm.orb_low if atm else 0,
+                    "position": state.position,
+                    "day_pnl": state.day_pnl,
+                    "mode": "IN_TRADE" if state.position else ("MONITORING" if state.orb_complete else "ORB_BUILD"),
+                    "log": state.log[-20:],
+                    "strikes": [
+                        {"strike": s.strike, "combined": s.current,
+                         "orb_low": s.orb_low, "orb_high": s.orb_high,
+                         "fired": s.fired}
+                        for s in state.strikes
+                    ]
+                })
+            await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        ws_clients[user_id].remove(websocket)
+
+# ═══════════════════════════════════════════════════════════════
+# ENGINE START/STOP
+# ═══════════════════════════════════════════════════════════════
+
+class StartEngineReq(BaseModel):
+    automation_id: str
+
+@app.post("/api/engine/start")
+async def start_engine(req: StartEngineReq,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    auto = db.query(Automation).filter(
+        Automation.id == req.automation_id,
+        Automation.user_id == user.id
+    ).first()
+    if not auto: raise HTTPException(404, "Automation not found")
+
+    bc = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == auto.broker_id
+    ).first()
+    if not bc: raise HTTPException(400, "Broker not connected")
+    if not bc.is_connected:
+        raise HTTPException(400, "Broker connection not validated. Go to My Brokers and test connection first.")
+
+    # Build engine state
+    config = {**auto.config, "strategies": auto.strategies, "mode": auto.mode}
+    state = EngineState(config)
+    active_engines[user.id] = state
+
+    # Start engine loop
+    fyers_eng = FyersEngine(
+        user.id,
+        bc.encrypted_fields or {},
+        access_token_enc=bc.access_token_enc,
+        mode=auto.mode
+    )
+
+    asyncio.create_task(_run_engine(user.id, auto, state, fyers_eng, db))
+    auto.status = "RUNNING"
+    db.commit()
+
+    return {"ok": True, "message": f"Engine started for {auto.name}"}
+
+@app.post("/api/engine/stop")
+async def stop_engine(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.id in active_engines:
+        active_engines[user.id].is_running = False
+        del active_engines[user.id]
+    db.query(Automation).filter(Automation.user_id == user.id)\
+      .update({"status": "IDLE"})
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/engine/status")
+def engine_status(user: User = Depends(get_current_user)):
+    state = active_engines.get(user.id)
+    if not state:
+        return {"running": False, "mode": "IDLE"}
+    atm = state.atm
     return {
-        "total_users":     len(DB["users"]),
-        "active_users":    sum(1 for u in DB["users"].values() if u["is_active"]),
-        "total_brokers":   sum(len(v) for v in DB["brokers"].values()),
-        "total_automations": sum(len(v) for v in DB["automations"].values()),
-        "plans": {
-            "FREE":       sum(1 for u in DB["users"].values() if u["plan"]=="FREE"),
-            "STARTER":    sum(1 for u in DB["users"].values() if u["plan"]=="STARTER"),
-            "PRO":        sum(1 for u in DB["users"].values() if u["plan"]=="PRO"),
-            "ENTERPRISE": sum(1 for u in DB["users"].values() if u["plan"]=="ENTERPRISE"),
-        }
+        "running": True,
+        "mode": "IN_TRADE" if state.position else "MONITORING",
+        "spot": state.spot_history[-1] if state.spot_history else 0,
+        "atm": state.atm_strike,
+        "combined": atm.current if atm else 0,
+        "position": state.position,
+        "day_pnl": state.day_pnl,
     }
 
-@app.get("/api/admin/settings")
-def get_settings(admin=Depends(require_admin)):
-    return {
-        "registration_open":  os.environ.get("REGISTRATION_OPEN","true"),
-        "app_name":           os.environ.get("APP_NAME","ALGO-DESK"),
-        "app_domain":         os.environ.get("APP_DOMAIN",""),
-        "max_users":          os.environ.get("MAX_USERS","500"),
+@app.post("/api/engine/force-exit")
+async def force_exit(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    state = active_engines.get(user.id)
+    if state and state.position:
+        state.position["force_exit"] = True
+    return {"ok": True}
+
+# ═══════════════════════════════════════════════════════════════
+# ENGINE LOOP
+# ═══════════════════════════════════════════════════════════════
+
+async def _run_engine(user_id: str, auto: Automation,
+                      state: EngineState, fyers: FyersEngine,
+                      db_factory):
+    """Main engine loop. Runs every 60 seconds."""
+    state.is_running = True
+    config = state.config
+    symbol = auto.symbol
+    gap    = state.gap
+    sides  = state.sides
+    lot_sz = int(config.get("lot_size", 25))
+    lots   = int(config.get("lots", 1))
+
+    state.emit(f"Engine started. Symbol: {symbol}. Mode: {auto.mode.upper()}", "START")
+
+    # If token expired, try to authenticate
+    if not fyers._token:
+        state.emit("No active token. Attempting authentication...", "AUTH")
+        ok, msg, enc_token = await fyers.authenticate()
+        if ok and enc_token:
+            state.emit(f"Authentication successful ✓", "OK")
+            # Save token to DB
+            db = SessionLocal()
+            try:
+                bc = db.query(BrokerConnection).filter(
+                    BrokerConnection.user_id == user_id,
+                    BrokerConnection.broker_id == auto.broker_id
+                ).first()
+                if bc:
+                    bc.access_token_enc = enc_token
+                    bc.last_token_refresh = datetime.utcnow()
+                    bc.is_connected = True
+                    db.commit()
+            finally:
+                db.close()
+        else:
+            state.emit(f"Authentication failed: {msg}", "ERROR")
+            state.emit("Engine stopped. Check broker credentials.", "ERROR")
+            return
+
+    while state.is_running:
+        try:
+            now = datetime.now()
+            t   = now.time()
+
+            # Auto-exit time
+            exit_time_str = config.get("auto_exit_time", "14:00")
+            eh, em = map(int, exit_time_str.split(":"))
+            if t >= dtime(eh, em):
+                if state.position:
+                    await _close_position(state, fyers, "AUTO_EXIT", lot_sz, lots)
+                state.emit(f"Auto-exit at {exit_time_str}. Engine stopping.", "INFO")
+                break
+
+            # Max loss / max profit check
+            max_loss   = float(config.get("max_loss",   5000))
+            max_profit = float(config.get("max_profit", 15000))
+            if state.day_pnl <= -max_loss:
+                if state.position:
+                    await _close_position(state, fyers, "MAX_LOSS", lot_sz, lots)
+                state.emit(f"Max daily loss ₹{max_loss} hit. Engine stopping.", "SL")
+                break
+            if state.day_pnl >= max_profit:
+                if state.position:
+                    await _close_position(state, fyers, "MAX_PROFIT", lot_sz, lots)
+                state.emit(f"Max daily profit ₹{max_profit} hit. Engine stopping.", "OK")
+                break
+
+            # Get spot price
+            spot = await fyers.get_ltp(symbol)
+            if spot is None:
+                state.emit("Could not get spot price. Retrying...", "WARN")
+                await asyncio.sleep(30)
+                continue
+
+            state.spot_history.append(spot)
+
+            # Lock ATM at 9:15
+            if t >= dtime(9, 15) and not state.atm_strike:
+                state.spot_locked = spot
+                state.atm_strike  = nearest_strike(spot, gap)
+                # Build 7-strike grid
+                for i in range(-sides, sides+1):
+                    sk = StrikeState(
+                        strike=state.atm_strike + i * gap,
+                        offset=i,
+                        is_atm=(i == 0)
+                    )
+                    state.strikes.append(sk)
+                state.emit(f"ATM locked: {state.atm_strike} | Spot: {spot:.1f} | ±{sides} strikes grid built", "OK")
+
+            # Get option chain and update strike states
+            if state.strikes:
+                chain = await fyers.get_option_chain(symbol, strike_count=sides*2+2)
+                for sk in state.strikes:
+                    data = chain.get(sk.strike)
+                    if data:
+                        combined = data["ce_ltp"] + data["pe_ltp"]
+                        sk.combined_history.append(combined)
+                        sk.ce_symbol = data.get("ce_symbol", "")
+                        sk.pe_symbol = data.get("pe_symbol", "")
+                        # ORB window: collect high/low
+                        if dtime(9,15) <= t <= dtime(9,21):
+                            if sk.orb_high == 0:
+                                sk.orb_high = sk.orb_low = combined
+                            sk.orb_high = max(sk.orb_high, combined)
+                            sk.orb_low  = min(sk.orb_low,  combined)
+
+            # ORB complete at 9:22
+            if t >= dtime(9, 22) and not state.orb_complete:
+                state.orb_complete = True
+                atm = state.atm
+                if atm:
+                    state.emit(f"ORB complete. ATM {atm.strike}: Low={atm.orb_low:.1f} High={atm.orb_high:.1f}", "OK")
+                # Check all-7 breakdown
+                broken = [s for s in state.strikes
+                          if s.orb_low > 0 and s.current < s.orb_low * 0.98]
+                if len(broken) >= len(state.strikes):
+                    state.all_breakdown = True
+                    state.emit(f"ALL-7 BREAKDOWN DETECTED ★ Routing to S7 Iron Butterfly", "SIGNAL")
+                    _send_tg_task(user_id, db_factory, "★ ALL-7 BREAKDOWN — Iron Butterfly signal")
+                else:
+                    state.no_breakdown = len(broken) == 0
+
+            # Check SL on open position
+            if state.position:
+                reason = check_sl(state)
+                if reason or state.position.get("force_exit"):
+                    reason = reason or "FORCE_EXIT"
+                    await _close_position(state, fyers, reason, lot_sz, lots)
+                    _send_tg_task(user_id, db_factory,
+                                  f"🔴 Position closed: {reason} | P&L: ₹{state.day_pnl:.0f}")
+
+            # Check strategies for new signal
+            elif state.orb_complete:
+                signal = check_all_strategies(state, now)
+                if signal:
+                    state.emit(f"SIGNAL: [{signal['code']}] {signal['reason']}", "SIGNAL")
+                    await _open_position(state, fyers, signal, lot_sz, lots, user_id, auto.id, db_factory)
+                    _send_tg_task(user_id, db_factory,
+                                  f"🟢 Signal: {signal['code']} | {signal['name']}\n"
+                                  f"Strike: {signal['strike']} | Combined: {signal['combined']:.1f}\n"
+                                  f"Mode: {auto.mode.upper()}")
+
+        except Exception as e:
+            log.error(f"[engine:{user_id}] Loop error: {e}")
+            state.emit(f"Engine error: {str(e)}", "ERROR")
+
+        await asyncio.sleep(60)  # Wait 1 minute between ticks
+
+    state.is_running = False
+    state.emit("Engine stopped.", "INFO")
+
+async def _open_position(state: EngineState, fyers: FyersEngine,
+                          signal: dict, lot_sz: int, lots: int,
+                          user_id: str, auto_id: str, db_factory):
+    """Place entry orders and record position."""
+    qty = lot_sz * lots
+    orders = []
+
+    # Place sell legs
+    for leg, symbol_key in [("sell_ce", "ce_symbol"), ("sell_pe", "pe_symbol")]:
+        sk = next((s for s in state.strikes if s.strike == signal[leg]), None)
+        sym = sk.ce_symbol if "ce" in leg else (sk.pe_symbol if sk else "")
+        if sym:
+            r = await fyers.place_order(sym, "SELL", qty)
+            orders.append({"leg": leg, "symbol": sym, "order_id": r.get("order_id"),
+                           "fill_price": r.get("fill_price", 0), "ok": r["ok"]})
+            state.emit(f"ORDER: SELL {qty}x {sym} [{leg}] → {r.get('message','')}", "ORDER")
+
+    # Place hedge legs (buy)
+    for leg, strike_key in [("buy_ce", "buy_ce"), ("buy_pe", "buy_pe")]:
+        strike_val = signal.get(strike_key)
+        if strike_val:
+            sk = next((s for s in state.strikes if s.strike == strike_val), None)
+            sym = (sk.ce_symbol if "ce" in leg else sk.pe_symbol) if sk else ""
+            if sym:
+                r = await fyers.place_order(sym, "BUY", qty)
+                orders.append({"leg": leg, "symbol": sym, "order_id": r.get("order_id"),
+                               "fill_price": r.get("fill_price", 0), "ok": r["ok"]})
+                state.emit(f"ORDER: BUY {qty}x {sym} [{leg}] → {r.get('message','')}", "ORDER")
+
+    # Extra sell legs for butterfly/condor
+    for leg in ["sell_ce2", "sell_pe2"]:
+        strike_val = signal.get(leg)
+        if strike_val:
+            sk = next((s for s in state.strikes if s.strike == strike_val), None)
+            sym = (sk.ce_symbol if "ce" in leg else sk.pe_symbol) if sk else ""
+            if sym:
+                r = await fyers.place_order(sym, "SELL", qty)
+                orders.append({"leg": leg, "symbol": sym, "order_id": r.get("order_id"),
+                               "fill_price": r.get("fill_price", 0), "ok": r["ok"]})
+                state.emit(f"ORDER: SELL {qty}x {sym} [{leg}] → {r.get('message','')}", "ORDER")
+
+    atm = state.atm
+    combined = atm.current if atm else signal["combined"]
+
+    state.position = {
+        "signal":         signal,
+        "entry_combined": combined,
+        "entry_time":     datetime.now().isoformat(),
+        "orders":         orders,
+        "lot_size":       lot_sz,
+        "lots":           lots,
     }
+
+    # Save to DB
+    db = SessionLocal()
+    try:
+        trade = Trade(
+            user_id=user_id, automation_id=auto_id,
+            trade_date=datetime.now().strftime("%Y-%m-%d"),
+            symbol=signal.get("symbol", state.config.get("underlying","")),
+            strategy_code=signal["code"],
+            mode=state.config.get("mode","paper"),
+            atm_strike=state.atm_strike,
+            sell_ce_strike=signal["sell_ce"],
+            sell_pe_strike=signal["sell_pe"],
+            buy_ce_strike=signal.get("buy_ce"),
+            buy_pe_strike=signal.get("buy_pe"),
+            entry_combined=combined,
+            net_credit=combined,
+            lots=lots, lot_size=lot_sz,
+            entry_time=datetime.now(),
+            is_open=True,
+            signal_data=signal,
+            orders=orders,
+        )
+        db.add(trade)
+        db.commit()
+        state.position["trade_id"] = trade.id
+    finally:
+        db.close()
+
+async def _close_position(state: EngineState, fyers: FyersEngine,
+                           reason: str, lot_sz: int, lots: int):
+    """Place exit orders and calculate P&L."""
+    if not state.position:
+        return
+    qty = lot_sz * lots
+    pos = state.position
+    atm = state.atm
+    exit_combined = atm.current if atm else pos["entry_combined"]
+
+    state.emit(f"CLOSING position. Reason: {reason}", "EXIT")
+
+    # Reverse all legs
+    for order in pos.get("orders", []):
+        if not order.get("symbol"):
+            continue
+        side = "BUY" if "sell" in order["leg"] else "SELL"
+        r = await fyers.place_order(order["symbol"], side, qty)
+        state.emit(f"CLOSE: {side} {qty}x {order['symbol']} → {r.get('message','')}", "ORDER")
+
+    # Calculate P&L
+    net_credit = pos["entry_combined"]
+    pnl = (net_credit - exit_combined) * lots * lot_sz
+    state.day_pnl += pnl
+    state.emit(f"P&L: ₹{pnl:.0f} | Day total: ₹{state.day_pnl:.0f}", "OK" if pnl > 0 else "SL")
+
+    # Update DB
+    trade_id = pos.get("trade_id")
+    if trade_id:
+        db = SessionLocal()
+        try:
+            trade = db.query(Trade).filter(Trade.id == trade_id).first()
+            if trade:
+                trade.exit_combined = exit_combined
+                trade.exit_time     = datetime.now()
+                trade.exit_reason   = reason
+                trade.gross_pnl     = pnl
+                trade.net_pnl       = pnl - trade.brokerage
+                trade.is_open       = False
+                db.commit()
+        finally:
+            db.close()
+
+    state.position = None
+
+# ═══════════════════════════════════════════════════════════════
+# TELEGRAM
+# ═══════════════════════════════════════════════════════════════
+
+async def _send_telegram(bot_token: str, chat_id: str, message: str):
+    if not bot_token or not chat_id:
+        return
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": f"⬡ ALGO-DESK\n\n{message}",
+                      "parse_mode": "HTML"}
+            )
+    except Exception as e:
+        log.error(f"Telegram error: {e}")
+
+def _send_tg_task(user_id: str, db_factory, message: str):
+    """Fire-and-forget Telegram alert."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and user.telegram_token and user.telegram_chat:
+            asyncio.create_task(_send_telegram(
+                user.telegram_token, user.telegram_chat, message
+            ))
+    finally:
+        db.close()
+
+@app.post("/api/telegram/test")
+async def test_telegram(user: User = Depends(get_current_user)):
+    if not user.telegram_token or not user.telegram_chat:
+        raise HTTPException(400, "Telegram not configured. Save your Bot Token and Chat ID in profile first.")
+    await _send_telegram(
+        user.telegram_token, user.telegram_chat,
+        f"✅ Test message from ALGO-DESK\n\nHello {user.name}! Telegram alerts are working correctly."
+    )
+    return {"ok": True, "message": "Test message sent"}
+
+# ═══════════════════════════════════════════════════════════════
+# SCHEDULED TOKEN REFRESH (8:50 AM IST daily)
+# ═══════════════════════════════════════════════════════════════
+
+async def _daily_token_refresh():
+    """Refresh Fyers tokens for all active users at 8:50 AM IST."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    import pytz
+
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Kolkata"))
+
+    async def refresh_all():
+        log.info("Daily token refresh starting...")
+        db = SessionLocal()
+        try:
+            connections = db.query(BrokerConnection).filter(
+                BrokerConnection.broker_id == "fyers"
+            ).all()
+            for bc in connections:
+                user = db.query(User).filter(User.id == bc.user_id).first()
+                if not user or not user.is_active:
+                    continue
+                eng = FyersEngine(user.id, bc.encrypted_fields or {}, mode=bc.mode)
+                ok, msg, enc_token = await eng.authenticate()
+                if ok and enc_token:
+                    bc.access_token_enc    = enc_token
+                    bc.last_token_refresh  = datetime.utcnow()
+                    bc.is_connected        = True
+                    log.info(f"Token refreshed for {user.email}")
+                    if user.telegram_token and user.telegram_chat:
+                        await _send_telegram(
+                            user.telegram_token, user.telegram_chat,
+                            f"✅ Daily token refresh successful\nFyers connected and ready for today's trading."
+                        )
+                else:
+                    log.error(f"Token refresh failed for {user.email}: {msg}")
+                    if user.telegram_token and user.telegram_chat:
+                        await _send_telegram(
+                            user.telegram_token, user.telegram_chat,
+                            f"❌ Token refresh failed: {msg}\nCheck your Fyers credentials."
+                        )
+            db.commit()
+        except Exception as e:
+            log.error(f"Token refresh error: {e}")
+        finally:
+            db.close()
+
+    scheduler.add_job(refresh_all, "cron", hour=8, minute=50)
+    scheduler.start()
+    log.info("Token refresh scheduler started (8:50 AM IST daily)")
+
+@app.on_event("startup")
+async def start_scheduler():
+    asyncio.create_task(_daily_token_refresh())
 
 # ═══════════════════════════════════════════════════════════════
 # SERVE FRONTEND
 # ═══════════════════════════════════════════════════════════════
 
 frontend_path = "/app/frontend"
-if os.path.exists(frontend_path) and os.listdir(frontend_path):
+if os.path.exists(frontend_path) and any(
+    f.endswith(".html") for f in os.listdir(frontend_path)
+):
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 else:
     @app.get("/")
     def root():
-        return JSONResponse({"message": "ALGO-DESK API running",
-                             "version": "4.0.0",
-                             "login": "POST /api/auth/login"})
+        return JSONResponse({"message": "ALGO-DESK API v4", "version": "4.0.0"})
