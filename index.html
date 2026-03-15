@@ -1,1 +1,950 @@
-<html><head><meta charset="UTF-8"></head><body>Loading...</body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALGO-DESK — My Trading Setup</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root{
+--bg:#08111c;--bg2:#0d1825;--bg3:#111f30;--bg4:#182840;
+--b:#1c2d42;--b2:#243650;
+--tx:#c8d8f0;--tx2:#7898ba;--tx3:#486080;
+--gr:#00d4a0;--gr2:#009e78;--rd:#ff4466;--am:#f5a623;
+--bl:#3d96ff;--pu:#9b6dff;--te:#00c8c8;
+--mono:'Consolas','Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:system-ui,sans-serif;font-size:12px;min-height:100vh}
+::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-thumb{background:var(--b2)}
+
+.shell{display:flex;flex-direction:column;min-height:100vh}
+.bar{height:44px;background:var(--bg2);border-bottom:1px solid var(--b);display:flex;align-items:center;padding:0 14px;gap:0}
+.logo{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--gr);letter-spacing:2px;margin-right:6px}
+.ver{font-size:9px;color:var(--tx3);font-family:var(--mono);margin-right:18px;align-self:flex-end;margin-bottom:8px}
+.tabs{display:flex;flex:1;overflow-x:auto}
+.tab{padding:0 13px;height:44px;display:flex;align-items:center;font-size:11px;font-weight:500;color:var(--tx3);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;gap:4px;transition:all .12s}
+.tab:hover{color:var(--tx2)}.tab.on{color:var(--gr);border-bottom-color:var(--gr)}
+.tdot{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.7}
+.uarea{margin-left:auto;display:flex;align-items:center;gap:8px}
+.pill{display:flex;align-items:center;gap:4px;padding:2px 9px;border-radius:99px;font-size:10px;font-weight:600;font-family:var(--mono)}
+.pill.paper{background:rgba(245,166,35,.12);color:var(--am);border:1px solid rgba(245,166,35,.22)}
+.pill.live{background:rgba(0,212,160,.12);color:var(--gr);border:1px solid rgba(0,212,160,.22)}
+.pill.idle{background:rgba(72,96,128,.12);color:var(--tx2);border:1px solid var(--b)}
+.pdot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.pdot.blink{animation:bl 1.3s infinite}
+@keyframes bl{0%,100%{opacity:1}50%{opacity:.2}}
+.av{width:27px;height:27px;border-radius:50%;background:var(--bg4);border:1px solid var(--b2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--tx2);cursor:pointer}
+
+.body{flex:1;padding:13px;display:flex;flex-direction:column;gap:11px;overflow-y:auto}
+.page{display:none;flex-direction:column;gap:11px}
+.page.on{display:flex}
+
+.card{background:var(--bg2);border:1px solid var(--b);border-radius:10px}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--b);background:var(--bg3);border-radius:10px 10px 0 0}
+.ct{font-size:10px;font-weight:600;letter-spacing:.7px;color:var(--tx2);text-transform:uppercase}
+.cb{padding:12px}
+
+.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:11px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.gauto{display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px}
+
+.m{background:var(--bg3);border:1px solid var(--b);border-radius:8px;padding:9px 11px}
+.ml{font-size:9px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px}
+.mv{font-family:var(--mono);font-size:15px;font-weight:700}
+.ms{font-size:9px;color:var(--tx3);margin-top:2px}
+.c-gr{color:var(--gr)}.c-rd{color:var(--rd)}.c-am{color:var(--am)}.c-bl{color:var(--bl)}.c-pu{color:var(--pu)}
+
+.bd{display:inline-flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700}
+.bdg{background:rgba(0,212,160,.12);color:var(--gr)}.bdr{background:rgba(255,68,102,.12);color:var(--rd)}
+.bda{background:rgba(245,166,35,.12);color:var(--am)}.bdb{background:rgba(61,150,255,.12);color:var(--bl)}
+.bdp{background:rgba(155,109,255,.12);color:var(--pu)}.bdx{background:rgba(72,96,128,.08);color:var(--tx2)}
+
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:6px;border:1px solid;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;transition:all .1s;line-height:1}
+.btng{background:rgba(0,158,120,.13);color:var(--gr);border-color:rgba(0,158,120,.28)}.btng:hover{background:rgba(0,158,120,.23)}
+.btnr{background:rgba(255,68,102,.1);color:var(--rd);border-color:rgba(255,68,102,.2)}
+.btnb{background:rgba(61,150,255,.1);color:var(--bl);border-color:rgba(61,150,255,.2)}.btnb:hover{background:rgba(61,150,255,.2)}
+.btna{background:rgba(245,166,35,.1);color:var(--am);border-color:rgba(245,166,35,.2)}
+.btnx{background:var(--bg3);color:var(--tx2);border-color:var(--b)}.btnx:hover{color:var(--tx)}
+.brow{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+
+.frow{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.frow label{font-size:9px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px}
+.frow input,.frow select,.frow textarea{background:var(--bg3);border:1px solid var(--b2);border-radius:5px;padding:6px 9px;color:var(--tx);font-size:12px;outline:none;width:100%;font-family:inherit;transition:border .12s}
+.frow input:focus,.frow select:focus{border-color:var(--bl)}
+.hint{font-size:10px;color:var(--tx3);margin-top:2px;line-height:1.5}
+
+.trow{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.tog{position:relative;width:30px;height:17px;flex-shrink:0}
+.tog input{opacity:0;width:0;height:0;position:absolute}
+.tsl{position:absolute;inset:0;background:var(--bg4);border-radius:9px;cursor:pointer;transition:.15s;border:1px solid var(--b2)}
+.tsl:before{content:'';position:absolute;height:11px;width:11px;left:2px;top:2px;background:var(--tx3);border-radius:50%;transition:.15s}
+input:checked+.tsl{background:var(--gr2);border-color:var(--gr2)}
+input:checked+.tsl:before{transform:translateX(13px);background:#000}
+.tlbl{font-size:11px;color:var(--tx2)}
+
+.twrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{padding:5px 8px;text-align:left;font-size:9px;font-weight:600;letter-spacing:.7px;color:var(--tx3);text-transform:uppercase;border-bottom:1px solid var(--b)}
+td{padding:6px 8px;border-bottom:1px solid rgba(28,45,66,.4);color:var(--tx2)}
+td.mn{font-family:var(--mono)}
+
+.log{background:var(--bg);border:1px solid var(--b);border-radius:6px;padding:7px;font-family:var(--mono);font-size:10px;line-height:1.9;max-height:200px;overflow-y:auto}
+.ll{display:flex;gap:6px;border-bottom:1px solid rgba(28,45,66,.35);padding:2px 0}
+.lt{color:var(--tx3);min-width:50px}.lm{color:var(--tx2);flex:1}
+.ltg{padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;white-space:nowrap}
+.ltg.S{background:rgba(0,212,160,.1);color:var(--gr)}.ltg.O{background:rgba(61,150,255,.1);color:var(--bl)}
+.ltg.I{background:rgba(72,96,128,.07);color:var(--tx2)}.ltg.E{background:rgba(155,109,255,.1);color:var(--pu)}
+.ltg.SL{background:rgba(255,68,102,.1);color:var(--rd)}.ltg.A{background:rgba(245,166,35,.1);color:var(--am)}
+
+.abox{border-radius:6px;padding:8px 11px;display:flex;gap:7px;align-items:flex-start;font-size:11px;line-height:1.5;margin-bottom:8px}
+.ai{background:rgba(61,150,255,.07);border:1px solid rgba(61,150,255,.14);color:var(--tx)}
+.aw{background:rgba(245,166,35,.07);border:1px solid rgba(245,166,35,.14);color:var(--tx)}
+.as{background:rgba(0,212,160,.07);border:1px solid rgba(0,212,160,.14);color:var(--tx)}
+
+.divr{border:none;border-top:1px solid var(--b);margin:9px 0}
+.stitle{font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--tx3);text-transform:uppercase;margin:10px 0 7px}
+
+/* BROKER CARDS */
+.broker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px}
+.broker-card{background:var(--bg3);border:1px solid var(--b);border-radius:8px;padding:11px 12px;cursor:pointer;position:relative;transition:all .12s}
+.broker-card:hover{border-color:var(--b2)}.broker-card.selected{border-color:var(--bl);background:rgba(61,150,255,.04)}
+.broker-card.connected{border-color:var(--gr)}
+.broker-flag{font-size:16px;margin-bottom:5px;display:block}
+.broker-name{font-size:11px;font-weight:600;margin-bottom:2px}
+.broker-market{font-size:10px;color:var(--tx3)}
+.broker-refresh{font-size:9px;color:var(--gr);margin-top:4px}
+.broker-status{position:absolute;top:8px;right:8px}
+.bchk{width:12px;height:12px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:900}
+.bchk.conn{background:var(--gr2);color:#000}
+.bchk.pend{background:var(--am);color:#000}
+
+/* SYMBOL CARDS */
+.sym-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:7px}
+.sym-card{background:var(--bg3);border:1px solid var(--b);border-radius:7px;padding:9px 10px;cursor:pointer;transition:all .12s;position:relative}
+.sym-card:hover{border-color:var(--b2)}.sym-card.on{border-color:var(--gr);background:rgba(0,212,160,.03)}
+.sym-name{font-size:11px;font-weight:600;margin-bottom:1px}
+.sym-xch{font-size:9px;color:var(--tx3)}
+.sym-pip{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:3px}
+.schk{position:absolute;top:6px;right:6px;width:12px;height:12px;border-radius:50%;background:var(--gr2);display:none;align-items:center;justify-content:center;font-size:7px;color:#000;font-weight:900}
+.sym-card.on .schk{display:flex}
+
+/* STRATEGY WIZARD */
+.wizard-step{display:none}.wizard-step.on{display:block}
+.step-pills{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.sp{padding:4px 12px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--b);background:var(--bg3);color:var(--tx3);transition:all .12s}
+.sp.on{background:rgba(61,150,255,.12);color:var(--bl);border-color:var(--bl)}
+.sp.done{background:rgba(0,212,160,.1);color:var(--gr);border-color:var(--gr)}
+
+/* AUTOMATION CARD */
+.auto-card{background:var(--bg3);border:1px solid var(--b);border-radius:8px;padding:11px;margin-bottom:8px}
+.auto-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.auto-name{font-size:12px;font-weight:600}
+.auto-detail{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10px;color:var(--tx3);margin-top:7px}
+.auto-val{font-family:var(--mono);color:var(--tx2);font-weight:600}
+
+/* PCARD */
+.pcard{background:var(--bg3);border:1px solid var(--gr);border-radius:8px;padding:10px}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.psym{font-family:var(--mono);font-size:11px;font-weight:700}
+.pdg{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:10px;color:var(--tx3)}
+.pv{font-family:var(--mono);color:var(--tx2);font-weight:600}
+.hedge{background:rgba(61,150,255,.07);border:1px solid rgba(61,150,255,.12);border-radius:5px;padding:6px 9px;font-size:10px;color:var(--bl);margin-top:6px}
+
+/* PROGRESS */
+.prog{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin:4px 0}
+.pf{height:100%;border-radius:2px;transition:width .4s}
+
+.si{display:flex;align-items:center;justify-content:space-between;padding:6px 9px;background:var(--bg3);border:1px solid var(--b);border-radius:5px;margin-bottom:5px}
+.chartbox{height:170px;position:relative}
+</style>
+</head>
+<body>
+
+<div class="shell">
+<div class="bar">
+  <div class="logo">⬡ ALGO-DESK</div>
+  <div class="ver">v3.0.0</div>
+  <div class="tabs">
+    <div class="tab on" onclick="go('dashboard')"><span class="tdot"></span>Dashboard</div>
+    <div class="tab" onclick="go('brokers')"><span class="tdot"></span>My Brokers</div>
+    <div class="tab" onclick="go('symbols')"><span class="tdot"></span>My Symbols</div>
+    <div class="tab" onclick="go('automate')"><span class="tdot"></span>Automate</div>
+    <div class="tab" onclick="go('backtest')"><span class="tdot"></span>Backtest</div>
+    <div class="tab" onclick="go('live')"><span class="tdot"></span>Live Monitor</div>
+    <div class="tab" onclick="go('orders')"><span class="tdot"></span>Orders</div>
+    <div class="tab" onclick="go('settings')"><span class="tdot"></span>Settings</div>
+  </div>
+  <div class="uarea">
+    <div class="pill paper" id="mPill"><span class="pdot"></span><span id="mLbl">IDLE</span></div>
+    <button class="btn btng" id="stBtn" onclick="startEngine()" style="padding:5px 12px">▶ Start</button>
+    <button class="btn btnr" id="spBtn" onclick="stopEngine()" style="padding:5px 12px;display:none">■ Stop</button>
+    <div class="av">MA</div>
+  </div>
+</div>
+
+<div class="body">
+
+<!-- ═══ DASHBOARD ═══ -->
+<div class="page on" id="pg-dashboard">
+  <div class="abox as"><span>★</span><span><strong>Welcome to ALGO-DESK.</strong> Complete the setup checklist below. Start with connecting your broker, then pick symbols, configure strategy automation, run a backtest, and go live when ready.</span></div>
+  <div class="card">
+    <div class="ch"><span class="ct">Setup Checklist</span></div>
+    <div class="cb" id="setupChecklist"></div>
+  </div>
+  <div class="gauto">
+    <div class="m"><div class="ml">Brokers</div><div class="mv c-gr" id="dk-brok">1</div><div class="ms">Fyers connected</div></div>
+    <div class="m"><div class="ml">Symbols</div><div class="mv c-bl" id="dk-sym">3</div><div class="ms">selected</div></div>
+    <div class="m"><div class="ml">Automations</div><div class="mv c-am" id="dk-auto">2</div><div class="ms">configured</div></div>
+    <div class="m"><div class="ml">Backtests Run</div><div class="mv c-pu" id="dk-bt">4</div></div>
+    <div class="m"><div class="ml">Live Engine</div><div class="mv c-am" id="dk-eng">OFF</div></div>
+    <div class="m"><div class="ml">Today P&L</div><div class="mv c-gr" id="dk-pnl">₹0</div></div>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="ch"><span class="ct">My Automations</span></div>
+      <div class="cb" id="autoSummary"></div>
+    </div>
+    <div class="card">
+      <div class="ch"><span class="ct">Quick Actions</span></div>
+      <div class="cb">
+        <div class="brow" style="flex-direction:column;align-items:flex-start">
+          <button class="btn btng" onclick="go('brokers')" style="width:100%;justify-content:flex-start">+ Connect a broker →</button>
+          <button class="btn btnb" onclick="go('symbols')" style="width:100%;justify-content:flex-start">+ Pick trading symbols →</button>
+          <button class="btn btna" onclick="go('automate')" style="width:100%;justify-content:flex-start">+ Set up automation →</button>
+          <button class="btn btnx" onclick="go('backtest')" style="width:100%;justify-content:flex-start">▶ Run backtest first →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MY BROKERS ═══ -->
+<div class="page" id="pg-brokers">
+  <div class="abox ai"><span>ℹ</span><span>Your credentials are AES-256 encrypted before storage. The admin cannot see them. Most brokers auto-refresh tokens — you won't need to log in daily after initial setup.</span></div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Connected Brokers</span></div>
+    <div class="cb" id="connectedBrokers">
+      <div class="auto-card" style="border-color:var(--gr)">
+        <div class="auto-head">
+          <span style="font-size:13px">🇮🇳 <strong>Fyers</strong></span>
+          <span class="bd bdg">Connected ✓</span>
+        </div>
+        <div class="auto-detail">
+          <div><div>Client ID</div><div class="auto-val">FY•••••-100</div></div>
+          <div><div>Market</div><div class="auto-val">India NSE</div></div>
+          <div><div>Token refresh</div><div class="auto-val c-gr">Auto-TOTP</div></div>
+          <div><div>Last refresh</div><div class="auto-val">08:50 AM</div></div>
+        </div>
+        <div class="brow"><button class="btn btnx" style="font-size:10px;padding:3px 9px">Edit</button><button class="btn btnr" style="font-size:10px;padding:3px 9px">Remove</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Add Broker</span></div>
+    <div class="cb">
+      <div class="stitle" style="margin-top:0">Select your broker</div>
+      <div class="broker-grid" id="brokerGrid"></div>
+
+      <div id="brokerForm" style="display:none;margin-top:14px">
+        <div class="divr"></div>
+        <div id="brokerFormTitle" class="stitle"></div>
+        <div class="abox ai"><span>🔒</span><span id="brokerRefreshNote">Token refresh: Auto-managed. No daily login needed after setup.</span></div>
+        <div id="brokerFields"></div>
+        <div class="brow">
+          <button class="btn btng" onclick="saveBroker()">Save & Test Connection</button>
+          <button class="btn btnx" onclick="cancelBroker()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MY SYMBOLS ═══ -->
+<div class="page" id="pg-symbols">
+  <div class="abox ai"><span>ℹ</span><span>Select any symbols you want to trade. The engine will monitor and automate them based on your strategy configuration. Your selected symbols are saved to your profile.</span></div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Selected Symbols</span><span class="bd bdb" id="selCount">3 selected</span></div>
+    <div class="cb" id="selSyms" style="display:flex;gap:7px;flex-wrap:wrap">
+      <span class="bd bdg">NIFTY 50 <span onclick="deselSym('NIFTY50')" style="cursor:pointer;margin-left:3px">×</span></span>
+      <span class="bd bdg">BANK NIFTY <span onclick="deselSym('BANKNIFTY')" style="cursor:pointer;margin-left:3px">×</span></span>
+      <span class="bd bdb">SPX <span onclick="deselSym('SPX')" style="cursor:pointer;margin-left:3px">×</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><span class="ct">Available Symbols</span>
+      <input id="symSearch" placeholder="Search..." style="background:var(--bg3);border:1px solid var(--b);border-radius:5px;padding:4px 9px;color:var(--tx);font-size:11px;width:130px;outline:none" oninput="filterSyms(this.value)">
+    </div>
+    <div class="cb">
+      <div class="stitle" style="margin-top:0">🇮🇳 India NSE — Index Options (Weekly)</div>
+      <div class="sym-grid" id="indiaSyms"></div>
+      <div class="stitle">🇺🇸 US Markets — ETF & Index Options</div>
+      <div class="sym-grid" id="usSyms"></div>
+      <div class="stitle">🇬🇧 UK / EU</div>
+      <div class="sym-grid" id="ukSyms"></div>
+      <div class="stitle">Add Custom Symbol</div>
+      <div class="g3">
+        <div class="frow"><label>Symbol Code</label><input id="customSym" placeholder="e.g. NSE:TATAMOTORS-EQ"></div>
+        <div class="frow"><label>Display Name</label><input id="customName" placeholder="Tata Motors"></div>
+        <div class="frow"><label>Broker</label><select id="customBroker"><option>Fyers</option><option>Alpaca</option></select></div>
+      </div>
+      <button class="btn btng" onclick="addCustomSym()">Add Custom Symbol</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ AUTOMATE ═══ -->
+<div class="page" id="pg-automate">
+  <div class="card">
+    <div class="ch"><span class="ct">My Automations</span><button class="btn btng" style="padding:3px 9px;font-size:10px" onclick="showNewAuto()">+ New Automation</button></div>
+    <div class="cb" id="autoList"></div>
+  </div>
+
+  <div class="card" id="newAutoCard" style="display:none">
+    <div class="ch"><span class="ct">Create New Automation</span></div>
+    <div class="cb">
+      <!-- Step pills -->
+      <div class="step-pills">
+        <div class="sp on" id="stp1" onclick="wStep(1)">1. Symbol</div>
+        <div class="sp" id="stp2" onclick="wStep(2)">2. Broker</div>
+        <div class="sp" id="stp3" onclick="wStep(3)">3. Strategy</div>
+        <div class="sp" id="stp4" onclick="wStep(4)">4. Risk</div>
+        <div class="sp" id="stp5" onclick="wStep(5)">5. Test → Live</div>
+      </div>
+
+      <!-- Step 1: Symbol -->
+      <div class="wizard-step on" id="ws-1">
+        <div class="stitle" style="margin-top:0">Which symbol do you want to automate?</div>
+        <div class="sym-grid" id="wizSymGrid"></div>
+        <div class="frow" style="margin-top:10px"><label>Or type custom symbol</label><input id="wiz-sym" placeholder="e.g. NSE:NIFTY50-INDEX"></div>
+        <div class="brow"><button class="btn btng" onclick="wStep(2)">Next: Choose Broker →</button></div>
+      </div>
+
+      <!-- Step 2: Broker -->
+      <div class="wizard-step" id="ws-2">
+        <div class="stitle" style="margin-top:0">Which broker account should execute orders?</div>
+        <div id="wizBrokerList"></div>
+        <div class="brow"><button class="btn btnx" onclick="wStep(1)">← Back</button><button class="btn btng" onclick="wStep(3)">Next: Strategy →</button></div>
+      </div>
+
+      <!-- Step 3: Strategy -->
+      <div class="wizard-step" id="ws-3">
+        <div class="stitle" style="margin-top:0">Select strategies to run on this symbol</div>
+        <div id="wizStratList"></div>
+        <div class="brow"><button class="btn btnx" onclick="wStep(2)">← Back</button><button class="btn btng" onclick="wStep(4)">Next: Risk Settings →</button></div>
+      </div>
+
+      <!-- Step 4: Risk -->
+      <div class="wizard-step" id="ws-4">
+        <div class="stitle" style="margin-top:0">Risk & timing configuration</div>
+        <div class="g3">
+          <div class="frow"><label>Lots</label><input type="number" value="1" min="1"></div>
+          <div class="frow"><label>Auto Exit Time</label><input type="time" value="14:00"></div>
+          <div class="frow"><label>Max Daily Loss (₹)</label><input type="number" value="5000"></div>
+          <div class="frow"><label>Max Daily Profit (₹)</label><input type="number" value="15000"></div>
+          <div class="frow"><label>VWAP SL Buffer %</label><input type="number" value="5" step="0.1"></div>
+          <div class="frow"><label>Profit Target % of credit</label><input type="number" value="50"></div>
+        </div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">Enable hedge buy legs (recommended)</span></div>
+        <div class="trow"><label class="tog"><input type="checkbox"><span class="tsl"></span></label><span class="tlbl">Telegram alerts for this automation</span></div>
+        <div class="brow"><button class="btn btnx" onclick="wStep(3)">← Back</button><button class="btn btng" onclick="wStep(5)">Next: Test & Launch →</button></div>
+      </div>
+
+      <!-- Step 5: Test → Live -->
+      <div class="wizard-step" id="ws-5">
+        <div class="stitle" style="margin-top:0">Test before going live</div>
+        <div class="abox aw"><span>⚠</span><span><strong>Always run in Paper mode first.</strong> Run at least 5 trading sessions in paper mode. Review the backtest. Only switch to Live when you are satisfied with the results.</span></div>
+        <div style="background:var(--bg3);border:1px solid var(--b);border-radius:8px;padding:12px;margin-bottom:10px">
+          <div class="stitle" style="margin-top:0">Automation Summary</div>
+          <div class="auto-detail">
+            <div><div>Symbol</div><div class="auto-val c-bl" id="sumSym">NIFTY 50</div></div>
+            <div><div>Broker</div><div class="auto-val" id="sumBrok">Fyers</div></div>
+            <div><div>Strategies</div><div class="auto-val" id="sumStrat">S1, S2, S7</div></div>
+            <div><div>Mode</div><div class="auto-val c-am" id="sumMode">PAPER</div></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btna" onclick="saveAuto('paper')" style="flex:1;justify-content:center">Save as Paper (Recommended)</button>
+          <button class="btn btnr" onclick="saveAuto('live')" style="flex:1;justify-content:center">Save as Live (Real Money)</button>
+        </div>
+        <div class="brow"><button class="btn btnx" onclick="wStep(4)">← Back</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ BACKTEST ═══ -->
+<div class="page" id="pg-backtest">
+  <div class="g2">
+    <div class="card">
+      <div class="ch"><span class="ct">Backtest Configuration</span></div>
+      <div class="cb">
+        <div class="frow"><label>Automation to Test</label>
+          <select id="bt-auto">
+            <option>NIFTY 50 — All Strategies (Paper)</option>
+            <option>BANK NIFTY — S1+S7 (Paper)</option>
+            <option>SPX — S8+S3 (Paper)</option>
+          </select>
+        </div>
+        <div class="g2">
+          <div class="frow"><label>From</label><input type="date" value="2024-06-01"></div>
+          <div class="frow"><label>To</label><input type="date" value="2025-01-31"></div>
+        </div>
+        <div class="frow"><label>Data Source</label>
+          <select><option>Fyers Historical API (free, 1-min)</option><option>Upload CSV</option></select>
+        </div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">Include hedge legs in simulation</span></div>
+        <div class="brow"><button class="btn btng" onclick="runBT()">Run Backtest</button></div>
+        <div id="btPW" style="display:none;margin-top:8px">
+          <div style="font-size:10px;color:var(--tx3)" id="btPM">Processing...</div>
+          <div class="prog"><div class="pf" id="btPB" style="width:0%;background:var(--gr)"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ch"><span class="ct">Results</span><span class="bd bdg" id="btBdg" style="display:none">Profitable</span></div>
+      <div class="cb">
+        <div class="g3">
+          <div class="m"><div class="ml">Trades</div><div class="mv c-bl" id="bt-t">—</div></div>
+          <div class="m"><div class="ml">Win Rate</div><div class="mv c-gr" id="bt-w">—</div></div>
+          <div class="m"><div class="ml">Net P&L</div><div class="mv" id="bt-p">—</div></div>
+          <div class="m"><div class="ml">Avg Win</div><div class="mv c-gr" id="bt-aw">—</div></div>
+          <div class="m"><div class="ml">Avg Loss</div><div class="mv c-rd" id="bt-al">—</div></div>
+          <div class="m"><div class="ml">Sharpe</div><div class="mv c-am" id="bt-sh">—</div></div>
+        </div>
+        <div class="chartbox" style="margin-top:10px"><canvas id="eqC"></canvas></div>
+        <div id="btGoLive" style="display:none;margin-top:10px">
+          <div class="abox as"><span>✓</span><span>Backtest profitable. Confident to go live? Switch your automation from Paper to Live mode.</span></div>
+          <button class="btn btng" onclick="goLivePrompt()">Switch to Live Trading →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LIVE MONITOR ═══ -->
+<div class="page" id="pg-live">
+  <div class="gauto">
+    <div class="m"><div class="ml">Spot</div><div class="mv c-bl" id="lv-s">—</div></div>
+    <div class="m"><div class="ml">ATM</div><div class="mv" id="lv-a">—</div></div>
+    <div class="m"><div class="ml">Combined</div><div class="mv" id="lv-c">—</div></div>
+    <div class="m"><div class="ml">ORB Low</div><div class="mv c-rd" id="lv-ol">—</div></div>
+    <div class="m"><div class="ml">VWAP</div><div class="mv c-bl" id="lv-v">—</div></div>
+    <div class="m"><div class="ml">EMA 75</div><div class="mv c-pu" id="lv-e">—</div></div>
+    <div class="m"><div class="ml">Current SL</div><div class="mv c-rd" id="lv-sl">—</div><div class="ms" id="lv-slm">—</div></div>
+    <div class="m"><div class="ml">P&L</div><div class="mv" id="lv-pnl">₹0</div></div>
+    <div class="m"><div class="ml">Engine</div><div class="mv c-am" id="lv-md">IDLE</div></div>
+    <div class="m"><div class="ml">Next candle</div><div class="mv c-bl" id="lv-tm">—</div></div>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="ch"><span class="ct">Open Position</span><span class="bd bdx" id="posBdg">No Position</span></div>
+      <div class="cb" id="posP"><div class="abox ai"><span>ℹ</span><span>No open position. Engine watching for signals.</span></div></div>
+    </div>
+    <div class="card">
+      <div class="ch"><span class="ct">Signals</span></div>
+      <div class="cb" id="sigList"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ch"><span class="ct">7-Strike Grid</span></div>
+    <div class="cb twrap"><table><thead><tr><th>Strike</th><th>Offset</th><th>ORB Low</th><th>Combined</th><th>Depth</th><th>Status</th></tr></thead><tbody id="sTB"></tbody></table></div>
+  </div>
+  <div class="card">
+    <div class="ch"><span class="ct">Log</span><button class="btn btnx" onclick="clrLog()" style="padding:2px 7px;font-size:10px">Clear</button></div>
+    <div class="cb"><div class="log" id="lg"></div></div>
+  </div>
+</div>
+
+<!-- ═══ ORDERS ═══ -->
+<div class="page" id="pg-orders">
+  <div class="g3">
+    <div class="m"><div class="ml">Today P&L</div><div class="mv c-gr" id="o-p">₹0</div></div>
+    <div class="m"><div class="ml">Orders</div><div class="mv c-bl" id="o-c">0</div></div>
+    <div class="m"><div class="ml">Open Positions</div><div class="mv c-am" id="o-op">0</div></div>
+  </div>
+  <div class="card">
+    <div class="ch"><span class="ct">Order History</span></div>
+    <div class="cb twrap"><table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Leg</th><th>Status</th></tr></thead>
+    <tbody id="ordTB"><tr><td colspan="7" style="text-align:center;color:var(--tx3);padding:20px">No orders placed yet</td></tr></tbody></table></div>
+  </div>
+</div>
+
+<!-- ═══ SETTINGS ═══ -->
+<div class="page" id="pg-settings">
+  <div class="g2">
+    <div class="card">
+      <div class="ch"><span class="ct">My Profile</span></div>
+      <div class="cb">
+        <div class="frow"><label>Full Name</label><input value="Mahendra A"></div>
+        <div class="frow"><label>Email</label><input type="email" value="admin@algodesk.io"></div>
+        <div class="frow"><label>Timezone</label><select><option>Asia/Kolkata (IST)</option><option>America/New_York (EST)</option><option>Europe/London (GMT)</option></select></div>
+        <div class="divr"></div>
+        <div class="frow"><label>Current Password</label><input type="password" placeholder="Current password"></div>
+        <div class="frow"><label>New Password</label><input type="password" placeholder="New password"></div>
+        <div class="brow"><button class="btn btng">Save Profile</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ch"><span class="ct">Telegram Alerts</span></div>
+      <div class="cb">
+        <div class="frow"><label>Bot Token</label><input placeholder="From @BotFather"></div>
+        <div class="frow"><label>Chat ID</label><input placeholder="Your chat ID"></div>
+        <div class="divr"></div>
+        <div class="stitle" style="margin-top:0">Alerts to receive</div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">Signal fired</span></div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">Order placed / exit</span></div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">SL hit</span></div>
+        <div class="trow"><label class="tog"><input type="checkbox" checked><span class="tsl"></span></label><span class="tlbl">Token refreshed daily</span></div>
+        <div class="brow"><button class="btn btng">Save</button><button class="btn btnx" onclick="alert('Test message sent!')">Test Alert</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ch"><span class="ct">My Plan</span></div>
+    <div class="cb">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><div class="stitle" style="margin:0 0 4px">Current Plan</div><span class="bd bdp" style="font-size:11px;padding:3px 10px">PRO</span></div>
+        <div style="flex:1"><div style="font-size:11px;color:var(--tx2)">All 9 strategies · Live trading · Backtesting · India + US + UK markets</div></div>
+        <button class="btn btna">Upgrade / Change Plan</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<script>
+var S={spot:22487,comb:268.4,vwap:274.1,ema:277.6,orbl:271.3,atm:22500,entry:281.2,posOpen:false};
+var simT=null,simStep=0,eqC=null;
+var selectedSyms=new Set(['NIFTY50','BANKNIFTY','SPX']);
+var selectedBroker=null;
+var wizSymSel='NIFTY50',wizBrokSel='Fyers';
+var myAutomations=[
+  {name:'NIFTY 50 — Full Strategy',sym:'NIFTY 50',broker:'Fyers',strats:'S7,S1,S2,S8',mode:'PAPER',lots:1,status:'MONITORING'},
+  {name:'BANK NIFTY — ORB + Butterfly',sym:'BANK NIFTY',broker:'Fyers',strats:'S1,S7',mode:'PAPER',lots:1,status:'IDLE'},
+];
+
+const BROKERS=[
+  {id:'fyers',name:'Fyers',flag:'🇮🇳',market:'India NSE',refresh:'Auto-TOTP daily',fields:[
+    {k:'client_id',l:'Client ID',ph:'FYXXXXXX-100'},
+    {k:'secret_key',l:'Secret Key',ph:'Secret key',pw:true},
+    {k:'redirect_uri',l:'Redirect URI',ph:'https://trade.fyers.in/api-login/redirect-uri/index.html'},
+    {k:'username',l:'Fyers User ID',ph:'Your Fyers client ID'},
+    {k:'pin',l:'4-digit PIN',ph:'PIN',pw:true},
+    {k:'totp_key',l:'TOTP Key (2FA)',ph:'From Fyers → My Account → External TOTP',pw:true,hint:'Enables fully automatic daily login — no manual token needed'},
+  ]},
+  {id:'zerodha',name:'Zerodha (Kite)',flag:'🇮🇳',market:'India NSE',refresh:'Auto-TOTP daily',fields:[
+    {k:'api_key',l:'API Key',ph:'Kite API key'},{k:'api_secret',l:'API Secret',ph:'API secret',pw:true},
+    {k:'user_id',l:'User ID',ph:'Your Zerodha ID'},{k:'password',l:'Password',ph:'Zerodha password',pw:true},
+    {k:'totp_key',l:'TOTP Key',ph:'From Google Authenticator setup key',pw:true},
+  ]},
+  {id:'angelone',name:'Angel One',flag:'🇮🇳',market:'India NSE',refresh:'Rolling 30-day',fields:[
+    {k:'api_key',l:'API Key',ph:'SmartAPI key'},{k:'client_id',l:'Client ID',ph:'Angel One client ID'},
+    {k:'password',l:'Password',ph:'Trading password',pw:true},{k:'totp_key',l:'TOTP Key',ph:'TOTP secret',pw:true},
+  ]},
+  {id:'upstox',name:'Upstox',flag:'🇮🇳',market:'India NSE',refresh:'Auto-TOTP daily',fields:[
+    {k:'api_key',l:'API Key',ph:'Upstox API key'},{k:'api_secret',l:'API Secret',ph:'API secret',pw:true},
+    {k:'redirect_uri',l:'Redirect URI',ph:'https://...'},{k:'mobile',l:'Mobile Number',ph:'+91...'},
+    {k:'password',l:'Password',ph:'Upstox password',pw:true},{k:'totp_key',l:'TOTP Key',ph:'TOTP secret',pw:true},
+  ]},
+  {id:'dhan',name:'Dhan',flag:'🇮🇳',market:'India NSE',refresh:'30-day token (no TOTP)',fields:[
+    {k:'client_id',l:'Client ID',ph:'Dhan client ID'},
+    {k:'access_token',l:'Access Token',ph:'Generate from Dhan API console',pw:true,hint:'Valid for 30 days. Dhan will notify you before expiry to regenerate.'},
+  ]},
+  {id:'alpaca',name:'Alpaca',flag:'🇺🇸',market:'US NYSE/NASDAQ',refresh:'Never expires',fields:[
+    {k:'api_key_id',l:'API Key ID',ph:'Starts with PK...'},{k:'secret_key',l:'Secret Key',ph:'Secret key',pw:true},
+    {k:'mode',l:'Mode',type:'select',opts:['paper','live'],hint:'Use paper for testing. Switch to live when ready.'},
+  ]},
+  {id:'tastytrade',name:'Tastytrade',flag:'🇺🇸',market:'US Options',refresh:'Auto session renew',fields:[
+    {k:'username',l:'Username',ph:'Your Tastytrade username'},{k:'password',l:'Password',ph:'Password',pw:true},
+  ]},
+  {id:'ig',name:'IG Index',flag:'🇬🇧',market:'UK Markets',refresh:'Auto session 8h',fields:[
+    {k:'api_key',l:'API Key',ph:'IG API key'},{k:'username',l:'Username',ph:'IG username'},
+    {k:'password',l:'Password',ph:'IG password',pw:true},
+    {k:'account_type',l:'Account',type:'select',opts:['demo','live']},
+  ]},
+  {id:'trading212',name:'Trading 212',flag:'🇬🇧',market:'UK/EU',refresh:'Never expires',fields:[
+    {k:'api_key',l:'API Key',ph:'From T212 Settings → API',hint:'Trading 212 API keys never expire — set up once forever.'},
+    {k:'account_type',l:'Account',type:'select',opts:['demo','live']},
+  ]},
+  {id:'saxo',name:'Saxo Bank',flag:'🇪🇺',market:'EU Markets',refresh:'OAuth2 rolling',fields:[
+    {k:'app_key',l:'App Key',ph:'Saxo app key'},{k:'app_secret',l:'App Secret',ph:'App secret',pw:true},
+    {k:'redirect_uri',l:'Redirect URI',ph:'https://...'},
+  ]},
+];
+
+const ALL_SYMS=[
+  {k:'NIFTY50',n:'NIFTY 50',x:'NSE 🇮🇳',gap:50,liq:'high'},
+  {k:'BANKNIFTY',n:'BANK NIFTY',x:'NSE 🇮🇳',gap:100,liq:'high'},
+  {k:'FINNIFTY',n:'FIN NIFTY',x:'NSE 🇮🇳',gap:50,liq:'med'},
+  {k:'MIDCPNIFTY',n:'MIDCAP NIFTY',x:'NSE 🇮🇳',gap:25,liq:'med'},
+  {k:'SENSEX',n:'SENSEX',x:'BSE 🇮🇳',gap:100,liq:'med'},
+  {k:'RELIANCE',n:'Reliance',x:'NSE 🇮🇳',gap:50,liq:'high'},
+  {k:'TCS',n:'TCS',x:'NSE 🇮🇳',gap:100,liq:'high'},
+  {k:'SPX',n:'S&P 500 SPX',x:'CBOE 🇺🇸',gap:5,liq:'high'},
+  {k:'QQQ',n:'NASDAQ QQQ',x:'NASDAQ 🇺🇸',gap:1,liq:'high'},
+  {k:'SPY',n:'SPY ETF',x:'NYSE 🇺🇸',gap:1,liq:'high'},
+  {k:'AAPL',n:'Apple',x:'NASDAQ 🇺🇸',gap:2.5,liq:'high'},
+  {k:'TSLA',n:'Tesla',x:'NASDAQ 🇺🇸',gap:5,liq:'high'},
+  {k:'NVDA',n:'NVIDIA',x:'NASDAQ 🇺🇸',gap:5,liq:'high'},
+  {k:'FTSE100',n:'FTSE 100',x:'LSE 🇬🇧',gap:25,liq:'low'},
+  {k:'FTSE250',n:'FTSE 250',x:'LSE 🇬🇧',gap:25,liq:'low'},
+];
+
+const STRATS_LIST=[
+  {c:'S7',n:'All-Strike Iron Butterfly',d:'Auto: all 7 strikes break ORB low'},
+  {c:'S1',n:'ORB Breakdown Sell',d:'Primary: any strike breaks ORB low at 9:22'},
+  {c:'S2',n:'VWAP Squeeze',d:'S1 fallback: premium tight below VWAP'},
+  {c:'S8',n:'Opening Gap Fade',d:'Gap open day: premium compressing'},
+  {c:'S3',n:'Breakout Reversal',d:'Premium spikes then reverses below VWAP'},
+  {c:'S4',n:'Iron Condor',d:'Range-bound day: Bollinger squeeze'},
+  {c:'S5',n:'Ratio Spread',d:'Trending day: 2:1 sell ratio'},
+  {c:'S6',n:'Theta Decay Strangle',d:'High IV: wide strangle with far wings'},
+  {c:'S9',n:'Pre-Expiry Theta Crush',d:'Expiry day only 11:00–12:00'},
+];
+var wizStratSel=new Set(['S7','S1','S2']);
+
+function go(id){
+  var ids=['dashboard','brokers','symbols','automate','backtest','live','orders','settings'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',ids[i]===id));
+  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on',p.id==='pg-'+id));
+  if(id==='brokers')renderBrokerGrid();
+  if(id==='symbols')renderSymbolGrids();
+  if(id==='automate'){renderAutoList();renderWizSymGrid();renderWizBrokerList();renderWizStratList();}
+}
+
+// ── CHECKLIST ──
+document.getElementById('setupChecklist').innerHTML=[
+  {done:true,label:'Account created',action:''},
+  {done:true,label:'Broker connected (Fyers)',action:''},
+  {done:true,label:'Symbols selected (3)',action:''},
+  {done:true,label:'Automation configured (2)',action:''},
+  {done:false,label:'Backtest run — verify strategy works',action:'go(\'backtest\')'},
+  {done:false,label:'Switch to Live trading',action:'go(\'automate\')'},
+].map(c=>`
+  <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(28,45,66,.4)">
+    <div style="width:18px;height:18px;border-radius:50%;background:${c.done?'var(--gr2)':'var(--bg4)'};border:1px solid ${c.done?'var(--gr)':'var(--b2)'};display:flex;align-items:center;justify-content:center;font-size:10px;color:${c.done?'#000':'var(--tx3)'}">
+      ${c.done?'✓':'○'}
+    </div>
+    <span style="flex:1;font-size:11px;${c.done?'color:var(--tx3);text-decoration:line-through':''}">${c.label}</span>
+    ${c.action?`<button class="btn btnb" onclick="${c.action}" style="padding:2px 9px;font-size:10px">Go →</button>`:''}
+  </div>`).join('');
+
+// ── AUTO SUMMARY ──
+document.getElementById('autoSummary').innerHTML=myAutomations.map((a,i)=>`
+  <div class="auto-card">
+    <div class="auto-head"><span class="auto-name">${a.name}</span><span class="bd ${a.mode==='LIVE'?'bdg':'bda'}">${a.mode}</span></div>
+    <div class="auto-detail">
+      <div><div>Broker</div><div class="auto-val">${a.broker}</div></div>
+      <div><div>Strategies</div><div class="auto-val">${a.strats}</div></div>
+      <div><div>Lots</div><div class="auto-val">${a.lots}</div></div>
+      <div><div>Status</div><div class="auto-val c-am">${a.status}</div></div>
+    </div>
+  </div>`).join('');
+
+// ── BROKERS ──
+function renderBrokerGrid(){
+  document.getElementById('brokerGrid').innerHTML=BROKERS.map(b=>`
+    <div class="broker-card ${selectedBroker===b.id?'selected':''}" onclick="selectBroker('${b.id}')">
+      <div class="broker-status"><div class="bchk ${b.id==='fyers'?'conn':''}"></div></div>
+      <div class="broker-flag">${b.flag}</div>
+      <div class="broker-name">${b.name}</div>
+      <div class="broker-market">${b.market}</div>
+      <div class="broker-refresh">↻ ${b.refresh}</div>
+    </div>`).join('');
+}
+renderBrokerGrid();
+
+function selectBroker(id){
+  selectedBroker=id;
+  renderBrokerGrid();
+  var b=BROKERS.find(x=>x.id===id);
+  if(!b)return;
+  document.getElementById('brokerForm').style.display='block';
+  document.getElementById('brokerFormTitle').textContent=b.flag+' '+b.name+' Configuration';
+  document.getElementById('brokerRefreshNote').textContent='Token refresh: '+b.refresh+'. After setup, this is fully automatic.';
+  document.getElementById('brokerFields').innerHTML=b.fields.map(f=>{
+    if(f.type==='select')return`<div class="frow"><label>${f.l}</label><select>${f.opts.map(o=>`<option>${o}</option>`).join('')}</select>${f.hint?`<div class="hint">${f.hint}</div>`:''}</div>`;
+    return`<div class="frow"><label>${f.l}</label><input type="${f.pw?'password':'text'}" placeholder="${f.ph||''}">${f.hint?`<div class="hint">${f.hint}</div>`:''}</div>`;
+  }).join('');
+}
+function saveBroker(){
+  alert('✅ Broker credentials encrypted and saved.\n\nTesting connection...\n\n(In production, this calls POST /api/brokers/connect which encrypts credentials with your user key and validates via a test API call.)');
+  document.getElementById('brokerForm').style.display='none';
+  selectedBroker=null;
+  renderBrokerGrid();
+}
+function cancelBroker(){document.getElementById('brokerForm').style.display='none';selectedBroker=null;renderBrokerGrid();}
+
+// ── SYMBOLS ──
+function lc(l){return l==='high'?'var(--gr)':l==='med'?'var(--am)':'var(--rd)';}
+function renderSymbolGrids(){
+  var india=ALL_SYMS.filter(s=>s.x.includes('🇮🇳'));
+  var us=ALL_SYMS.filter(s=>s.x.includes('🇺🇸'));
+  var uk=ALL_SYMS.filter(s=>s.x.includes('🇬🇧'));
+  ['indiaSyms','usSyms','ukSyms'].forEach((id,i)=>{
+    var data=[india,us,uk][i];
+    document.getElementById(id).innerHTML=data.map(s=>`
+      <div class="sym-card ${selectedSyms.has(s.k)?'on':''}" onclick="togSym('${s.k}')">
+        <div class="schk">✓</div>
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:1px">
+          <span class="sym-pip" style="background:${lc(s.liq)}"></span>
+          <span class="sym-name">${s.n}</span>
+        </div>
+        <div class="sym-xch">${s.x} · Gap ${s.gap}</div>
+      </div>`).join('');
+  });
+}
+renderSymbolGrids();
+
+function togSym(k){
+  selectedSyms.has(k)?selectedSyms.delete(k):selectedSyms.add(k);
+  renderSymbolGrids();
+  document.getElementById('selCount').textContent=selectedSyms.size+' selected';
+  document.getElementById('selSyms').innerHTML=[...selectedSyms].map(k=>{
+    var s=ALL_SYMS.find(x=>x.k===k)||{n:k};
+    return`<span class="bd bdg">${s.n} <span onclick="deselSym('${k}')" style="cursor:pointer;margin-left:3px">×</span></span>`;
+  }).join(' ');
+}
+function deselSym(k){selectedSyms.delete(k);renderSymbolGrids();togSym(k);togSym(k);}
+function filterSyms(q){}
+function addCustomSym(){
+  var sym=document.getElementById('customSym').value;
+  var name=document.getElementById('customName').value;
+  if(!sym||!name){alert('Enter symbol code and display name.');return;}
+  alert('Custom symbol added: '+name+' ('+sym+'). Now available in your symbol list.');
+}
+
+// ── AUTOMATION WIZARD ──
+function renderAutoList(){
+  document.getElementById('autoList').innerHTML=myAutomations.length?myAutomations.map((a,i)=>`
+    <div class="auto-card">
+      <div class="auto-head">
+        <span class="auto-name">${a.name}</span>
+        <div style="display:flex;gap:6px">
+          <span class="bd ${a.mode==='LIVE'?'bdg':'bda'}">${a.mode}</span>
+          <button class="btn ${a.status==='MONITORING'?'btnr':'btng'}" style="padding:2px 9px;font-size:10px" onclick="toggleAuto(${i})">${a.status==='MONITORING'?'Stop':'Start'}</button>
+          ${a.mode==='PAPER'?`<button class="btn btna" style="padding:2px 9px;font-size:10px" onclick="goLiveConfirm(${i})">Go Live</button>`:''}
+        </div>
+      </div>
+      <div class="auto-detail">
+        <div><div>Symbol</div><div class="auto-val c-bl">${a.sym}</div></div>
+        <div><div>Broker</div><div class="auto-val">${a.broker}</div></div>
+        <div><div>Strategies</div><div class="auto-val">${a.strats}</div></div>
+        <div><div>Status</div><div class="auto-val c-am">${a.status}</div></div>
+      </div>
+    </div>`).join(''):'<div class="abox ai"><span>ℹ</span><span>No automations yet. Create one above.</span></div>';
+}
+renderAutoList();
+
+function showNewAuto(){document.getElementById('newAutoCard').style.display='block';wStep(1);}
+function toggleAuto(i){myAutomations[i].status=myAutomations[i].status==='MONITORING'?'IDLE':'MONITORING';renderAutoList();}
+function goLiveConfirm(i){
+  if(confirm('Switch "'+myAutomations[i].name+'" to LIVE trading?\n\nReal orders will be placed with real money.\n\nOnly proceed if backtest results are satisfactory.'))
+  {myAutomations[i].mode='LIVE';renderAutoList();log('A','Automation switched to LIVE: '+myAutomations[i].name);}
+}
+
+function wStep(n){
+  for(var i=1;i<=5;i++){
+    document.getElementById('ws-'+i).classList.toggle('on',i===n);
+    var sp=document.getElementById('stp'+i);
+    if(i<n)sp.className='sp done';
+    else if(i===n)sp.className='sp on';
+    else sp.className='sp';
+  }
+}
+
+function renderWizSymGrid(){
+  document.getElementById('wizSymGrid').innerHTML=ALL_SYMS.slice(0,8).map(s=>`
+    <div class="sym-card ${wizSymSel===s.k?'on':''}" onclick="wizSelSym('${s.k}','${s.n}')">
+      <div class="schk">✓</div>
+      <div class="sym-name">${s.n}</div>
+      <div class="sym-xch">${s.x}</div>
+    </div>`).join('');
+}
+
+function wizSelSym(k,n){wizSymSel=k;document.getElementById('wiz-sym').value=k;document.getElementById('sumSym').textContent=n;renderWizSymGrid();}
+
+function renderWizBrokerList(){
+  document.getElementById('wizBrokerList').innerHTML=[
+    {n:'Fyers (India)',connected:true},{n:'Alpaca (US Paper)',connected:false},
+  ].map(b=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:var(--bg3);border:1px solid ${b.connected?'var(--gr)':'var(--b)'};border-radius:6px;margin-bottom:6px;cursor:pointer" onclick="wizSelBrok('${b.n}',this)">
+      <span style="font-size:11px;font-weight:600">${b.n}</span>
+      <span class="bd ${b.connected?'bdg':'bdx'}">${b.connected?'Connected ✓':'Not connected'}</span>
+    </div>`).join('');
+}
+
+function wizSelBrok(n,el){
+  wizBrokSel=n;
+  document.getElementById('sumBrok').textContent=n;
+  document.querySelectorAll('#wizBrokerList > div').forEach(d=>d.style.borderColor='var(--b)');
+  el.style.borderColor='var(--bl)';
+}
+
+function renderWizStratList(){
+  document.getElementById('wizStratList').innerHTML=STRATS_LIST.map(s=>`
+    <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:var(--bg3);border:1px solid ${wizStratSel.has(s.c)?'var(--gr)':'var(--b)'};border-radius:6px;margin-bottom:6px;cursor:pointer" onclick="wizTogStrat('${s.c}',this)">
+      <div style="width:14px;height:14px;border-radius:50%;background:${wizStratSel.has(s.c)?'var(--gr2)':'var(--bg4)'};border:1px solid ${wizStratSel.has(s.c)?'var(--gr)':'var(--b2)'};display:flex;align-items:center;justify-content:center;font-size:8px;color:${wizStratSel.has(s.c)?'#000':'var(--tx3)'};flex-shrink:0">${wizStratSel.has(s.c)?'✓':''}</div>
+      <div style="flex:1"><div style="font-size:11px;font-weight:600">${s.c}: ${s.n}</div><div style="font-size:10px;color:var(--tx3)">${s.d}</div></div>
+    </div>`).join('');
+  document.getElementById('sumStrat').textContent=[...wizStratSel].join(', ');
+}
+
+function wizTogStrat(c,el){
+  wizStratSel.has(c)?wizStratSel.delete(c):wizStratSel.add(c);
+  renderWizStratList();
+}
+
+function saveAuto(mode){
+  var name=document.getElementById('wiz-sym').value||wizSymSel;
+  myAutomations.push({name:name+' — Custom',sym:name,broker:wizBrokSel,strats:[...wizStratSel].join(','),mode:mode.toUpperCase(),lots:1,status:'IDLE'});
+  document.getElementById('newAutoCard').style.display='none';
+  renderAutoList();
+  alert('✅ Automation saved in '+mode.toUpperCase()+' mode!\n\nGo to Live Monitor and press Start to begin.');
+  if(mode==='live') log('A','New LIVE automation: '+name);
+}
+
+// ── BACKTEST ──
+function runBT(){
+  var w=document.getElementById('btPW');w.style.display='block';
+  document.getElementById('btPB').style.width='0%';
+  var p=0;var iv=setInterval(()=>{
+    p+=Math.random()*11;
+    if(p>=100){p=100;clearInterval(iv);w.style.display='none';showBT();}
+    document.getElementById('btPB').style.width=Math.min(p,100).toFixed(0)+'%';
+    document.getElementById('btPM').textContent='Processing historical data... '+Math.min(100,Math.floor(p))+'%';
+  },90);
+}
+function showBT(){
+  var t=94,wr=64.9,aw=871,al=318,pnl=t*(wr/100*aw-(1-wr/100)*al),sh=1.91;
+  document.getElementById('bt-t').textContent=t;
+  document.getElementById('bt-w').textContent=wr.toFixed(1)+'%';
+  document.getElementById('bt-p').textContent='₹'+Math.round(pnl).toLocaleString();
+  document.getElementById('bt-p').className='mv '+(pnl>0?'c-gr':'c-rd');
+  document.getElementById('bt-aw').textContent='₹'+aw;
+  document.getElementById('bt-al').textContent='-₹'+al;
+  document.getElementById('bt-sh').textContent=sh.toFixed(2);
+  document.getElementById('btBdg').style.display='inline-flex';
+  if(eqC)eqC.destroy();
+  var ctx=document.getElementById('eqC').getContext('2d');
+  var eq=0,d=[],lb=[];
+  for(var i=0;i<t;i++){eq+=(Math.random()<.65?(600+Math.random()*550):-(200+Math.random()*250));d.push(Math.round(eq));lb.push(i%15===0?i:'');}
+  eqC=new Chart(ctx,{type:'line',data:{labels:lb,datasets:[{data:d,borderColor:'#00d4a0',borderWidth:1.5,pointRadius:0,fill:true,backgroundColor:'rgba(0,212,160,.05)',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(28,45,66,.6)'},ticks:{color:'#486080',font:{size:9}}},y:{grid:{color:'rgba(28,45,66,.6)'},ticks:{color:'#486080',font:{size:9},callback:v=>'₹'+v}}}}});
+  if(pnl>0) document.getElementById('btGoLive').style.display='block';
+}
+function goLivePrompt(){
+  if(confirm('Switch to LIVE trading?\n\nReal money will be used.\n\nOnly proceed if you are satisfied with the backtest results.'))
+  {alert('Automation switched to LIVE mode. Go to Automate tab to start the engine.');}
+}
+
+// ── LIVE ENGINE ──
+function startEngine(){
+  document.getElementById('stBtn').style.display='none';
+  document.getElementById('spBtn').style.display='inline-flex';
+  document.getElementById('mPill').className='pill paper';
+  document.getElementById('mLbl').textContent='PAPER';
+  document.getElementById('dk-eng').textContent='ON';
+  log('I','Engine started. Mode: PAPER. Monitoring: '+[...selectedSyms].join(', '));
+  S.spot=22400+Math.random()*200; S.atm=Math.round(S.spot/50)*50;
+  S.comb=250+Math.random()*60; S.vwap=S.comb+8; S.ema=S.vwap+5;
+  S.orbl=S.comb*0.93;
+  renderSTB();
+  buildSigList();
+  simStep=0;
+  simT=setInterval(tick,2200);
+}
+function stopEngine(){
+  clearInterval(simT);
+  document.getElementById('stBtn').style.display='inline-flex';
+  document.getElementById('spBtn').style.display='none';
+  document.getElementById('mPill').className='pill idle';
+  document.getElementById('mLbl').textContent='IDLE';
+  document.getElementById('dk-eng').textContent='OFF';
+  document.getElementById('lv-md').textContent='STOPPED';
+  log('I','Engine stopped.');
+}
+
+function buildSigList(){
+  document.getElementById('sigList').innerHTML=STRATS_LIST.filter((_,i)=>i<5).map(s=>`
+    <div class="si"><span style="font-size:11px">${s.c}: ${s.n}</span><span class="bd bdx" id="sig${s.c}">WATCHING</span></div>`).join('');
+}
+
+function tick(){
+  simStep++;
+  S.spot+=(Math.random()-.52)*4; S.comb+=(Math.random()-.54)*3;
+  if(S.comb<50)S.comb=50;
+  S.vwap=S.vwap*.95+S.comb*.05; S.ema=S.ema*.97+S.comb*.03;
+  var slv=S.ema<S.vwap?S.ema*1.01:S.vwap*1.05;
+  var slm=S.ema<S.vwap?'EMA75+1%':'VWAP+5%';
+  var pnl=S.posOpen?Math.round((S.entry-S.comb)*25):0;
+
+  document.getElementById('lv-s').textContent=S.spot.toFixed(1);
+  document.getElementById('lv-a').textContent=S.atm;
+  document.getElementById('lv-c').textContent=S.comb.toFixed(1);
+  document.getElementById('lv-ol').textContent=S.orbl.toFixed(1);
+  document.getElementById('lv-v').textContent=S.vwap.toFixed(1);
+  document.getElementById('lv-e').textContent=S.ema.toFixed(1);
+  document.getElementById('lv-sl').textContent=slv.toFixed(1);
+  document.getElementById('lv-slm').textContent=slm;
+  document.getElementById('lv-pnl').textContent=(pnl>=0?'+':'')+'₹'+pnl.toLocaleString();
+  document.getElementById('lv-pnl').className='mv '+(pnl>=0?'c-gr':'c-rd');
+  document.getElementById('lv-tm').textContent=(60-simStep%60)+'s';
+  document.getElementById('lv-md').textContent=S.posOpen?'IN_TRADE':'MONITORING';
+  document.getElementById('dk-pnl').textContent=(pnl>=0?'+':'')+'₹'+pnl.toLocaleString();
+
+  if(!S.posOpen&&simStep===7&&S.comb<S.orbl){
+    S.posOpen=true;S.entry=S.comb;
+    log('S','S1 ORB BREAKDOWN: Combined '+S.comb.toFixed(1)+' < ORB Low '+S.orbl.toFixed(1));
+    log('O','SELL '+S.atm+'CE × 25 + SELL '+S.atm+'PE × 25 [PAPER]');
+    log('O','BUY '+(S.atm+100)+'CE × 25 + BUY '+(S.atm-100)+'PE × 25 [HEDGE]');
+    document.getElementById('posBdg').className='bd bdg'; document.getElementById('posBdg').textContent='SHORT STRANGLE';
+    document.getElementById('posP').innerHTML=`<div class="pcard"><div class="ph"><span class="psym">${S.atm}CE+PE SELL</span><span class="bd bdg">OPEN</span></div><div class="pdg"><div><div>Strategy</div><div class="pv">S1 ORB</div></div><div><div>Entry</div><div class="pv c-am">${S.comb.toFixed(1)}</div></div><div><div>Time</div><div class="pv">09:22</div></div></div><div class="hedge">Hedge: BUY ${S.atm+100}CE + BUY ${S.atm-100}PE</div></div>`;
+    var sel=document.getElementById('sigS1');if(sel){sel.className='bd bdg';sel.textContent='FIRED';}
+  }
+  if(S.posOpen&&S.comb>slv){
+    log('SL','SL HIT ['+slm+']: '+S.comb.toFixed(1));
+    log('E','EXIT — P&L: ₹'+pnl.toLocaleString());
+    S.posOpen=false;
+    document.getElementById('posBdg').className='bd bdx';document.getElementById('posBdg').textContent='No Position';
+    document.getElementById('posP').innerHTML='<div class="abox ai"><span>ℹ</span><span>Position closed. Monitoring resumed.</span></div>';
+  }
+  renderSTB();
+}
+
+function renderSTB(){
+  var gap=50,sides=3,atm=S.atm,h='';
+  for(var i=sides;i>=-sides;i--){
+    var st=atm+i*gap;
+    var off=i===0?'ATM':(i>0?'+'+i:''+i);
+    var ol=S.orbl*(1-Math.abs(i)*.055);
+    var cv=S.comb*(1-Math.abs(i)*.09)+Math.random()*1.5;
+    var dep=((ol-cv)/ol*100);
+    var br=cv<ol;
+    h+=`<tr><td class="mn">${st}</td><td>${off}</td><td class="mn" style="color:var(--rd)">${ol.toFixed(1)}</td>
+    <td class="mn" style="color:${br?'var(--rd)':'var(--gr)'}">${cv.toFixed(1)}</td>
+    <td class="mn" style="color:${br?'var(--rd)':dep>-3?'var(--am)':'var(--gr)'}">${dep.toFixed(1)}%</td>
+    <td><span class="bd ${br?'bdr':'bdx'}">${br?'BREAKDOWN':'Watching'}</span></td></tr>`;
+  }
+  document.getElementById('sTB').innerHTML=h;
+}
+
+function log(type,msg){
+  var lg=document.getElementById('lg');if(!lg)return;
+  var t=new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  var d=document.createElement('div');d.className='ll';
+  d.innerHTML=`<span class="lt">${t}</span><span class="ltg ${type}">${type}</span><span class="lm">${msg}</span>`;
+  lg.insertBefore(d,lg.firstChild);
+}
+function clrLog(){document.getElementById('lg').innerHTML='';}
+
+log('I','ALGO-DESK v3 ready. Complete setup to start trading.');
+</script>
+</body>
+</html>
