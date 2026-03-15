@@ -1,0 +1,72 @@
+version: '3.9'
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-algodesk}
+      POSTGRES_USER: ${DB_USER:-algodesk}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-algodesk}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes: [redis_data:/data]
+    networks: [internal]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-algodesk}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-algodesk}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes:
+      - app_logs:/app/logs
+      - ./frontend:/app/frontend:ro
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on: [backend]
+    networks: [internal, external]
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_logs:
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  external:
+    driver: bridge
