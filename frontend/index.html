@@ -966,3 +966,236 @@ function toast(msg, type='ok') {
 </script>
 </body>
 </html>
+<!-- Additional functionality injected by v4 build -->
+<script>
+// ── LIVE MONITOR enhancements ──────────────────────────────────
+var wsConn = null;
+var engineRunning = false;
+
+function connectWebSocket(userId) {
+  if (wsConn) wsConn.close();
+  var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  wsConn = new WebSocket(`${protocol}//${window.location.host}/ws/${userId}`);
+  wsConn.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    if (d.type === 'tick') updateLiveUI(d);
+  };
+  wsConn.onclose = function() {
+    if (engineRunning) setTimeout(() => connectWebSocket(userId), 5000);
+  };
+}
+
+function updateLiveUI(d) {
+  var set = (id, val) => { var el=document.getElementById(id); if(el) el.textContent=val; };
+  set('lv-s',  d.spot ? d.spot.toFixed(1) : '—');
+  set('lv-a',  d.atm || '—');
+  set('lv-c',  d.combined ? d.combined.toFixed(1) : '—');
+  set('lv-v',  d.vwap ? d.vwap.toFixed(1) : '—');
+  set('lv-eng', d.mode || 'IDLE');
+  var pnl = d.day_pnl || 0;
+  var pnlEl = document.getElementById('lv-pnl');
+  if (pnlEl) {
+    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '₹' + Math.round(pnl).toLocaleString();
+    pnlEl.className = 'mv ' + (pnl >= 0 ? 'c-gr' : 'c-rd');
+  }
+  // Update log
+  if (d.log && d.log.length) {
+    var lg = document.getElementById('engineLog');
+    if (lg) {
+      lg.innerHTML = d.log.slice(-15).reverse().map(l =>
+        `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(26,48,80,.3)">
+          <span style="color:var(--tx3);font-family:var(--mono);font-size:10px;min-width:55px">${l.ts}</span>
+          <span style="font-size:11px;color:${l.kind==='ERROR'?'var(--rd)':l.kind==='SIGNAL'?'var(--gr)':l.kind==='OK'?'var(--gr)':l.kind==='SL'?'var(--rd)':'var(--tx2)'}">${l.msg}</span>
+        </div>`
+      ).join('');
+    }
+  }
+  // Update position
+  if (d.position) {
+    var posEl = document.getElementById('positionCard');
+    if (posEl) {
+      var sig = d.position.signal || {};
+      posEl.innerHTML = `
+        <div style="background:var(--card2);border:1px solid var(--gr);border-radius:8px;padding:11px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong>${sig.name || 'Open Position'}</strong>
+            <span class="bd bdg">OPEN</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;color:var(--tx3)">
+            <div>Strategy<br><span style="color:var(--tx2);font-weight:600">${sig.code}</span></div>
+            <div>Entry<br><span style="font-family:var(--mono);color:var(--am);font-weight:600">${d.position.entry_combined?.toFixed(1)}</span></div>
+            <div>Current<br><span style="font-family:var(--mono);color:var(--tx2);font-weight:600">${d.combined?.toFixed(1)}</span></div>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--bl)">
+            Sell: ${sig.sell_ce}CE + ${sig.sell_pe}PE
+            ${sig.buy_ce ? ` | Hedge: ${sig.buy_ce}CE + ${sig.buy_pe}PE` : ''}
+          </div>
+        </div>`;
+    }
+  } else {
+    var posEl = document.getElementById('positionCard');
+    if (posEl) posEl.innerHTML = '<div class="abox ai"><span class="ic">ℹ</span><span>No open position. Engine monitoring for signals.</span></div>';
+  }
+}
+
+// Override startEngine to use real API
+var _origStart = window.startEngine;
+window.startEngine = async function() {
+  var autos = await api('GET', '/api/automations');
+  var list = autos.automations || [];
+  if (!list.length) { toast('Create an automation first', 'err'); return; }
+
+  // Use first active automation, or show picker
+  var auto = list[0];
+  try {
+    await api('POST', '/api/engine/start', { automation_id: auto.id });
+    engineRunning = true;
+    connectWebSocket(session.user.id);
+    document.getElementById('startBtn').style.display = 'none';
+    document.getElementById('stopBtn').style.display = 'inline-flex';
+    document.getElementById('lv-eng').textContent = 'STARTING';
+    toast('Engine started: ' + auto.name, 'ok');
+  } catch(e) { toast(e.message, 'err'); }
+};
+
+var _origStop = window.stopEngine;
+window.stopEngine = async function() {
+  try {
+    await api('POST', '/api/engine/stop');
+    engineRunning = false;
+    if (wsConn) wsConn.close();
+    document.getElementById('startBtn').style.display = 'inline-flex';
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('lv-eng').textContent = 'IDLE';
+    toast('Engine stopped', 'ok');
+  } catch(e) { toast(e.message, 'err'); }
+};
+
+// Enhance live page with log panel and position card
+var _origNav = window.nav;
+window.nav = function(id) {
+  _origNav(id);
+  if (id === 'live') enhanceLivePage();
+  if (id === 'trades') loadTrades();
+};
+
+function enhanceLivePage() {
+  var page = document.getElementById('pg-live');
+  if (!page || page.querySelector('#positionCard')) return;
+  var extra = document.createElement('div');
+  extra.innerHTML = `
+    <div class="g2" style="margin-top:0">
+      <div class="card">
+        <div class="ch"><span class="ct">Open Position</span></div>
+        <div class="cb" id="positionCard">
+          <div class="abox ai"><span class="ic">ℹ</span><span>Start the engine to begin monitoring.</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ch"><span class="ct">Force Exit</span></div>
+        <div class="cb">
+          <div class="abox aw"><span class="ic">⚠</span><span>Force exit closes all open legs immediately at market price.</span></div>
+          <button class="btn btnr" onclick="forceExit()">Force Exit All Positions</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ch"><span class="ct">Engine Log</span></div>
+      <div class="cb" id="engineLog" style="font-size:11px;max-height:220px;overflow-y:auto;background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div style="color:var(--tx3)">Start the engine to see live log...</div>
+      </div>
+    </div>`;
+  page.appendChild(extra);
+}
+
+async function forceExit() {
+  if (!confirm('Force exit all open positions now?')) return;
+  try {
+    await api('POST', '/api/engine/force-exit');
+    toast('Force exit triggered', 'ok');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+// ── TRADES PAGE ──────────────────────────────────────────────
+async function loadTrades() {
+  var page = document.getElementById('pg-trades');
+  if (!page) return;
+  try {
+    var d = await api('GET', '/api/trades');
+    var trades = d.trades || [];
+    page.innerHTML = `
+      <div class="card">
+        <div class="ch"><span class="ct">Trade History</span><span class="bd bdb">${trades.length} trades</span></div>
+        <div class="cb twrap">
+          <table>
+            <thead><tr><th>Date</th><th>Symbol</th><th>Strategy</th><th>Mode</th><th>ATM</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th></tr></thead>
+            <tbody>
+              ${trades.length ? trades.map(t => `
+                <tr>
+                  <td>${t.date}</td>
+                  <td style="font-size:10px">${t.symbol}</td>
+                  <td><span class="bd bdb">${t.strategy}</span></td>
+                  <td><span class="bd ${t.mode==='live'?'bdg':'bda'}">${t.mode?.toUpperCase()}</span></td>
+                  <td class="mn">${t.atm}</td>
+                  <td class="mn">${t.entry?.toFixed(1)||'—'}</td>
+                  <td class="mn">${t.exit?.toFixed(1)||'—'}</td>
+                  <td class="mn" style="color:${(t.pnl||0)>=0?'var(--gr)':'var(--rd)'}">${t.pnl!=null?(t.pnl>=0?'+':'')+'₹'+Math.round(t.pnl):'—'}</td>
+                  <td><span class="bd bdx" style="font-size:9px">${t.exit_reason||t.is_open?'OPEN':'—'}</span></td>
+                </tr>`).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--tx3);padding:20px">No trades yet. Start the engine in paper mode first.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch(e) { console.error(e); }
+}
+
+// Add Trades tab to nav
+document.addEventListener('DOMContentLoaded', () => {
+  // Add Trades tab
+  var tabs = document.getElementById('mainTabs');
+  if (tabs && !document.getElementById('tradesTab')) {
+    var t = document.createElement('div');
+    t.className = 'tab'; t.id = 'tradesTab';
+    t.textContent = 'Trades';
+    t.onclick = () => nav('trades');
+    tabs.insertBefore(t, document.getElementById('adminTab'));
+  }
+  // Add trades page
+  var content = document.querySelector('.content');
+  if (content && !document.getElementById('pg-trades')) {
+    var p = document.createElement('div');
+    p.className = 'page'; p.id = 'pg-trades';
+    p.innerHTML = '<div style="color:var(--tx3);padding:20px">Loading trades...</div>';
+    content.appendChild(p);
+  }
+  // Update nav ids
+  var ids = ['dashboard','brokers','automate','live','profile','trades','admin'];
+  var origNav = window.nav;
+  window.nav = function(id) {
+    document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ids[i]===id));
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
+    if (id==='live') enhanceLivePage();
+    if (id==='trades') loadTrades();
+    if (id==='admin') loadAdmin();
+    if (id==='profile') loadProfile();
+    if (id==='brokers') loadMyBrokers();
+    if (id==='automate') loadAutomate();
+  };
+});
+
+// Override loadApp to also start WebSocket
+var _origLoadApp = window.loadApp;
+window.loadApp = async function() {
+  await _origLoadApp();
+  // Check engine status
+  try {
+    var status = await api('GET', '/api/engine/status');
+    if (status.running) {
+      engineRunning = true;
+      connectWebSocket(session.user.id);
+      document.getElementById('startBtn').style.display = 'none';
+      document.getElementById('stopBtn').style.display = 'inline-flex';
+    }
+  } catch(e) {}
+};
+</script>
