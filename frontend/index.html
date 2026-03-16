@@ -261,12 +261,31 @@ input:checked+.tsl:before{transform:translateX(14px)}
         </div>
       </div>
 
-      <div class="card">
-        <div class="ch"><span class="ct">Connect a New Broker</span></div>
+      <div id="liveDataPanel" style="display:none" class="card">
+        <div class="ch">
+          <span class="ct">Live Connection Test</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--gr);animation:pulse 2s infinite" id="liveDot"></div>
+            <span style="font-size:11px;color:var(--tx2)" id="liveStatus">Fetching...</span>
+            <button class="btn btnx" style="padding:3px 9px;font-size:10px" onclick="stopLiveTest()">Stop</button>
+          </div>
+        </div>
         <div class="cb">
-          <div class="abox ai"><span class="ic">🔒</span><div>Your credentials are <strong>AES-256 encrypted</strong> before being stored. Nobody else — including the admin — can ever see them. Token refresh is fully automatic after setup.</div></div>
-          <div class="stitle" style="margin-top:0">Select your broker</div>
-          <div class="broker-grid" id="brokerGrid"></div>
+          <div class="gauto" id="liveMetrics" style="margin-bottom:12px">
+            <div class="m"><div class="ml">NIFTY Spot</div><div class="mv c-bl" id="lm-spot">—</div><div class="ms">Live price</div></div>
+            <div class="m"><div class="ml">ATM Strike</div><div class="mv" id="lm-atm">—</div><div class="ms">Nearest 50</div></div>
+            <div class="m"><div class="ml">ATM Combined</div><div class="mv c-am" id="lm-combined">—</div><div class="ms">CE + PE premium</div></div>
+            <div class="m"><div class="ml">Last Update</div><div class="mv" id="lm-time" style="font-size:13px">—</div><div class="ms">Refreshes 15s</div></div>
+          </div>
+          <div id="liveChainTable" style="font-size:11px;overflow-x:auto"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ch"><span class="ct" id="brokerCardTitle">My Brokers</span></div>
+        <div class="cb">
+          <div class="abox ai"><span class="ic">🔒</span><div>Credentials are <strong>AES-256 encrypted</strong> before storage. Nobody else can see them. Token refreshes automatically every morning.</div></div>
+          <div id="brokerGrid"></div>
           <div id="brokerFormWrap" style="display:none">
             <div class="divr"></div>
             <div id="brokerFormTitle" class="stitle"></div>
@@ -660,14 +679,66 @@ async function loadMyBrokers() {
 }
 
 function renderBrokerGrid() {
-  document.getElementById('brokerGrid').innerHTML = (brokerDefs||[]).map(b=>`
-    <div class="bkc ${selectedBroker===b.id?'sel':''} ${myBrokers.find(x=>x.broker_id===b.id)?'conn':''}" onclick="selectBroker('${b.id}')">
-      <div class="bk-st">${myBrokers.find(x=>x.broker_id===b.id)?'<span class="bd bdg" style="font-size:8px">✓</span>':''}</div>
-      <span class="bk-flag">${b.flag}</span>
-      <div class="bk-name">${b.name}</div>
-      <div class="bk-mkt">${b.market}</div>
-      <div class="bk-ref">↻ ${b.refresh}</div>
-    </div>`).join('');
+  // Split brokers into connected and available to add
+  var connected   = (brokerDefs||[]).filter(b => myBrokers.find(x=>x.broker_id===b.id && x.is_connected));
+  var savedOnly   = (brokerDefs||[]).filter(b => myBrokers.find(x=>x.broker_id===b.id && !x.is_connected));
+  var notAdded    = (brokerDefs||[]).filter(b => !myBrokers.find(x=>x.broker_id===b.id));
+
+  var html = '';
+
+  // Section: Connected brokers
+  if (connected.length) {
+    html += '<div class="stitle" style="margin-top:0;margin-bottom:8px;color:var(--gr)">Connected</div>';
+    html += connected.map(b => {
+      var bc = myBrokers.find(x=>x.broker_id===b.id);
+      return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;margin-bottom:8px">
+        <span style="font-size:22px">${b.flag}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600;color:#14532d">${b.name}</div>
+          <div style="font-size:11px;color:#16a34a;margin-top:2px">✓ Connected · ${bc?.mode?.toUpperCase()||'PAPER'} mode</div>
+          ${bc?.last_token_refresh ? `<div style="font-size:10px;color:#16a34a;margin-top:2px">Last refresh: ${new Date(bc.last_token_refresh).toLocaleString()}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btng" style="padding:5px 10px;font-size:11px" onclick="startLiveTest('${b.id}')">Live Data</button>
+          <button class="btn btnb" style="padding:5px 10px;font-size:11px" onclick="testBroker('${b.id}',this)">Refresh Token</button>
+          <button class="btn btnr" style="padding:5px 10px;font-size:11px" onclick="if(confirm('Disconnect ${b.name}?'))removeBroker('${b.id}')">Disconnect</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Section: Saved but not connected
+  if (savedOnly.length) {
+    html += '<div class="stitle" style="color:var(--am)">Saved — needs connection</div>';
+    html += savedOnly.map(b => `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:10px;margin-bottom:8px">
+        <span style="font-size:22px">${b.flag}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${b.name}</div>
+          <div style="font-size:11px;color:var(--am2);margin-top:2px">Credentials saved — click Connect to authorise</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btng" style="padding:5px 10px;font-size:11px" onclick="selectedBroker='${b.id}';connectFyers()">Connect →</button>
+          <button class="btn btnr" style="padding:5px 10px;font-size:11px" onclick="if(confirm('Remove?'))removeBroker('${b.id}')">Remove</button>
+        </div>
+      </div>`).join('');
+  }
+
+  // Section: Add new broker
+  if (notAdded.length) {
+    html += '<div class="stitle">Add a broker</div>';
+    html += '<div class="broker-grid">';
+    html += notAdded.map(b => `
+      <div class="bkc ${selectedBroker===b.id?'sel':''}" onclick="selectBroker('${b.id}')">
+        <span class="bk-flag">${b.flag}</span>
+        <div class="bk-name">${b.name}</div>
+        <div class="bk-mkt">${b.market}</div>
+        <div class="bk-ref">↻ ${b.refresh}</div>
+      </div>`).join('');
+    html += '</div>';
+  }
+
+  document.getElementById('brokerGrid').innerHTML = html;
 }
 
 function selectBroker(id) {
@@ -675,10 +746,55 @@ function selectBroker(id) {
   renderBrokerGrid();
   var b = brokerDefs.find(x=>x.id===id);
   if (!b) return;
+
+  var existing = myBrokers.find(x=>x.broker_id===id);
+
+  // Already connected — handled inline in the grid, no form needed
+  if (existing && existing.is_connected) {
+    document.getElementById('brokerFormWrap').style.display = 'none';
+    return;
+  }
+
   document.getElementById('brokerFormWrap').style.display = 'block';
   document.getElementById('brokerFormTitle').textContent  = b.flag + ' ' + b.name;
   var noteEl = document.getElementById('brokerRefreshNote');
-  noteEl.querySelector('span:last-child').textContent = 'Token refresh: ' + b.refresh + '. Fully automatic after first setup.';
+  noteEl.querySelector('span:last-child').textContent = 'Token refresh: ' + b.refresh;
+
+  if (false) { // dead code — connected state now handled in grid
+    document.getElementById('brokerFields').innerHTML = `
+      <div class="abox as"><span class="ic">✓</span><div>
+        <strong>${b.name} is connected.</strong><br>
+        Token auto-refreshes daily at 8:50 AM IST.<br>
+        Last refresh: ${existing.last_token_refresh ? new Date(existing.last_token_refresh).toLocaleString() : 'Not yet refreshed'}<br><br>
+        To update credentials, disconnect first then reconnect.
+      </div></div>`;
+    document.getElementById('brokerTestResult').innerHTML = '';
+    document.getElementById('brokerTestResult').style.display = 'none';
+    // Show reconnect and disconnect buttons only
+    document.getElementById('brokerSaveBtn').style.display = 'none';
+    document.getElementById('brokerFormWrap').innerHTML = document.getElementById('brokerFormWrap').innerHTML;
+    // Re-render with connected state
+    var wrap = document.getElementById('brokerFormWrap');
+    wrap.style.display = 'block';
+    wrap.innerHTML = `
+      <hr class="divr">
+      <div class="stitle">${b.flag} ${b.name}</div>
+      <div class="abox as"><span class="ic">✓</span><div>
+        <strong>Connected and active.</strong><br>
+        Token auto-refreshes daily at 8:50 AM IST.<br>
+        Last refresh: ${existing.last_token_refresh ? new Date(existing.last_token_refresh).toLocaleString() : 'Pending first refresh'}
+      </div></div>
+      <div class="brow">
+        <button class="btn btng" onclick="testBroker('${id}', this)">Refresh Token Now</button>
+        <button class="btn btnr" onclick="if(confirm('Disconnect ${b.name}?'))removeBroker('${id}')">Disconnect</button>
+        <button class="btn btnx" onclick="cancelBroker()">Close</button>
+      </div>`;
+    document.getElementById('brokerFormWrap').scrollIntoView({behavior:'smooth'});
+    return;
+  }
+
+  // Not connected — show credentials form
+  document.getElementById('brokerSaveBtn').style.display = 'inline-flex';
   document.getElementById('brokerFields').innerHTML = b.fields.map(f => {
     if (f.type === 'select') return `
       <div class="frow">
@@ -690,6 +806,7 @@ function selectBroker(id) {
       <div class="frow">
         <label>${f.label}</label>
         <input id="bf-${f.key}" type="${f.secret?'password':'text'}" placeholder="${f.hint.substring(0,50)}..." autocomplete="off">
+        ${f.default?`<script>document.getElementById('bf-${f.key}').value='${f.default}';<\/script>`:''}
         <div class="fhint">${f.hint}</div>
       </div>`;
   }).join('');
@@ -735,19 +852,31 @@ async function connectFyers() {
     var el = document.getElementById('brokerTestResult');
     el.style.display = 'block';
     el.innerHTML = `
-      <div class="abox ai"><span class="ic">📋</span><div>
-        <strong>Fyers login opened in a new tab.</strong><br><br>
-        Log in with your Fyers username and password.<br>
-        After login your browser redirects to a URL — <strong>copy the entire URL from the address bar</strong> and paste it in the box below. We will extract the auth_code automatically.
-      </div></div>
-      <div class="frow" style="margin-top:10px">
-        <label>Paste full redirect URL here</label>
-        <textarea id="fyersAuthCode" rows="3" style="width:100%;font-size:11px;font-family:var(--mono);padding:9px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--card);color:var(--tx);resize:vertical;outline:none" placeholder="Paste the entire URL from your browser address bar here&#10;e.g. https://trade.fyers.in/api-login/redirect-uri/index.html?s=ok&auth_code=eyJhbGci...&state=algo_desk"></textarea>
-        <div class="hint">Select all text in your browser address bar (Cmd+A on Mac), copy it, paste here. The full URL including the long auth_code.</div>
+      <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:#14532d;margin-bottom:10px">Step 1 — Log in to Fyers</div>
+        <div style="font-size:12px;color:#166534;margin-bottom:12px;line-height:1.6">
+          A Fyers login page has opened in a new tab.<br>
+          Enter your Fyers username and password and complete the login.<br>
+          After login, Fyers shows a page with a code — come back here.
+        </div>
+        <button class="btn btng" onclick="window.open('${r.login_url}','_blank')" style="font-size:11px">Re-open Fyers Login →</button>
       </div>
-      <div class="brow">
-        <button class="btn btng" onclick="submitFyersCode()">Complete Connection →</button>
-        <button class="btn btnx" onclick="connectFyers()">Get New Login URL</button>
+      <div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:12px;padding:16px">
+        <div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:10px">Step 2 — Paste the auth code</div>
+        <div style="font-size:12px;color:#1e40af;margin-bottom:12px;line-height:1.6">
+          After logging in, look at your browser address bar. You will see a long URL.<br>
+          The auth code is the long text that starts with <strong>eyJ</strong> after <strong>auth_code=</strong> in that URL.<br><br>
+          <strong>Easiest way:</strong> Click in your browser address bar → Press Cmd+A → Press Cmd+C → Paste below. We extract the code automatically.
+        </div>
+        <div class="frow">
+          <label>Paste auth code or full URL here</label>
+          <textarea id="fyersAuthCode" rows="4" style="width:100%;font-size:11px;font-family:var(--mono);padding:10px 12px;border-radius:8px;border:1.5px solid #93c5fd;background:#fff;color:#1e3a8a;resize:vertical;outline:none;line-height:1.6" placeholder="Paste either:&#10;• The full URL from your browser address bar&#10;• Or just the auth_code value starting with eyJ..."></textarea>
+          <div class="hint" style="color:#3b82f6">Both work — paste whichever is easier to copy</div>
+        </div>
+        <div class="brow">
+          <button class="btn btng" onclick="submitFyersCode()">Complete Connection →</button>
+          <button class="btn btnx" onclick="connectFyers()">Get New Login URL</button>
+        </div>
       </div>`;
   } catch(e) { toast(e.message, 'err'); }
 }
@@ -796,8 +925,14 @@ async function testBroker(id, btn) {
   var orig = btn.textContent;
   btn.innerHTML = '<span class="spin"></span>'; btn.disabled = true;
   try {
-    var r = await api('POST', `/api/brokers/${id}/test`);
-    toast(r.message, r.connected?'ok':'info');
+    if (id === 'fyers') {
+      // For Fyers: do a manual token refresh to test connection
+      var r = await api('POST', '/api/brokers/fyers/refresh');
+      toast(r.ok ? 'Fyers token refreshed ✓' : r.message, r.ok?'ok':'err');
+    } else {
+      var r = await api('POST', `/api/brokers/${id}/test`);
+      toast(r.message, r.connected?'ok':'info');
+    }
     loadMyBrokers();
   } catch(e) { toast(e.message,'err'); }
   btn.textContent = orig; btn.disabled = false;
@@ -1044,6 +1179,65 @@ function toast(msg, type='ok') {
   t.className = 'toast show ' + type;
   setTimeout(() => t.classList.remove('show'), 3500);
 }
+
+
+// ── LIVE DATA TEST ─────────────────────────────────────────
+var liveInterval = null;
+
+async function startLiveTest(brokerId) {
+  document.getElementById('liveDataPanel').style.display = 'block';
+  document.getElementById('liveDataPanel').scrollIntoView({behavior:'smooth'});
+  document.getElementById('liveStatus').textContent = 'Connecting...';
+  stopLiveTest();
+  await fetchLiveData(brokerId);
+  liveInterval = setInterval(() => fetchLiveData(brokerId), 15000);
+}
+
+function stopLiveTest() {
+  if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+}
+
+async function fetchLiveData(brokerId) {
+  try {
+    var r = await api('GET', '/api/market/live?symbol=NSE:NIFTY50-INDEX');
+    if (r.ok) {
+      var spot = r.spot || 0;
+      var atm = Math.round(spot / 50) * 50;
+      document.getElementById('lm-spot').textContent = '₹' + spot.toLocaleString('en-IN', {minimumFractionDigits:1});
+      document.getElementById('lm-atm').textContent = atm.toLocaleString('en-IN');
+      document.getElementById('lm-time').textContent = new Date().toLocaleTimeString();
+      document.getElementById('liveStatus').textContent = 'Live — updates every 15s';
+
+      if (r.chain && Object.keys(r.chain).length > 0) {
+        document.getElementById('lm-combined').textContent =
+          (r.chain[atm]?.combined || 0).toFixed(1);
+        var rows = Object.entries(r.chain)
+          .sort((a,b) => a[0]-b[0])
+          .map(([strike, d]) => `
+            <div style="display:grid;grid-template-columns:80px 80px 80px 80px 1fr;gap:4px;padding:6px 8px;background:${parseInt(strike)===atm?'#eff6ff':'transparent'};border-radius:6px;font-family:var(--mono);font-size:11px;border-bottom:1px solid var(--border)">
+              <span style="font-weight:${parseInt(strike)===atm?'700':'400'};color:${parseInt(strike)===atm?'var(--bl)':'var(--tx)'}">${strike}${parseInt(strike)===atm?' ←ATM':''}</span>
+              <span style="color:#16a34a">${d.ce_ltp?.toFixed(1)||'—'}</span>
+              <span style="color:#dc2626">${d.pe_ltp?.toFixed(1)||'—'}</span>
+              <span style="font-weight:600">${d.combined?.toFixed(1)||'—'}</span>
+              <span style="color:var(--tx3);font-size:10px">${d.ce_symbol?.split(':')[1]||''}</span>
+            </div>`).join('');
+        document.getElementById('liveChainTable').innerHTML = `
+          <div style="display:grid;grid-template-columns:80px 80px 80px 80px 1fr;gap:4px;padding:6px 8px;margin-bottom:4px">
+            <span style="font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase">Strike</span>
+            <span style="font-size:10px;font-weight:600;color:#16a34a;text-transform:uppercase">CE LTP</span>
+            <span style="font-size:10px;font-weight:600;color:#dc2626;text-transform:uppercase">PE LTP</span>
+            <span style="font-size:10px;font-weight:600;color:var(--tx2);text-transform:uppercase">Combined</span>
+            <span style="font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase">Symbol</span>
+          </div>${rows}`;
+      }
+    } else {
+      document.getElementById('liveStatus').textContent = r.message || 'Error fetching data';
+    }
+  } catch(e) {
+    document.getElementById('liveStatus').textContent = 'Error: ' + e.message;
+  }
+}
+
 </script>
 </body>
 </html>
