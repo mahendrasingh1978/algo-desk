@@ -21,7 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb
     volumes: [redis_data:/data]
     networks: [internal]
 
@@ -37,7 +37,7 @@ services:
     volumes:
       - app_logs:/app/logs
       - ./frontend:/app/frontend:ro
-    networks: [internal]
+    networks: [internal, external]
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +67,5 @@ volumes:
 networks:
   internal:
     driver: bridge
-    internal: true
   external:
     driver: bridge
