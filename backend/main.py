@@ -635,6 +635,60 @@ async def _start_scheduler():
     except Exception as e:
         log.error(f"Scheduler init error: {e}")
 
+# ── Live Market Data ─────────────────────────────────────────
+
+@app.get("/api/market/live")
+async def live_market(
+    symbol: str = "NSE:NIFTY50-INDEX",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns live spot price and option chain for connected broker.
+    Used by the live data test panel on the broker screen.
+    """
+    # Find user's connected Fyers broker
+    bc = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == "fyers",
+        BrokerConnection.is_connected == True
+    ).first()
+
+    if not bc:
+        return {"ok": False, "message": "No connected broker found. Connect Fyers first."}
+
+    if not bc.access_token_enc:
+        return {"ok": False, "message": "No access token. Token will refresh at 8:50 AM or click Refresh Token."}
+
+    fields = {k.replace("_enc", ""): decrypt(user.id, v)
+              for k, v in bc.encrypted_fields.items()}
+
+    conn = FyersConnection(
+        user_id=user.id,
+        client_id=fields.get("client_id", ""),
+        secret_key=fields.get("secret_key", ""),
+        pin=fields.get("pin", ""),
+        redirect_uri=fields.get("redirect_uri", ""),
+        access_token_enc=bc.access_token_enc,
+    )
+
+    # Get spot price
+    spot = await conn.get_ltp(symbol)
+    if not spot:
+        return {"ok": False,
+                "message": "Could not get price. Market may be closed (9:15–15:30 IST) or token expired."}
+
+    # Get option chain
+    chain = await conn.get_option_chain(symbol, strike_count=7)
+
+    return {
+        "ok": True,
+        "spot": spot,
+        "symbol": symbol,
+        "chain": chain,
+        "time": datetime.now().isoformat(),
+    }
+
 # ── Frontend ──────────────────────────────────────────────────
 
 frontend_path = "/app/frontend"
