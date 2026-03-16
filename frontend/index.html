@@ -737,14 +737,13 @@ async function connectFyers() {
     el.innerHTML = `
       <div class="abox ai"><span class="ic">📋</span><div>
         <strong>Fyers login opened in a new tab.</strong><br><br>
-        Log in normally on Fyers. After login your browser shows a URL like:<br>
-        <code style="font-size:10px;word-break:break-all">https://trade.fyers.in/api-login/redirect-uri/index.html?auth_code=eyJhbGci...</code><br><br>
-        Copy the value after <strong>auth_code=</strong> and paste it below.
+        Log in with your Fyers username and password.<br>
+        After login your browser redirects to a URL — <strong>copy the entire URL from the address bar</strong> and paste it in the box below. We will extract the auth_code automatically.
       </div></div>
       <div class="frow" style="margin-top:10px">
-        <label>Paste Auth Code here</label>
-        <input id="fyersAuthCode" placeholder="eyJhbGciOiJIUzI1NiIs... (paste full value)">
-        <div class="hint">Copy everything after auth_code= in the URL, up to &state</div>
+        <label>Paste full redirect URL here</label>
+        <textarea id="fyersAuthCode" rows="3" style="width:100%;font-size:11px;font-family:var(--mono);padding:9px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--card);color:var(--tx);resize:vertical;outline:none" placeholder="Paste the entire URL from your browser address bar here&#10;e.g. https://trade.fyers.in/api-login/redirect-uri/index.html?s=ok&auth_code=eyJhbGci...&state=algo_desk"></textarea>
+        <div class="hint">Select all text in your browser address bar (Cmd+A on Mac), copy it, paste here. The full URL including the long auth_code.</div>
       </div>
       <div class="brow">
         <button class="btn btng" onclick="submitFyersCode()">Complete Connection →</button>
@@ -754,8 +753,17 @@ async function connectFyers() {
 }
 
 async function submitFyersCode() {
-  var code = document.getElementById('fyersAuthCode')?.value.trim();
-  if (!code) { toast('Paste the auth_code first', 'err'); return; }
+  var raw = document.getElementById('fyersAuthCode')?.value.trim();
+  if (!raw) { toast('Paste the redirect URL first', 'err'); return; }
+  // Extract auth_code from URL automatically
+  var code = raw;
+  if (raw.includes('auth_code=')) {
+    code = raw.split('auth_code=')[1].split('&')[0].trim();
+  } else if (raw.includes('code=')) {
+    code = raw.split('code=')[1].split('&')[0].trim();
+  }
+  if (!code || code.length < 20) { toast('Could not find auth_code in URL. Paste the full redirect URL.', 'err'); return; }
+  console.log('auth_code extracted, length:', code.length);
   var btn = document.getElementById('brokerSaveBtn');
   btn.innerHTML = '<span class="spin"></span> Connecting...'; btn.disabled = true;
   try {
