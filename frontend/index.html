@@ -2,440 +2,866 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
 <title>ALGO-DESK</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  /* Modern light theme — clean fintech aesthetic */
-  --bg:#f4f6fa;
-  --card:#ffffff;
-  --card2:#f8f9fc;
-  --border:#e4e8f0;
-  --border2:#d0d7e8;
-  --tx:#0f172a;
-  --tx2:#475569;
-  --tx3:#94a3b8;
-  --gr:#0ea572;--gr2:#059660;
-  --rd:#ef4444;--rd2:#dc2626;
-  --am:#f59e0b;--am2:#d97706;
-  --bl:#4f46e5;--bl2:#4338ca;
-  --pu:#7c3aed;--pu2:#6d28d9;
-  --bllt:#eff6ff;--grlt:#f0fdf4;--rdlt:#fef2f2;--amlt:#fffbeb;
-  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
-  --shadow2:0 4px 12px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
-  --mono:'Consolas','Courier New',monospace;
+  --white:#ffffff;
+  --black:#0a0a0a;
+  --g50:#f9fafb;
+  --g100:#f3f4f6;
+  --g200:#e5e7eb;
+  --g300:#d1d5db;
+  --g400:#9ca3af;
+  --g500:#6b7280;
+  --g600:#4b5563;
+  --g700:#374151;
+  --g800:#1f2937;
+  --green:#00c805;
+  --green-dark:#00a304;
+  --green-lt:#f0fff0;
+  --red:#ff5000;
+  --red-lt:#fff5f0;
+  --amber:#f59e0b;
+  --amber-lt:#fffbeb;
+  --blue:#2563eb;
+  --blue-lt:#eff6ff;
+  --r:12px;
+  --mono:'DM Mono',monospace;
+  --sans:'DM Sans',sans-serif;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 16px rgba(0,0,0,.08);
 }
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;min-height:100vh}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overscroll-behavior:none}
+body{font-family:var(--sans);font-size:14px;color:var(--black);background:var(--g50);line-height:1.5}
+input,button,select,textarea{font-family:var(--sans)}
+::-webkit-scrollbar{width:0;height:0}
 
-/* AUTH SCREENS */
-.auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(135deg,#667eea15 0%,#764ba215 100%)}
-.auth-box{width:100%;max-width:420px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:40px;box-shadow:var(--shadow2)}
-.auth-logo{font-family:var(--mono);font-size:18px;font-weight:700;background:linear-gradient(135deg,var(--bl),var(--pu));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:3px;text-align:center;margin-bottom:6px}
-.auth-sub{font-size:12px;color:var(--tx3);text-align:center;margin-bottom:28px}
-.auth-title{font-size:18px;font-weight:600;margin-bottom:6px}
-.auth-desc{font-size:12px;color:var(--tx2);margin-bottom:20px}
-.auth-switch{text-align:center;font-size:12px;color:var(--tx3);margin-top:18px}
-.auth-switch a{color:var(--bl);cursor:pointer;text-decoration:none;font-weight:500}
-.auth-switch a:hover{text-decoration:underline}
+/* ── LAYOUT ────────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh;max-width:480px;margin:0 auto;background:var(--white);position:relative;box-shadow:0 0 40px rgba(0,0,0,.08)}
 
-/* APP LAYOUT */
-.app{display:flex;flex-direction:column;min-height:100vh}
-.topbar{height:52px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:0;position:sticky;top:0;z-index:100;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.logo{font-family:var(--mono);font-size:13px;font-weight:700;background:linear-gradient(135deg,var(--bl),var(--pu));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:2px;margin-right:8px}
-.ver{font-size:9px;color:var(--tx3);font-family:var(--mono);margin-right:20px;align-self:flex-end;margin-bottom:10px}
-.tabs{display:flex;flex:1;overflow-x:auto}
-.tab{padding:0 14px;height:52px;display:flex;align-items:center;font-size:12px;font-weight:500;color:var(--tx3);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;gap:5px;transition:all .15s}
-.tab:hover{color:var(--tx2);background:var(--bg)}
-.tab.on{color:var(--bl);border-bottom-color:var(--bl);background:var(--bllt)}
-.tab.adm{color:var(--am)}.tab.adm.on{color:var(--am2);border-bottom-color:var(--am);background:var(--amlt)}
-.uarea{margin-left:auto;display:flex;align-items:center;gap:10px}
-.av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--bl),var(--pu));display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;cursor:pointer}
-.content{flex:1;padding:20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;max-width:1100px;margin:0 auto;width:100%}
-.page{display:none;flex-direction:column;gap:14px}.page.on{display:flex}
+/* Top bar */
+.topbar{padding:12px 16px 8px;background:var(--white);border-bottom:1px solid var(--g100);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;flex-shrink:0}
+.topbar-logo{font-size:18px;font-weight:600;letter-spacing:-.5px;color:var(--black)}
+.topbar-logo span{color:var(--green)}
+.topbar-right{display:flex;align-items:center;gap:8px}
+.av{width:32px;height:32px;border-radius:50%;background:var(--black);color:var(--white);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0}
+.notif{width:32px;height:32px;border-radius:50%;background:var(--g100);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px}
 
-/* CARDS */
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
-.ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);border-radius:14px 14px 0 0;background:var(--card)}
-.ct{font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--tx2);text-transform:uppercase}
-.cb{padding:16px}
+/* Content area */
+.content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.page{display:none;padding-bottom:80px}
+.page.on{display:block}
 
-/* GRIDS */
-.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
-.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.gauto{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+/* Bottom nav */
+.bottomnav{position:sticky;bottom:0;background:var(--white);border-top:1px solid var(--g100);display:flex;padding-bottom:env(safe-area-inset-bottom,0);flex-shrink:0;z-index:50}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 4px 8px;cursor:pointer;gap:3px;min-height:52px;transition:color .15s;color:var(--g400);font-size:10px;font-weight:500;letter-spacing:.3px;text-transform:uppercase;border:none;background:none}
+.nav-item.on{color:var(--black)}
+.nav-item svg{width:22px;height:22px;stroke-width:1.8}
+.nav-badge{position:absolute;top:6px;right:50%;transform:translateX(10px);background:var(--red);color:#fff;border-radius:99px;font-size:9px;padding:1px 4px;font-weight:700}
 
-/* METRICS */
-.m{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
-.ml{font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.mv{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--tx)}
-.ms{font-size:10px;color:var(--tx3);margin-top:3px}
-.c-gr{color:var(--gr)}.c-rd{color:var(--rd)}.c-am{color:var(--am)}.c-bl{color:var(--bl)}.c-pu{color:var(--pu)}
+/* ── TYPOGRAPHY ────────────────────────────────────────── */
+.section{padding:16px}
+.section+.section{padding-top:0}
+.section-title{font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--g400);margin-bottom:12px}
+.page-title{font-size:22px;font-weight:600;letter-spacing:-.5px;margin-bottom:4px}
+.page-sub{font-size:14px;color:var(--g500);margin-bottom:16px}
+.big-num{font-family:var(--mono);font-size:36px;font-weight:500;letter-spacing:-1px;line-height:1}
+.big-num.pos{color:var(--green)}
+.big-num.neg{color:var(--red)}
 
-/* BADGES */
-.bd{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600}
-.bdg{background:#dcfce7;color:#166534}.bdr{background:#fee2e2;color:#991b1b}
-.bda{background:#fef3c7;color:#92400e}.bdb{background:#e0e7ff;color:#3730a3}
-.bdp{background:#f3e8ff;color:#6b21a8}.bdx{background:var(--card2);color:var(--tx2);border:1px solid var(--border)}
+/* ── CARDS ─────────────────────────────────────────────── */
+.card{background:var(--white);border:1px solid var(--g200);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+.card-header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--g100)}
+.card-title{font-size:13px;font-weight:600;color:var(--g700)}
+.card-body{padding:14px 16px}
+.card-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--g100)}
+.card-row:last-child{border-bottom:none;padding-bottom:0}
+.card-label{font-size:13px;color:var(--g500)}
+.card-value{font-size:13px;font-weight:500;font-family:var(--mono)}
 
-/* BUTTONS */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;border:1.5px solid transparent;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;transition:all .15s;line-height:1}
-.btn-full{width:100%;justify-content:center;padding:12px}
-.btng{background:var(--gr);color:#fff;border-color:var(--gr)}.btng:hover{background:var(--gr2);border-color:var(--gr2)}
-.btnr{background:var(--rdlt);color:var(--rd2);border-color:#fecaca}.btnr:hover{background:#fee2e2}
-.btnb{background:var(--bl);color:#fff;border-color:var(--bl)}.btnb:hover{background:var(--bl2);border-color:var(--bl2)}
-.btna{background:var(--amlt);color:var(--am2);border-color:#fde68a}.btna:hover{background:#fef3c7}
-.btnx{background:var(--card);color:var(--tx2);border-color:var(--border)}.btnx:hover{background:var(--card2);color:var(--tx)}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-.brow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+/* ── METRIC TILES ──────────────────────────────────────── */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0}
+.tile{background:var(--g50);border-radius:10px;padding:12px 14px;border:1px solid var(--g100)}
+.tile-label{font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:4px}
+.tile-value{font-family:var(--mono);font-size:20px;font-weight:500;line-height:1}
+.tile-sub{font-size:10px;color:var(--g400);margin-top:2px}
+.tile.green{background:#f0fff0;border-color:#bbf7d0}
+.tile.red{background:var(--red-lt);border-color:#fecaca}
+.tile.blue{background:var(--blue-lt);border-color:#bfdbfe}
 
-/* FORMS */
-.frow{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
-.frow label{font-size:11px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px}
-.frow input,.frow select,.frow textarea{background:var(--card);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--tx);font-size:13px;outline:none;width:100%;font-family:inherit;transition:border .15s,box-shadow .15s}
-.frow input:focus,.frow select:focus{border-color:var(--bl);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
-.frow input[type=password]{font-family:var(--mono);letter-spacing:2px}
-.fhint{font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.5}
-.fhint a{color:var(--bl)}
-
-.divr{border:none;border-top:1px solid var(--border);margin:14px 0}
-.stitle{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--tx3);text-transform:uppercase;margin:14px 0 10px}
-
-/* ALERTS */
-.abox{border-radius:10px;padding:11px 14px;display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;font-size:12px;line-height:1.6}
-.ai{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
-.aw{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
-.as{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}
-.ae{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
-.abox .ic{font-size:15px;flex-shrink:0}
-
-/* BROKER CARDS */
-.broker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;margin-bottom:16px}
-.bkc{background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:all .15s;position:relative;box-shadow:var(--shadow)}
-.bkc:hover{border-color:var(--bl);box-shadow:0 4px 12px rgba(79,70,229,.12);transform:translateY(-1px)}
-.bkc.sel{border-color:var(--bl);background:var(--bllt);box-shadow:0 4px 12px rgba(79,70,229,.15)}
-.bkc.conn{border-color:var(--gr);background:var(--grlt)}
-.bk-flag{font-size:20px;display:block;margin-bottom:6px}
-.bk-name{font-size:12px;font-weight:600;color:var(--tx);margin-bottom:2px}
-.bk-mkt{font-size:10px;color:var(--tx3)}
-.bk-ref{font-size:10px;color:var(--gr);margin-top:5px;font-weight:500}
-.bk-st{position:absolute;top:10px;right:10px}
-
-/* TABLE */
-.twrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{padding:8px 10px;text-align:left;font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--tx3);text-transform:uppercase;border-bottom:2px solid var(--border);background:var(--card2)}
-td{padding:9px 10px;border-bottom:1px solid var(--border);color:var(--tx2)}
-td.mn{font-family:var(--mono);color:var(--tx)}
-tr:hover td{background:#f8f9fc}
-
-/* TOGGLES */
-.trow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.tog{position:relative;width:32px;height:18px;flex-shrink:0}
-.tog input{opacity:0;width:0;height:0;position:absolute}
-.tsl{position:absolute;inset:0;background:var(--border);border-radius:9px;cursor:pointer;transition:.15s}
-.tsl:before{content:'';position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
-input:checked+.tsl{background:var(--gr)}
-input:checked+.tsl:before{transform:translateX(14px)}
-
-/* SPINNER */
-.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(79,70,229,.2);border-top-color:var(--bl);border-radius:50%;animation:sp .7s linear infinite}
+/* ── BUTTONS ───────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border-radius:99px;border:none;cursor:pointer;font-size:14px;font-weight:600;font-family:var(--sans);transition:all .15s;line-height:1;white-space:nowrap}
+.btn-full{width:100%;padding:14px}
+.btn-black{background:var(--black);color:#fff}.btn-black:hover{background:var(--g800)}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{background:var(--green-dark)}
+.btn-outline{background:transparent;color:var(--black);border:1.5px solid var(--g200)}.btn-outline:hover{background:var(--g50)}
+.btn-ghost{background:var(--g100);color:var(--g700)}.btn-ghost:hover{background:var(--g200)}
+.btn-red{background:var(--red);color:#fff}
+.btn-sm{padding:7px 14px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 
-/* TOAST */
-.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:10px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:all .3s;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.15)}
-.toast.show{opacity:1}
-.toast.ok{background:var(--gr);color:#fff}
-.toast.err{background:var(--rd);color:#fff}
-.toast.info{background:var(--bl);color:#fff}
+/* ── FORMS ─────────────────────────────────────────────── */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:6px;letter-spacing:.3px}
+.field input,.field select,.field textarea{width:100%;padding:12px 14px;border:1.5px solid var(--g200);border-radius:10px;font-size:14px;color:var(--black);background:var(--white);outline:none;transition:border .15s;font-family:var(--sans)}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--black)}
+.field input[type=password]{font-family:var(--mono);letter-spacing:3px}
+.field-hint{font-size:11px;color:var(--g400);margin-top:5px;line-height:1.5}
+
+/* ── ALERTS ────────────────────────────────────────────── */
+.alert{padding:12px 14px;border-radius:10px;font-size:13px;line-height:1.6;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start}
+.alert-icon{font-size:15px;flex-shrink:0;margin-top:1px}
+.alert-info{background:var(--blue-lt);color:#1e40af;border:1px solid #bfdbfe}
+.alert-success{background:var(--green-lt);color:#14532d;border:1px solid #bbf7d0}
+.alert-warn{background:var(--amber-lt);color:#92400e;border:1px solid #fde68a}
+.alert-error{background:var(--red-lt);color:#991b1b;border:1px solid #fecaca}
+
+/* ── BADGES ────────────────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:99px;font-size:11px;font-weight:600;gap:4px}
+.badge-green{background:#dcfce7;color:#166534}
+.badge-red{background:#fee2e2;color:#991b1b}
+.badge-amber{background:#fef3c7;color:#92400e}
+.badge-blue{background:#dbeafe;color:#1e40af}
+.badge-gray{background:var(--g100);color:var(--g600)}
+.badge-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.dot-green{background:var(--green);box-shadow:0 0 5px var(--green)}
+.dot-red{background:var(--red)}
+.dot-gray{background:var(--g300)}
+
+/* ── AUTH ──────────────────────────────────────────────── */
+.auth-screen{display:none;flex-direction:column;min-height:100vh;background:var(--white);padding:0}
+.auth-screen.on{display:flex}
+.auth-hero{padding:48px 24px 32px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.auth-logo{font-size:28px;font-weight:700;letter-spacing:-1px;margin-bottom:8px}
+.auth-logo span{color:var(--green)}
+.auth-tagline{font-size:14px;color:var(--g500);margin-bottom:32px}
+.auth-body{padding:0 24px 32px;flex:1}
+.auth-footer{text-align:center;padding:0 24px 32px;font-size:13px;color:var(--g500)}
+.auth-footer a{color:var(--black);font-weight:600;cursor:pointer}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--g300);font-size:12px}
+.auth-divider::before,.auth-divider::after{content:'';flex:1;height:1px;background:var(--g100)}
+
+/* ── BROKER CONNECT ────────────────────────────────────── */
+.broker-option{display:flex;align-items:center;gap:14px;padding:14px;border:1.5px solid var(--g200);border-radius:var(--r);margin-bottom:8px;cursor:pointer;transition:all .15s}
+.broker-option:hover{border-color:var(--g400)}
+.broker-option.connected{border-color:var(--green);background:var(--green-lt)}
+.broker-option.selected{border-color:var(--black)}
+.broker-flag{font-size:24px;flex-shrink:0}
+.broker-info{flex:1}
+.broker-name{font-weight:600;font-size:14px}
+.broker-sub{font-size:12px;color:var(--g500)}
+.broker-status{flex-shrink:0}
+
+/* ── CONNECT FLOW ──────────────────────────────────────── */
+.connect-step{border-radius:var(--r);padding:16px;margin-bottom:12px}
+.connect-step-1{background:var(--green-lt);border:1.5px solid #86efac}
+.connect-step-2{background:var(--blue-lt);border:1.5px solid #93c5fd}
+.step-title{font-size:13px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.step-num{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.step-num-1{background:var(--green);color:#fff}
+.step-num-2{background:var(--blue);color:#fff}
+.step-desc{font-size:12px;line-height:1.6;margin-bottom:10px}
+
+/* ── LIVE MONITOR ──────────────────────────────────────── */
+.ticker-bar{background:var(--black);padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
+.ticker-symbol{font-size:12px;font-weight:500;color:#fff;opacity:.7}
+.ticker-price{font-family:var(--mono);font-size:16px;font-weight:500;color:#fff}
+.ticker-change{font-size:11px}
+.ticker-up{color:var(--green)}
+.ticker-dn{color:var(--red)}
+
+.strike-table{width:100%;border-collapse:collapse;font-size:12px}
+.strike-table th{padding:6px 10px;text-align:right;font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--g400);background:var(--g50);border-bottom:1px solid var(--g200)}
+.strike-table th:first-child{text-align:left}
+.strike-table td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--g100);font-family:var(--mono)}
+.strike-table td:first-child{text-align:left;font-family:var(--sans);font-weight:500}
+.strike-table tr.atm-row{background:#eff6ff}
+.strike-table tr.atm-row td:first-child{color:var(--blue);font-weight:700}
+.ce-col{color:var(--green-dark)}
+.pe-col{color:var(--red)}
+
+/* ── TRADE LIST ────────────────────────────────────────── */
+.trade-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--g100)}
+.trade-item:last-child{border-bottom:none}
+.trade-icon{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.trade-icon-win{background:var(--green-lt)}
+.trade-icon-loss{background:var(--red-lt)}
+.trade-icon-open{background:var(--amber-lt)}
+.trade-meta{flex:1;min-width:0}
+.trade-strat{font-size:13px;font-weight:600}
+.trade-date{font-size:11px;color:var(--g400)}
+.trade-pnl{font-family:var(--mono);font-size:14px;font-weight:600;text-align:right}
+.trade-pnl.pos{color:var(--green-dark)}
+.trade-pnl.neg{color:var(--red)}
+.trade-pnl.open{color:var(--amber)}
+
+/* ── ENGINE CONTROLS ───────────────────────────────────── */
+.engine-bar{background:var(--black);border-radius:var(--r);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.engine-status{display:flex;align-items:center;gap:8px}
+.engine-label{font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.5)}
+.engine-state{font-size:14px;font-weight:600;color:#fff}
+.engine-dot{width:8px;height:8px;border-radius:50%;background:var(--g400)}
+.engine-dot.live{background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── LOG ───────────────────────────────────────────────── */
+.log-entry{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--g100);font-size:12px;align-items:flex-start}
+.log-time{color:var(--g400);font-family:var(--mono);font-size:11px;flex-shrink:0;min-width:52px}
+.log-msg{flex:1;line-height:1.5}
+.log-ok{color:var(--green-dark)}.log-err{color:var(--red)}.log-signal{color:var(--blue);font-weight:600}.log-order{color:var(--amber)}.log-sl{color:var(--red);font-weight:600}
+
+/* ── STRATEGY TOGGLE ───────────────────────────────────── */
+.strat-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--g100)}
+.strat-item:last-child{border-bottom:none}
+.strat-info{flex:1}
+.strat-name{font-size:13px;font-weight:600;margin-bottom:2px}
+.strat-desc{font-size:11px;color:var(--g500);line-height:1.4}
+.toggle{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;background:var(--g200);border-radius:99px;cursor:pointer;transition:.2s}
+.toggle-track::before{content:'';position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+input:checked+.toggle-track{background:var(--black)}
+input:checked+.toggle-track::before{transform:translateX(20px)}
+
+/* ── ADMIN TABLE ───────────────────────────────────────── */
+.user-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--g100)}
+.user-av{width:36px;height:36px;border-radius:50%;background:var(--g200);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--g600);flex-shrink:0}
+.user-info{flex:1;min-width:0}
+.user-name{font-size:13px;font-weight:600;margin-bottom:1px}
+.user-email{font-size:11px;color:var(--g400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-actions{display:flex;gap:4px;flex-shrink:0}
+
+/* ── TOAST ─────────────────────────────────────────────── */
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--black);color:#fff;padding:10px 18px;border-radius:99px;font-size:13px;font-weight:500;z-index:999;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;box-shadow:var(--shadow-md)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.success{background:var(--green-dark)}
+.toast.error{background:var(--red)}
+
+/* ── DIVIDER ───────────────────────────────────────────── */
+.divider{border:none;border-top:1px solid var(--g100);margin:16px 0}
+
+/* ── EMPTY STATE ───────────────────────────────────────── */
+.empty{text-align:center;padding:40px 24px}
+.empty-icon{font-size:40px;margin-bottom:12px;opacity:.3}
+.empty-title{font-size:15px;font-weight:600;margin-bottom:6px}
+.empty-sub{font-size:13px;color:var(--g500);line-height:1.6}
+
+/* ── DESKTOP ───────────────────────────────────────────── */
+@media(min-width:600px){
+  body{background:var(--g100)}
+  #app{border-radius:0;box-shadow:none;max-width:100%;flex-direction:row}
+  .content{max-width:640px;margin:0 auto}
+  .bottomnav{display:none}
+  .sidenav{display:flex;flex-direction:column;width:220px;border-right:1px solid var(--g100);padding:20px 0;flex-shrink:0;position:sticky;top:0;height:100vh;background:var(--white)}
+  .sidenav-logo{padding:8px 20px 24px;font-size:18px;font-weight:700;letter-spacing:-.5px}
+  .sidenav-logo span{color:var(--green)}
+  .sidenav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:14px;font-weight:500;color:var(--g500);border-radius:0;transition:all .15s;border-left:3px solid transparent}
+  .sidenav-item:hover{color:var(--black);background:var(--g50)}
+  .sidenav-item.on{color:var(--black);background:var(--g50);border-left-color:var(--black)}
+  .sidenav-item svg{width:18px;height:18px;stroke-width:2}
+  .topbar{display:none}
+}
 </style>
 </head>
 <body>
 
-<!-- ════ LOGIN ════ -->
-<div class="auth-wrap" id="loginScreen">
-  <div class="auth-box">
-    <div class="auth-logo">⬡ ALGO-DESK</div>
-    <div class="auth-sub">Automated Options Trading Platform</div>
-    <div id="loginErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="loginErrMsg"></span></div>
-    <div class="frow"><label>Email</label><input id="li-email" type="email" placeholder="your@email.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
-    <div class="frow"><label>Password</label><input id="li-pass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()"></div>
-    <button class="btn btng btn-full" id="loginBtn" onclick="doLogin()">Sign In</button>
-    <div class="auth-switch">
-      <a onclick="showForgot()">Forgot password?</a> &nbsp;·&nbsp;
-      <a onclick="showRegister()">Create account</a>
+<!-- ════ AUTH — LOGIN ════ -->
+<div class="auth-screen on" id="loginScreen">
+  <div class="auth-hero">
+    <div class="auth-logo">ALGO<span>DESK</span></div>
+    <div class="auth-tagline">Automated options trading for NIFTY</div>
+  </div>
+  <div class="auth-body">
+    <div id="loginErr" class="alert alert-error" style="display:none">
+      <span class="alert-icon">✕</span><span id="loginErrMsg"></span>
     </div>
+    <div class="field"><label>Email</label>
+      <input id="li-email" type="email" placeholder="you@email.com" autocomplete="email"
+             onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div class="field"><label>Password</label>
+      <input id="li-pass" type="password" placeholder="Password" autocomplete="current-password"
+             onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn btn-black btn-full" id="loginBtn" onclick="doLogin()">Sign In</button>
+    <div class="auth-divider">or</div>
+    <button class="btn btn-outline btn-full" onclick="showScreen('forgotScreen')">Forgot password?</button>
+  </div>
+  <div class="auth-footer">
+    Don't have an account? <a onclick="showScreen('registerScreen')">Sign up</a>
   </div>
 </div>
 
-<!-- ════ REGISTER ════ -->
-<div class="auth-wrap" id="registerScreen" style="display:none">
-  <div class="auth-box">
-    <div class="auth-logo">⬡ ALGO-DESK</div>
-    <div class="auth-sub">Create your account</div>
-    <div id="regErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="regErrMsg"></span></div>
-    <div class="frow"><label>Full Name</label><input id="reg-name" placeholder="Your name"></div>
-    <div class="frow"><label>Email</label><input id="reg-email" type="email" placeholder="your@email.com"></div>
-    <div class="frow"><label>Password</label><input id="reg-pass" type="password" placeholder="Min 8 characters"></div>
-    <div class="frow"><label>Confirm Password</label><input id="reg-pass2" type="password" placeholder="Repeat password"></div>
-    <button class="btn btng btn-full" onclick="doRegister()">Create Account</button>
-    <div class="auth-switch">Already have an account? <a onclick="showLogin()">Sign in</a></div>
+<!-- ════ AUTH — REGISTER ════ -->
+<div class="auth-screen" id="registerScreen">
+  <div class="auth-hero">
+    <div class="auth-logo">ALGO<span>DESK</span></div>
+    <div class="auth-tagline">Create your account</div>
   </div>
+  <div class="auth-body">
+    <div id="regErr" class="alert alert-error" style="display:none">
+      <span class="alert-icon">✕</span><span id="regErrMsg"></span>
+    </div>
+    <div class="field"><label>Full Name</label><input id="reg-name" placeholder="Your name"></div>
+    <div class="field"><label>Email</label><input id="reg-email" type="email" placeholder="you@email.com"></div>
+    <div class="field"><label>Password</label><input id="reg-pass" type="password" placeholder="Min 8 characters"></div>
+    <div class="field"><label>Confirm Password</label><input id="reg-pass2" type="password" placeholder="Repeat password"></div>
+    <button class="btn btn-black btn-full" onclick="doRegister()">Create Account</button>
+  </div>
+  <div class="auth-footer">Already have an account? <a onclick="showScreen('loginScreen')">Sign in</a></div>
 </div>
 
-<!-- ════ FORGOT PASSWORD ════ -->
-<div class="auth-wrap" id="forgotScreen" style="display:none">
-  <div class="auth-box">
-    <div class="auth-logo">⬡ ALGO-DESK</div>
-    <div class="auth-sub">Reset your password</div>
-    <div id="forgotMsg" class="abox as" style="display:none"><span class="ic">✓</span><span id="forgotMsgTxt"></span></div>
-    <div class="frow"><label>Your Email</label><input id="forgot-email" type="email" placeholder="your@email.com"></div>
-    <button class="btn btng btn-full" onclick="doForgot()">Send Reset Link</button>
-    <div class="auth-switch"><a onclick="showLogin()">← Back to sign in</a></div>
+<!-- ════ AUTH — FORGOT ════ -->
+<div class="auth-screen" id="forgotScreen">
+  <div class="auth-hero">
+    <div class="auth-logo">ALGO<span>DESK</span></div>
+    <div class="auth-tagline">Reset your password</div>
   </div>
-</div>
-
-<!-- ════ RESET PASSWORD ════ -->
-<div class="auth-wrap" id="resetScreen" style="display:none">
-  <div class="auth-box">
-    <div class="auth-logo">⬡ ALGO-DESK</div>
-    <div class="auth-sub">Choose a new password</div>
-    <div id="resetErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="resetErrMsg"></span></div>
-    <div class="frow"><label>New Password</label><input id="reset-pass" type="password" placeholder="Min 8 characters"></div>
-    <div class="frow"><label>Confirm Password</label><input id="reset-pass2" type="password" placeholder="Repeat password"></div>
-    <button class="btn btng btn-full" onclick="doReset()">Update Password</button>
+  <div class="auth-body">
+    <div id="forgotOk" class="alert alert-success" style="display:none">
+      <span class="alert-icon">✓</span><span id="forgotOkMsg">Reset link sent.</span>
+    </div>
+    <div class="field"><label>Email</label><input id="forgot-email" type="email" placeholder="you@email.com"></div>
+    <button class="btn btn-black btn-full" onclick="doForgot()">Send Reset Link</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="showScreen('loginScreen')">← Back</button>
   </div>
 </div>
 
 <!-- ════ MAIN APP ════ -->
-<div class="app" id="mainApp" style="display:none">
-  <div class="topbar">
-    <div class="logo">⬡ ALGO-DESK</div>
-    <div class="ver">v4.0</div>
-    <div class="tabs" id="mainTabs">
-      <div class="tab on" onclick="nav('dashboard')">Dashboard</div>
-      <div class="tab" onclick="nav('brokers')">My Brokers</div>
-      <div class="tab" onclick="nav('automate')">Automate</div>
-      <div class="tab" onclick="nav('live')">Live Monitor</div>
-      <div class="tab" onclick="nav('profile')">My Profile</div>
-      <div class="tab adm" id="adminTab" onclick="nav('admin')" style="display:none">Admin</div>
-    </div>
-    <div class="uarea">
-      <span id="userNameBadge" class="bd bdx"></span>
-      <div class="av" id="userAv" onclick="nav('profile')">?</div>
-      <button class="btn btnx" style="padding:4px 10px;font-size:11px" onclick="logout()">Sign Out</button>
-    </div>
-  </div>
+<div id="mainApp" style="display:none" class="auth-screen">
+  <div id="app">
 
-  <div class="content">
+    <!-- Side nav (desktop) -->
+    <nav class="sidenav" id="sidenav" style="display:none">
+      <div class="sidenav-logo">ALGO<span>DESK</span></div>
+      <div class="sidenav-item on" onclick="nav('dashboard')" id="sn-dashboard">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+      </div>
+      <div class="sidenav-item" onclick="nav('brokers')" id="sn-brokers">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        My Brokers
+      </div>
+      <div class="sidenav-item" onclick="nav('automate')" id="sn-automate">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+        Automate
+      </div>
+      <div class="sidenav-item" onclick="nav('live')" id="sn-live">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Live Monitor
+      </div>
+      <div class="sidenav-item" onclick="nav('trades')" id="sn-trades">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Trades
+      </div>
+      <div class="sidenav-item" onclick="nav('profile')" id="sn-profile">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Profile
+      </div>
+      <div class="sidenav-item" onclick="nav('admin')" id="sn-admin" style="display:none">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Admin
+      </div>
+    </nav>
 
-    <!-- ── DASHBOARD ── -->
-    <div class="page on" id="pg-dashboard">
-      <div class="abox as" id="welcomeBox"><span class="ic">👋</span><span id="welcomeMsg"></span></div>
-      <div class="gauto" id="dashStats"></div>
-      <div class="g2">
-        <div class="card">
-          <div class="ch"><span class="ct">Setup Checklist</span></div>
-          <div class="cb" id="checklist"></div>
+    <!-- Mobile topbar -->
+    <div class="topbar">
+      <div class="topbar-logo">ALGO<span>DESK</span></div>
+      <div class="topbar-right">
+        <div class="notif" id="topNifty" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--g700);width:auto;padding:0 8px;min-width:32px">—</div>
+        <div class="av" id="topAv" onclick="nav('profile')">?</div>
+      </div>
+    </div>
+
+    <!-- Pages -->
+    <div class="content">
+
+      <!-- ── DASHBOARD ─────────────────────────────────── -->
+      <div class="page on" id="pg-dashboard">
+        <div class="section">
+          <div class="page-title" id="dashGreeting">Good morning</div>
+          <div class="page-sub" id="dashSub">Here's your trading overview</div>
         </div>
-        <div class="card">
-          <div class="ch"><span class="ct">Quick Actions</span></div>
-          <div class="cb">
-            <div style="display:flex;flex-direction:column;gap:8px">
-              <button class="btn btnb btn-full" onclick="nav('brokers')">Connect a broker →</button>
-              <button class="btn btna btn-full" onclick="nav('automate')">Set up automation →</button>
-              <button class="btn btng btn-full" onclick="nav('live')">Go to Live Monitor →</button>
+
+        <!-- P&L Hero -->
+        <div style="padding:0 16px 16px">
+          <div style="background:var(--black);border-radius:16px;padding:20px">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.4);margin-bottom:8px">Today's P&L</div>
+            <div class="big-num" id="dash-pnl" style="color:#fff;margin-bottom:4px">₹0</div>
+            <div style="font-size:12px;color:rgba(255,255,255,.4)" id="dash-pnl-sub">No trades today</div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <div class="tiles">
+            <div class="tile">
+              <div class="tile-label">NIFTY</div>
+              <div class="tile-value" id="dash-spot">—</div>
+              <div class="tile-sub" id="dash-spot-sub">Live price</div>
+            </div>
+            <div class="tile">
+              <div class="tile-label">ATM Combined</div>
+              <div class="tile-value" id="dash-combined">—</div>
+              <div class="tile-sub" id="dash-atm-sub">CE + PE</div>
+            </div>
+            <div class="tile">
+              <div class="tile-label">Engine</div>
+              <div class="tile-value" id="dash-engine" style="font-size:13px;font-weight:600">IDLE</div>
+              <div class="tile-sub" id="dash-mode">Paper mode</div>
+            </div>
+            <div class="tile">
+              <div class="tile-label">Today's Trades</div>
+              <div class="tile-value" id="dash-trades">0</div>
+              <div class="tile-sub">Total executed</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Quick Actions</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-black" style="flex:1" onclick="nav('live')">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Live
+            </button>
+            <button class="btn btn-outline" style="flex:1" onclick="nav('brokers')">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18"/></svg>
+              Broker
+            </button>
+            <button class="btn btn-outline" style="flex:1" onclick="nav('trades')">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16h16V8z"/></svg>
+              Trades
+            </button>
+          </div>
+        </div>
+
+        <!-- Broker status -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Broker Status</div>
+          <div class="card" id="dashBrokerStatus">
+            <div class="card-body">
+              <div class="empty">
+                <div class="empty-icon">🏦</div>
+                <div class="empty-title">No broker connected</div>
+                <div class="empty-sub">Connect Fyers to start trading</div>
+                <button class="btn btn-black btn-sm" style="margin-top:12px" onclick="nav('brokers')">Connect Broker</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent trades -->
+        <div class="section" style="padding-top:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="section-title" style="margin-bottom:0">Recent Trades</div>
+            <a onclick="nav('trades')" style="font-size:12px;font-weight:600;cursor:pointer;color:var(--g500)">See all</a>
+          </div>
+          <div id="dashRecentTrades">
+            <div class="empty">
+              <div class="empty-icon">📊</div>
+              <div class="empty-title">No trades yet</div>
+              <div class="empty-sub">Your trades will appear here once the engine runs</div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ── MY BROKERS ── -->
-    <div class="page" id="pg-brokers">
-      <div class="card">
-        <div class="ch"><span class="ct">Connected Brokers</span></div>
-        <div class="cb" id="connectedBrokersList">
-          <div style="color:var(--tx3);font-size:12px">Loading...</div>
+      <!-- ── MY BROKERS ────────────────────────────────── -->
+      <div class="page" id="pg-brokers">
+        <div class="section">
+          <div class="page-title">My Brokers</div>
+          <div class="page-sub">Connect your trading account</div>
+        </div>
+
+        <!-- Connected brokers -->
+        <div class="section" style="padding-top:0" id="connectedBrokersSection">
+          <div class="section-title">Connected</div>
+          <div id="connectedBrokersList">
+            <div class="empty">
+              <div class="empty-icon">🔗</div>
+              <div class="empty-title">No brokers connected</div>
+              <div class="empty-sub">Add a broker below to get started</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live data test panel -->
+        <div class="section" style="padding-top:0;display:none" id="liveTestSection">
+          <div class="section-title">Live Data Test</div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">NIFTY 50 Option Chain</div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <div class="badge-dot dot-green" id="liveDot" style="display:none"></div>
+                <span style="font-size:11px;color:var(--g400)" id="liveStatus">Press Test to load</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="tiles" style="margin-bottom:12px">
+                <div class="tile"><div class="tile-label">Spot</div><div class="tile-value" id="lt-spot">—</div></div>
+                <div class="tile"><div class="tile-label">ATM Combined</div><div class="tile-value" id="lt-comb">—</div></div>
+              </div>
+              <div id="lt-chain" style="overflow-x:auto"></div>
+              <div class="btn-row" style="margin-top:12px">
+                <button class="btn btn-black btn-sm" onclick="startLiveTest()">Test Connection</button>
+                <button class="btn btn-ghost btn-sm" onclick="stopLiveTest()">Stop</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add broker -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Add Broker</div>
+          <div id="brokerOptionsList"></div>
+        </div>
+
+        <!-- Broker form -->
+        <div class="section" style="padding-top:0;display:none" id="brokerFormSection">
+          <div class="section-title" id="brokerFormTitle">Connect Fyers</div>
+          <div id="brokerFormFields"></div>
+          <div id="brokerSaveArea">
+            <button class="btn btn-black btn-full" id="brokerSaveBtn" onclick="saveBrokerCredentials()">Save Credentials</button>
+          </div>
+          <div id="brokerConnectArea" style="display:none">
+            <!-- Connect flow shown after save -->
+          </div>
         </div>
       </div>
 
-      <div id="liveDataPanel" style="display:none" class="card">
-        <div class="ch">
-          <span class="ct">Live Connection Test</span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="width:8px;height:8px;border-radius:50%;background:var(--gr);animation:pulse 2s infinite" id="liveDot"></div>
-            <span style="font-size:11px;color:var(--tx2)" id="liveStatus">Fetching...</span>
-            <button class="btn btnx" style="padding:3px 9px;font-size:10px" onclick="stopLiveTest()">Stop</button>
-          </div>
+      <!-- ── AUTOMATE ───────────────────────────────────── -->
+      <div class="page" id="pg-automate">
+        <div class="section">
+          <div class="page-title">Automate</div>
+          <div class="page-sub">Configure your trading strategies</div>
         </div>
-        <div class="cb">
-          <div class="gauto" id="liveMetrics" style="margin-bottom:12px">
-            <div class="m"><div class="ml">NIFTY Spot</div><div class="mv c-bl" id="lm-spot">—</div><div class="ms">Live price</div></div>
-            <div class="m"><div class="ml">ATM Strike</div><div class="mv" id="lm-atm">—</div><div class="ms">Nearest 50</div></div>
-            <div class="m"><div class="ml">ATM Combined</div><div class="mv c-am" id="lm-combined">—</div><div class="ms">CE + PE premium</div></div>
-            <div class="m"><div class="ml">Last Update</div><div class="mv" id="lm-time" style="font-size:13px">—</div><div class="ms">Refreshes 15s</div></div>
-          </div>
-          <div id="liveChainTable" style="font-size:11px;overflow-x:auto"></div>
-        </div>
-      </div>
 
-      <div class="card">
-        <div class="ch"><span class="ct" id="brokerCardTitle">My Brokers</span></div>
-        <div class="cb">
-          <div class="abox ai"><span class="ic">🔒</span><div>Credentials are <strong>AES-256 encrypted</strong> before storage. Nobody else can see them. Token refreshes automatically every morning.</div></div>
-          <div id="brokerGrid"></div>
-          <div id="brokerFormWrap" style="display:none">
-            <div class="divr"></div>
-            <div id="brokerFormTitle" class="stitle"></div>
-            <div class="abox ai" id="brokerRefreshNote"><span class="ic">↻</span><span></span></div>
-            <div id="brokerFields"></div>
-            <div id="brokerTestResult" style="display:none"></div>
-            <div class="brow">
-              <button class="btn btng" id="brokerSaveBtn" onclick="saveBroker()">Save Credentials</button>
-              <button class="btn btnx" onclick="cancelBroker()">Cancel</button>
+        <!-- Existing automations -->
+        <div class="section" style="padding-top:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="section-title" style="margin-bottom:0">My Automations</div>
+            <button class="btn btn-black btn-sm" onclick="showNewAutoForm()">+ New</button>
+          </div>
+          <div id="automationsList">
+            <div class="empty">
+              <div class="empty-icon">⚙️</div>
+              <div class="empty-title">No automations yet</div>
+              <div class="empty-sub">Create one to start trading</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- New automation form -->
+        <div class="section" style="padding-top:0;display:none" id="newAutoForm">
+          <div class="section-title">New Automation</div>
+          <div class="card">
+            <div class="card-body">
+              <div class="field">
+                <label>Symbol</label>
+                <select id="auto-sym">
+                  <option value="NSE:NIFTY50-INDEX">NIFTY 50</option>
+                  <option value="NSE:NIFTYBANK-INDEX">BANK NIFTY</option>
+                  <option value="NSE:FINNIFTY-INDEX">FINNIFTY</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Broker</label>
+                <select id="auto-broker">
+                  <option value="">Select broker...</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Max Daily Loss (₹)</label>
+                <input type="number" id="auto-maxloss" value="5000">
+              </div>
+              <div class="field">
+                <label>Auto Exit Time</label>
+                <input type="time" id="auto-exit" value="14:00">
+              </div>
+
+              <div style="margin-bottom:12px">
+                <div style="font-size:12px;font-weight:600;color:var(--g600);margin-bottom:10px;text-transform:uppercase;letter-spacing:.3px">Strategies</div>
+                <div id="autoStratPicker"></div>
+              </div>
+
+              <div class="alert alert-warn" style="margin-bottom:12px">
+                <span class="alert-icon">⚠</span>
+                <span>Start in <strong>Paper mode</strong> first. Switch to Live after validating results.</span>
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-ghost" style="flex:1" onclick="saveAuto('paper')">Save as Paper</button>
+                <button class="btn btn-red" style="flex:1" onclick="saveAuto('live')">Go Live</button>
+              </div>
+              <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="document.getElementById('newAutoForm').style.display='none'">Cancel</button>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ── AUTOMATE ── -->
-    <div class="page" id="pg-automate">
-      <div class="card">
-        <div class="ch"><span class="ct">My Automations</span>
-          <button class="btn btng" style="padding:3px 9px;font-size:10px" onclick="showNewAuto()">+ New</button>
-        </div>
-        <div class="cb" id="autoList"><div style="color:var(--tx3)">Loading...</div></div>
-      </div>
-      <div class="card" id="newAutoCard" style="display:none">
-        <div class="ch"><span class="ct">New Automation</span></div>
-        <div class="cb">
-          <div class="g2">
-            <div class="frow"><label>Symbol</label>
-              <select id="auto-sym">
-                <option>NSE:NIFTY50-INDEX</option><option>NSE:NIFTYBANK-INDEX</option>
-                <option>NSE:FINNIFTY-INDEX</option><option>SPX</option><option>QQQ</option>
-              </select>
+      <!-- ── LIVE MONITOR ───────────────────────────────── -->
+      <div class="page" id="pg-live">
+
+        <!-- Engine bar -->
+        <div class="section">
+          <div class="engine-bar">
+            <div class="engine-status">
+              <div class="engine-dot" id="eng-dot"></div>
+              <div>
+                <div class="engine-label">Engine</div>
+                <div class="engine-state" id="eng-state">IDLE</div>
+              </div>
             </div>
-            <div class="frow"><label>Broker</label><select id="auto-broker"></select></div>
-          </div>
-          <div class="stitle">Strategies</div>
-          <div id="autoStratList"></div>
-          <div class="g2" style="margin-top:10px">
-            <div class="frow"><label>Max Daily Loss (₹)</label><input id="auto-maxloss" type="number" value="5000"></div>
-            <div class="frow"><label>Auto Exit Time</label><input id="auto-exit" type="time" value="14:00"></div>
-          </div>
-          <div class="stitle">Mode</div>
-          <div class="abox aw"><span class="ic">⚠</span><span>Always start in <strong>Paper mode</strong> first. This trades with simulated money. Switch to Live only after you are satisfied with the results.</span></div>
-          <div class="brow">
-            <button class="btn btna" onclick="saveAuto('paper')">Save as Paper (Recommended)</button>
-            <button class="btn btnr" onclick="saveAuto('live')">Save as Live (Real Money)</button>
-            <button class="btn btnx" onclick="document.getElementById('newAutoCard').style.display='none'">Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── LIVE MONITOR ── -->
-    <div class="page" id="pg-live">
-      <div class="abox ai"><span class="ic">ℹ</span><span>Connect a broker and create an automation first. Then press Start to begin monitoring.</span></div>
-      <div class="gauto">
-        <div class="m"><div class="ml">Spot</div><div class="mv c-bl" id="lv-s">—</div></div>
-        <div class="m"><div class="ml">ATM</div><div class="mv" id="lv-a">—</div></div>
-        <div class="m"><div class="ml">Combined</div><div class="mv" id="lv-c">—</div></div>
-        <div class="m"><div class="ml">VWAP</div><div class="mv c-bl" id="lv-v">—</div></div>
-        <div class="m"><div class="ml">P&L</div><div class="mv" id="lv-pnl">₹0</div></div>
-        <div class="m"><div class="ml">Engine</div><div class="mv c-am" id="lv-eng">IDLE</div></div>
-      </div>
-      <div class="brow">
-        <button class="btn btng" id="startBtn" onclick="startEngine()">▶ Start Engine</button>
-        <button class="btn btnr" id="stopBtn" onclick="stopEngine()" style="display:none">■ Stop</button>
-      </div>
-    </div>
-
-    <!-- ── MY PROFILE ── -->
-    <div class="page" id="pg-profile">
-      <div class="g2">
-        <div class="card">
-          <div class="ch"><span class="ct">My Profile</span></div>
-          <div class="cb">
-            <div class="frow"><label>Full Name</label><input id="prof-name" placeholder="Your name"></div>
-            <div class="frow"><label>Email</label><input id="prof-email" type="email" readonly style="opacity:.6"></div>
-            <div class="frow"><label>Timezone</label>
-              <select id="prof-tz">
-                <option value="Asia/Kolkata">India (IST)</option>
-                <option value="America/New_York">US Eastern (EST)</option>
-                <option value="Europe/London">UK (GMT)</option>
-                <option value="Europe/Paris">Europe (CET)</option>
-              </select>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-green btn-sm" id="eng-start" onclick="startEngine()">▶ Start</button>
+              <button class="btn btn-red btn-sm" id="eng-stop" onclick="stopEngine()" style="display:none">■ Stop</button>
+              <button class="btn btn-outline btn-sm" id="eng-exit" onclick="forceExit()" style="display:none">Exit</button>
             </div>
-            <div class="frow"><label>Plan</label><input id="prof-plan" readonly style="opacity:.6"></div>
-            <div class="brow"><button class="btn btng" onclick="saveProfile()">Save Profile</button></div>
           </div>
         </div>
-        <div class="card">
-          <div class="ch"><span class="ct">Change Password</span></div>
-          <div class="cb">
-            <div id="pwErr" class="abox ae" style="display:none"><span class="ic">✕</span><span id="pwErrMsg"></span></div>
-            <div id="pwOk" class="abox as" style="display:none"><span class="ic">✓</span><span>Password changed successfully</span></div>
-            <div class="frow"><label>Current Password</label><input id="pw-cur" type="password" placeholder="Current password"></div>
-            <div class="frow"><label>New Password</label><input id="pw-new" type="password" placeholder="New password (min 8 chars)"></div>
-            <div class="frow"><label>Confirm New Password</label><input id="pw-new2" type="password" placeholder="Repeat new password"></div>
-            <div class="brow"><button class="btn btng" onclick="changePassword()">Change Password</button></div>
+
+        <!-- Ticker -->
+        <div class="ticker-bar">
+          <div>
+            <div class="ticker-symbol">NSE:NIFTY50</div>
+            <div class="ticker-price" id="live-spot">—</div>
+          </div>
+          <div style="text-align:center">
+            <div class="ticker-symbol">ATM</div>
+            <div class="ticker-price" id="live-atm">—</div>
+          </div>
+          <div style="text-align:right">
+            <div class="ticker-symbol">Combined</div>
+            <div class="ticker-price" id="live-comb">—</div>
+          </div>
+        </div>
+
+        <!-- Indicators -->
+        <div class="section">
+          <div class="tiles">
+            <div class="tile"><div class="tile-label">VWAP</div><div class="tile-value" id="live-vwap">—</div></div>
+            <div class="tile"><div class="tile-label">EMA 75</div><div class="tile-value" id="live-ema">—</div></div>
+            <div class="tile"><div class="tile-label">ORB Low</div><div class="tile-value" id="live-orb">—</div></div>
+            <div class="tile" id="live-pnl-tile"><div class="tile-label">Day P&L</div><div class="tile-value" id="live-pnl">₹0</div></div>
+          </div>
+        </div>
+
+        <!-- Open position -->
+        <div class="section" style="padding-top:0" id="positionSection" style="display:none">
+          <div class="section-title">Open Position</div>
+          <div id="positionCard"></div>
+        </div>
+
+        <!-- Option chain -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Strike Table</div>
+          <div class="card" style="overflow:hidden">
+            <div id="strikeTable">
+              <div class="empty" style="padding:24px">
+                <div class="empty-icon">📊</div>
+                <div class="empty-title">Waiting for data</div>
+                <div class="empty-sub">Start the engine to see live option chain</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Engine log -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Engine Log</div>
+          <div class="card">
+            <div class="card-body" id="engineLog" style="max-height:200px;overflow-y:auto">
+              <div style="color:var(--g400);font-size:12px">Engine not running</div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ── ADMIN ── -->
-    <div class="page" id="pg-admin">
-      <div class="gauto" id="adminStats"></div>
-      <div class="g2">
-        <div class="card">
-          <div class="ch"><span class="ct">All Users</span>
-            <button class="btn btng" style="padding:3px 9px;font-size:10px" onclick="showCreateUser()">+ Create User</button>
+      <!-- ── TRADES ─────────────────────────────────────── -->
+      <div class="page" id="pg-trades">
+        <div class="section">
+          <div class="page-title">Trade History</div>
+        </div>
+
+        <!-- Summary -->
+        <div class="section" style="padding-top:0">
+          <div class="tiles">
+            <div class="tile"><div class="tile-label">Total P&L</div><div class="tile-value" id="tr-total">₹0</div></div>
+            <div class="tile"><div class="tile-label">Win Rate</div><div class="tile-value" id="tr-wr">0%</div></div>
+            <div class="tile"><div class="tile-label">Total Trades</div><div class="tile-value" id="tr-count">0</div></div>
+            <div class="tile"><div class="tile-label">Open</div><div class="tile-value" id="tr-open">0</div></div>
           </div>
-          <div class="cb" id="adminUserCreate" style="display:none">
-            <div class="divr"></div>
-            <div class="stitle" style="margin-top:0">Create New User</div>
-            <div class="g2">
-              <div class="frow"><label>Full Name</label><input id="nu-name" placeholder="Full name"></div>
-              <div class="frow"><label>Email</label><input id="nu-email" type="email" placeholder="user@email.com"></div>
-              <div class="frow"><label>Password</label><input id="nu-pass" type="password" placeholder="Temporary password"></div>
-              <div class="frow"><label>Role</label>
+        </div>
+
+        <!-- Trade list -->
+        <div class="section" style="padding-top:0">
+          <div id="tradesList">
+            <div class="empty">
+              <div class="empty-icon">📋</div>
+              <div class="empty-title">No trades yet</div>
+              <div class="empty-sub">Your trade history will appear here</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PROFILE ────────────────────────────────────── -->
+      <div class="page" id="pg-profile">
+        <div class="section">
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+            <div class="av" style="width:52px;height:52px;font-size:18px" id="profAv">?</div>
+            <div>
+              <div style="font-size:17px;font-weight:600" id="profName">—</div>
+              <div style="font-size:13px;color:var(--g500)" id="profEmail">—</div>
+              <div style="margin-top:4px" id="profBadge"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Account</div>
+          <div class="card">
+            <div class="card-body">
+              <div class="field"><label>Full Name</label><input id="prof-name"></div>
+              <div class="field"><label>Timezone</label>
+                <select id="prof-tz">
+                  <option value="Asia/Kolkata">India (IST) UTC+5:30</option>
+                  <option value="America/New_York">US Eastern (EST)</option>
+                  <option value="Europe/London">UK (GMT)</option>
+                </select>
+              </div>
+              <button class="btn btn-black" onclick="saveProfile()">Save Profile</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Telegram Alerts</div>
+          <div class="card">
+            <div class="card-body">
+              <div class="alert alert-info" style="margin-bottom:14px">
+                <span class="alert-icon">📱</span>
+                <span>Get instant alerts for every signal, trade entry and exit on your phone.</span>
+              </div>
+              <div class="field"><label>Bot Token</label><input id="prof-tg" type="password" placeholder="From @BotFather"></div>
+              <div class="field"><label>Chat ID</label><input id="prof-tgchat" placeholder="From @userinfobot"></div>
+              <div class="btn-row">
+                <button class="btn btn-black" onclick="saveTelegram()">Save</button>
+                <button class="btn btn-ghost" onclick="testTelegram()">Send Test</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Security</div>
+          <div class="card">
+            <div class="card-body">
+              <div id="pwErr" class="alert alert-error" style="display:none"><span class="alert-icon">✕</span><span id="pwErrMsg"></span></div>
+              <div id="pwOk" class="alert alert-success" style="display:none"><span class="alert-icon">✓</span><span>Password changed</span></div>
+              <div class="field"><label>Current Password</label><input id="pw-cur" type="password"></div>
+              <div class="field"><label>New Password</label><input id="pw-new" type="password"></div>
+              <div class="field"><label>Confirm New</label><input id="pw-new2" type="password"></div>
+              <button class="btn btn-black" onclick="changePassword()">Change Password</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <button class="btn btn-outline btn-full" onclick="logout()" style="color:var(--red);border-color:var(--red)">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- ── ADMIN ──────────────────────────────────────── -->
+      <div class="page" id="pg-admin">
+        <div class="section">
+          <div class="page-title">Admin</div>
+        </div>
+
+        <!-- Stats -->
+        <div class="section" style="padding-top:0">
+          <div class="tiles" id="adminStats"></div>
+        </div>
+
+        <!-- Users -->
+        <div class="section" style="padding-top:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="section-title" style="margin-bottom:0">Users</div>
+            <button class="btn btn-black btn-sm" onclick="showCreateUserForm()">+ Add</button>
+          </div>
+          <div id="createUserForm" class="card" style="display:none;margin-bottom:12px">
+            <div class="card-body">
+              <div class="field"><label>Name</label><input id="nu-name"></div>
+              <div class="field"><label>Email</label><input id="nu-email" type="email"></div>
+              <div class="field"><label>Password</label><input id="nu-pass" type="password"></div>
+              <div class="field"><label>Role</label>
                 <select id="nu-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select>
               </div>
-              <div class="frow"><label>Plan</label>
+              <div class="field"><label>Plan</label>
                 <select id="nu-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select>
               </div>
+              <div class="btn-row">
+                <button class="btn btn-black" onclick="createUser()">Create</button>
+                <button class="btn btn-ghost" onclick="document.getElementById('createUserForm').style.display='none'">Cancel</button>
+              </div>
             </div>
-            <div class="brow">
-              <button class="btn btng" onclick="createUser()">Create User</button>
-              <button class="btn btnx" onclick="document.getElementById('adminUserCreate').style.display='none'">Cancel</button>
-            </div>
-            <div class="divr"></div>
-            <div class="stitle">Or send an invite link</div>
-            <div class="g2">
-              <div class="frow"><label>Role</label><select id="inv-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select></div>
-              <div class="frow"><label>Plan</label><select id="inv-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select></div>
-            </div>
-            <button class="btn btnb" onclick="createInvite()">Generate Invite Link</button>
-            <div id="inviteResult" style="display:none;margin-top:10px"></div>
           </div>
-          <div class="cb twrap" id="userTableWrap">
-            <table>
-              <thead><tr><th>User</th><th>Role</th><th>Plan</th><th>Status</th><th>Brokers</th><th>Last Login</th><th>Actions</th></tr></thead>
-              <tbody id="userTB"></tbody>
-            </table>
-          </div>
+          <div id="usersList"></div>
         </div>
-        <div class="card">
-          <div class="ch"><span class="ct">Platform Stats</span></div>
-          <div class="cb" id="platformStats"></div>
+
+        <!-- Invite -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Invite Link</div>
+          <div class="card">
+            <div class="card-body">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                <div class="field" style="margin-bottom:0"><label>Role</label>
+                  <select id="inv-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select>
+                </div>
+                <div class="field" style="margin-bottom:0"><label>Plan</label>
+                  <select id="inv-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select>
+                </div>
+              </div>
+              <button class="btn btn-black" onclick="createInvite()">Generate Invite Link</button>
+              <div id="inviteResult" style="display:none;margin-top:10px"></div>
+            </div>
+          </div>
         </div>
       </div>
+
+    </div><!-- content -->
+
+    <!-- Bottom nav -->
+    <div class="bottomnav">
+      <button class="nav-item on" id="bn-dashboard" onclick="nav('dashboard')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Home
+      </button>
+      <button class="nav-item" id="bn-live" onclick="nav('live')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Live
+      </button>
+      <button class="nav-item" id="bn-automate" onclick="nav('automate')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+        Auto
+      </button>
+      <button class="nav-item" id="bn-trades" onclick="nav('trades')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Trades
+      </button>
+      <button class="nav-item" id="bn-profile" onclick="nav('profile')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Profile
+      </button>
     </div>
 
   </div>
@@ -444,78 +870,62 @@ input:checked+.tsl:before{transform:translateX(14px)}
 <div class="toast" id="toast"></div>
 
 <script>
-// ═══════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════
-var API = '';  // same origin
-var session = { token:null, user:null };
+// ═══════════════════════════════════════════════════════
+// CORE
+// ═══════════════════════════════════════════════════════
+var API = '';
+var session = {token:null, user:null};
 var brokerDefs = [];
-var selectedBroker = null;
-var selectedStrategies = new Set(['S7','S1','S2']);
 var myBrokers = [];
+var selectedBrokerDef = null;
+var selectedStrategies = new Set(['S7','S1','S2']);
+var wsConn = null;
+var liveInterval = null;
+var engineRunning = false;
 
-// ═══════════════════════════════════════════════════
-// API CALLS
-// ═══════════════════════════════════════════════════
 async function api(method, path, body) {
-  var opts = { method, headers: { 'Content-Type': 'application/json' } };
+  var opts = {method, headers:{'Content-Type':'application/json'}};
   if (session.token) opts.headers['Authorization'] = 'Bearer ' + session.token;
   if (body) opts.body = JSON.stringify(body);
-  try {
-    var r = await fetch(API + path, opts);
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || d.message || 'Request failed');
-    return d;
-  } catch(e) { throw e; }
+  var r = await fetch(API + path, opts);
+  var d = await r.json();
+  if (!r.ok) throw new Error(d.detail || d.message || 'Request failed');
+  return d;
 }
 
-// ═══════════════════════════════════════════════════
-// AUTH SCREENS
-// ═══════════════════════════════════════════════════
-function showLogin()    { hide(['registerScreen','forgotScreen','resetScreen','mainApp']); show('loginScreen'); }
-function showRegister() { hide(['loginScreen','forgotScreen','resetScreen']); show('registerScreen'); }
-function showForgot()   { hide(['loginScreen','registerScreen']); show('forgotScreen'); }
+function toast(msg, type='') {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
 
-function show(id)  { document.getElementById(id).style.display='flex'; }
-function hide(ids) { ids.forEach(id => document.getElementById(id).style.display='none'); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// Check for reset token in URL
-window.addEventListener('DOMContentLoaded', () => {
-  var params = new URLSearchParams(window.location.search);
-  var resetToken = params.get('token');
-  var inviteToken = params.get('invite');
-  if (resetToken) {
-    window._resetToken = resetToken;
-    hide(['loginScreen']); show('resetScreen');
-  } else if (inviteToken) {
-    window._inviteToken = inviteToken;
-    showRegister();
-  }
-  // Auto-login if token saved
-  var saved = localStorage.getItem('algo_session');
-  if (saved) {
-    try {
-      var s = JSON.parse(saved);
-      session.token = s.token; session.user = s.user;
-      loadApp();
-    } catch(e) { localStorage.removeItem('algo_session'); }
-  }
-});
+// ── SCREENS ───────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('.auth-screen').forEach(s => s.classList.remove('on'));
+  var el = document.getElementById(id);
+  if (el) el.classList.add('on');
+}
 
+// ── AUTH ──────────────────────────────────────────────
 async function doLogin() {
   var email = document.getElementById('li-email').value.trim();
   var pass  = document.getElementById('li-pass').value;
-  if (!email || !pass) { showAuthErr('loginErr','loginErrMsg','Please enter email and password'); return; }
+  if (!email||!pass) return;
   var btn = document.getElementById('loginBtn');
-  btn.innerHTML = '<span class="spin"></span> Signing in...'; btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>';
+  btn.disabled = true;
   try {
-    var d = await api('POST', '/api/auth/login', { email, password: pass });
+    var d = await api('POST','/api/auth/login',{email,password:pass});
     session.token = d.token;
-    session.user  = { email: d.email, name: d.name, role: d.role, plan: d.plan };
-    localStorage.setItem('algo_session', JSON.stringify(session));
-    hide(['loginScreen']); loadApp();
+    session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
+    localStorage.setItem('algodesk_session', JSON.stringify(session));
+    loadApp();
   } catch(e) {
-    showAuthErr('loginErr','loginErrMsg', e.message);
+    document.getElementById('loginErr').style.display='flex';
+    document.getElementById('loginErrMsg').textContent = e.message;
     btn.innerHTML = 'Sign In'; btn.disabled = false;
   }
 }
@@ -525,519 +935,756 @@ async function doRegister() {
   var email = document.getElementById('reg-email').value.trim();
   var pass  = document.getElementById('reg-pass').value;
   var pass2 = document.getElementById('reg-pass2').value;
-  if (!name||!email||!pass) { showAuthErr('regErr','regErrMsg','Please fill all fields'); return; }
-  if (pass !== pass2) { showAuthErr('regErr','regErrMsg','Passwords do not match'); return; }
+  if (!name||!email||!pass) { showErr('regErr','regErrMsg','Fill all fields'); return; }
+  if (pass!==pass2) { showErr('regErr','regErrMsg','Passwords do not match'); return; }
   try {
-    var d = await api('POST', '/api/auth/register', {
-      email, password: pass, name,
-      invite_token: window._inviteToken || null
-    });
+    var d = await api('POST','/api/auth/register',{email,password:pass,name});
     session.token = d.token;
-    session.user  = { email, name, role: 'USER', plan: 'FREE' };
-    localStorage.setItem('algo_session', JSON.stringify(session));
-    hide(['registerScreen']); loadApp();
-  } catch(e) { showAuthErr('regErr','regErrMsg', e.message); }
+    session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
+    localStorage.setItem('algodesk_session', JSON.stringify(session));
+    loadApp();
+  } catch(e) { showErr('regErr','regErrMsg',e.message); }
 }
 
 async function doForgot() {
   var email = document.getElementById('forgot-email').value.trim();
   if (!email) return;
   try {
-    var d = await api('POST', '/api/auth/reset-request', { email });
-    document.getElementById('forgotMsg').style.display='flex';
-    var msg = 'A reset link has been sent if that email exists.';
-    if (d.reset_url) msg += ' Reset link: ' + d.reset_url;
-    document.getElementById('forgotMsgTxt').textContent = msg;
-  } catch(e) { toast(e.message, 'err'); }
+    var d = await api('POST','/api/auth/reset-request',{email});
+    document.getElementById('forgotOk').style.display='flex';
+    document.getElementById('forgotOkMsg').textContent = d.reset_url ?
+      'Reset link: ' + d.reset_url : 'Reset link sent.';
+  } catch(e) { toast(e.message, 'error'); }
 }
 
-async function doReset() {
-  var pass  = document.getElementById('reset-pass').value;
-  var pass2 = document.getElementById('reset-pass2').value;
-  if (pass !== pass2) { showAuthErr('resetErr','resetErrMsg','Passwords do not match'); return; }
-  try {
-    await api('POST', '/api/auth/reset-password', { token: window._resetToken, new_password: pass });
-    toast('Password updated! Please sign in.', 'ok');
-    setTimeout(() => { window.location = window.location.pathname; }, 1500);
-  } catch(e) { showAuthErr('resetErr','resetErrMsg', e.message); }
-}
-
-function showAuthErr(boxId, msgId, msg) {
-  document.getElementById(boxId).style.display = 'flex';
+function showErr(boxId, msgId, msg) {
+  document.getElementById(boxId).style.display='flex';
   document.getElementById(msgId).textContent = msg;
 }
 
 function logout() {
-  session = { token:null, user:null };
-  localStorage.removeItem('algo_session');
-  document.getElementById('mainApp').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
+  session={token:null,user:null};
+  localStorage.removeItem('algodesk_session');
+  if(wsConn) wsConn.close();
+  stopLiveTest();
+  showScreen('loginScreen');
+  document.getElementById('mainApp').classList.remove('on');
 }
 
-// ═══════════════════════════════════════════════════
-// APP
-// ═══════════════════════════════════════════════════
-async function loadApp() {
-  document.getElementById('loginScreen').style.display   = 'none';
-  document.getElementById('registerScreen').style.display= 'none';
-  document.getElementById('mainApp').style.display       = 'flex';
-
-  var u = session.user;
-  document.getElementById('userNameBadge').textContent = u.name;
-  document.getElementById('userAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  document.getElementById('welcomeMsg').textContent = 'Welcome back, ' + u.name + '! ' +
-    (u.role === 'SUPER_ADMIN' ? 'You are the Super Admin.' : 'Role: ' + u.role + ' · Plan: ' + u.plan);
-
-  if (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN') {
-    document.getElementById('adminTab').style.display = 'flex';
+// ── INIT ──────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  // Check URL params
+  var params = new URLSearchParams(location.search);
+  if (params.get('reset_token')) {
+    window._resetToken = params.get('reset_token');
+    // Show reset screen (simplified: use forgot screen)
+    showScreen('forgotScreen');
+  } else if (params.get('invite')) {
+    window._inviteToken = params.get('invite');
+    showScreen('registerScreen');
   }
 
-  // Load broker definitions
-  try {
-    var bd = await api('GET', '/api/brokers/definitions');
-    brokerDefs = bd.brokers;
-  } catch(e) {}
+  // Auto-login
+  var saved = localStorage.getItem('algodesk_session');
+  if (saved) {
+    try {
+      var s = JSON.parse(saved);
+      session = s;
+      loadApp();
+    } catch(e) { localStorage.removeItem('algodesk_session'); }
+  }
+});
 
-  renderDashboard();
-  loadMyBrokers();
+async function loadApp() {
+  showScreen('mainApp');
+  var u = session.user;
+  document.getElementById('topAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  document.getElementById('profAv').textContent = document.getElementById('topAv').textContent;
+  document.getElementById('profName').textContent = u.name;
+  document.getElementById('profEmail').textContent = u.email;
+  document.getElementById('profBadge').innerHTML =
+    `<span class="badge badge-gray">${u.plan}</span> <span class="badge badge-gray">${u.role.replace('_',' ')}</span>`;
+
+  // Show admin nav
+  if (u.role==='SUPER_ADMIN'||u.role==='ADMIN') {
+    var adminBtn = document.querySelector('[onclick="nav(\'admin\')"]');
+    if (adminBtn) adminBtn.style.display = adminBtn.tagName==='BUTTON' ? 'flex':'block';
+    var snAdmin = document.getElementById('sn-admin');
+    if (snAdmin) snAdmin.style.display='flex';
+  }
+
+  // Detect desktop
+  if (window.innerWidth >= 600) {
+    document.getElementById('sidenav').style.display='flex';
+  }
+
+  // Load data
+  try {
+    var bdefs = await api('GET','/api/brokers/definitions');
+    brokerDefs = bdefs.brokers || [];
+  } catch(e){}
+
   nav('dashboard');
+  refreshDashboard();
 }
 
+// ── NAV ───────────────────────────────────────────────
 function nav(id) {
-  var ids = ['dashboard','brokers','automate','live','profile','admin'];
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ids[i]===id));
+  var ids = ['dashboard','brokers','automate','live','trades','profile','admin'];
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
-  if (id==='brokers') loadMyBrokers();
-  if (id==='automate') loadAutomate();
-  if (id==='admin') loadAdmin();
-  if (id==='profile') loadProfile();
+  // bottom nav
+  ids.forEach(n => {
+    var el = document.getElementById('bn-'+n);
+    if (el) el.classList.toggle('on', n===id);
+    var sn = document.getElementById('sn-'+n);
+    if (sn) sn.classList.toggle('on', n===id);
+  });
+  if (id==='dashboard') refreshDashboard();
+  if (id==='brokers')   loadBrokers();
+  if (id==='automate')  loadAutomate();
+  if (id==='live')      refreshLive();
+  if (id==='trades')    loadTrades();
+  if (id==='profile')   loadProfile();
+  if (id==='admin')     loadAdmin();
 }
 
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 // DASHBOARD
-// ═══════════════════════════════════════════════════
-async function renderDashboard() {
+// ═══════════════════════════════════════════════════════
+async function refreshDashboard() {
+  var hour = new Date().getHours();
+  var greeting = hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
+  document.getElementById('dashGreeting').textContent = greeting + ', ' + (session.user?.name?.split(' ')[0]||'');
+
   try {
-    var brokers = await api('GET', '/api/brokers');
-    var autos   = await api('GET', '/api/automations');
+    // Engine status
+    var eng = await api('GET','/api/engine/status');
+    var pnl = eng.day_pnl || 0;
+    var pnlEl = document.getElementById('dash-pnl');
+    pnlEl.textContent = (pnl>=0?'+':'') + '₹' + Math.abs(pnl).toLocaleString('en-IN',{minimumFractionDigits:0});
+    pnlEl.className = 'big-num ' + (pnl>0?'pos':pnl<0?'neg':'');
+    document.getElementById('dash-engine').textContent = eng.running ? eng.mode : 'IDLE';
+    document.getElementById('dash-engine').style.color = eng.running ? 'var(--green)' : 'var(--black)';
+
+    if (eng.spot) {
+      document.getElementById('dash-spot').textContent = '₹'+Number(eng.spot).toLocaleString('en-IN');
+      document.getElementById('topNifty').textContent = Number(eng.spot).toLocaleString('en-IN');
+    }
+    if (eng.combined) {
+      document.getElementById('dash-combined').textContent = Number(eng.combined).toFixed(1);
+    }
+  } catch(e){}
+
+  try {
+    // Trade summary
+    var ts = await api('GET','/api/trades/summary');
+    var totalPnl = ts.total_pnl || 0;
+    document.getElementById('dash-pnl').textContent =
+      (totalPnl>=0?'+':'') + '₹' + Math.abs(totalPnl).toLocaleString('en-IN');
+    document.getElementById('dash-pnl').className = 'big-num ' + (totalPnl>0?'pos':totalPnl<0?'neg':'');
+    document.getElementById('dash-pnl-sub').textContent =
+      ts.total_trades > 0 ? `${ts.wins}W / ${ts.losses}L · ${ts.win_rate}% win rate` : 'No trades today';
+    document.getElementById('dash-trades').textContent = ts.total_trades;
+  } catch(e){}
+
+  try {
+    // Broker status
+    var brokers = await api('GET','/api/brokers');
     myBrokers = brokers.brokers || [];
+    var connected = myBrokers.find(b=>b.is_connected);
+    var bEl = document.getElementById('dashBrokerStatus');
+    if (connected) {
+      bEl.innerHTML = `<div class="card-body">
+        <div class="card-row">
+          <span class="card-label">Broker</span>
+          <span class="card-value">${connected.broker_name}</span>
+        </div>
+        <div class="card-row">
+          <span class="card-label">Mode</span>
+          <span class="card-value">${(connected.mode||'paper').toUpperCase()}</span>
+        </div>
+        <div class="card-row">
+          <span class="card-label">Status</span>
+          <span class="badge badge-green"><span class="badge-dot dot-green"></span>Connected</span>
+        </div>
+        ${connected.last_token_refresh ? `<div class="card-row">
+          <span class="card-label">Last refresh</span>
+          <span class="card-value" style="font-size:11px">${new Date(connected.last_token_refresh).toLocaleTimeString()}</span>
+        </div>` : ''}
+      </div>`;
+    }
+  } catch(e){}
 
-    document.getElementById('dashStats').innerHTML = [
-      {l:'Brokers',v:myBrokers.length,s:'connected',c:'c-gr'},
-      {l:'Automations',v:(autos.automations||[]).length,s:'configured',c:'c-bl'},
-      {l:'Plan',v:session.user.plan,s:session.user.role,c:'c-pu'},
-      {l:'Engine',v:'IDLE',s:'ready to start',c:'c-am'},
-    ].map(x=>`<div class="m"><div class="ml">${x.l}</div><div class="mv ${x.c}">${x.v}</div><div class="ms">${x.s}</div></div>`).join('');
-
-    var checks = [
-      {done: myBrokers.length>0, label:'Connect a broker', action:"nav('brokers')"},
-      {done: (autos.automations||[]).length>0, label:'Create an automation', action:"nav('automate')"},
-      {done: false, label:'Run a backtest', action:""},
-      {done: false, label:'Start paper trading', action:"nav('live')"},
-      {done: false, label:'Go live when ready', action:"nav('automate')"},
-    ];
-    document.getElementById('checklist').innerHTML = checks.map(c=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(26,48,80,.4)">
-        <div style="width:18px;height:18px;border-radius:50%;background:${c.done?'var(--gr2)':'var(--card2)'};border:1px solid ${c.done?'var(--gr)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:${c.done?'#000':'var(--tx3)'};flex-shrink:0">${c.done?'✓':'○'}</div>
-        <span style="flex:1;font-size:12px;${c.done?'color:var(--tx3);text-decoration:line-through':''}">${c.label}</span>
-        ${c.action&&!c.done?`<button class="btn btnb" onclick="${c.action}" style="padding:2px 9px;font-size:10px">Go →</button>`:''}
-      </div>`).join('');
-  } catch(e) {}
-}
-
-// ═══════════════════════════════════════════════════
-// BROKERS
-// ═══════════════════════════════════════════════════
-async function loadMyBrokers() {
   try {
-    var d = await api('GET', '/api/brokers');
-    myBrokers = d.brokers || [];
-    var el = document.getElementById('connectedBrokersList');
-    if (!myBrokers.length) {
-      el.innerHTML = '<div style="color:var(--tx3);font-size:12px">No brokers connected yet. Use the form below to add one.</div>';
-    } else {
-      el.innerHTML = myBrokers.map(b=>`
-        <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card2);border:1px solid ${b.is_connected?'var(--gr)':'var(--border)'};border-radius:8px;margin-bottom:8px">
-          <span style="font-size:18px">${brokerDefs.find(x=>x.id===b.broker_id)?.flag||'🏦'}</span>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600">${b.broker_name}</div>
-            <div style="font-size:10px;color:var(--tx3)">${b.market} · ${b.mode?.toUpperCase()||'PAPER'} mode · ${b.fields_set?.length||0} fields configured</div>
-          </div>
-          <span class="bd ${b.is_connected?'bdg':'bda'}">${b.is_connected?'Connected':'Saved'}</span>
-          <button class="btn btnb" style="padding:3px 9px;font-size:10px" onclick="testBroker('${b.broker_id}',this)">Test</button>
-          <button class="btn btnr" style="padding:3px 9px;font-size:10px" onclick="removeBroker('${b.broker_id}')">Remove</button>
-        </div>`).join('');
+    // Recent trades
+    var trades = await api('GET','/api/trades');
+    var recent = (trades.trades||[]).slice(0,3);
+    if (recent.length) {
+      document.getElementById('dashRecentTrades').innerHTML =
+        recent.map(t => tradeItemHTML(t)).join('');
     }
-    renderBrokerGrid();
-    // Populate broker dropdown in automation form
-    var sel = document.getElementById('auto-broker');
-    if (sel) {
-      sel.innerHTML = myBrokers.map(b=>`<option value="${b.broker_id}">${b.broker_name}</option>`).join('') ||
-                      '<option value="">No brokers — connect one first</option>';
-    }
-  } catch(e) { console.error(e); }
+  } catch(e){}
 }
 
-function renderBrokerGrid() {
-  // Split brokers into connected and available to add
-  var connected   = (brokerDefs||[]).filter(b => myBrokers.find(x=>x.broker_id===b.id && x.is_connected));
-  var savedOnly   = (brokerDefs||[]).filter(b => myBrokers.find(x=>x.broker_id===b.id && !x.is_connected));
-  var notAdded    = (brokerDefs||[]).filter(b => !myBrokers.find(x=>x.broker_id===b.id));
+function tradeItemHTML(t) {
+  var isOpen = t.is_open;
+  var pnl = t.pnl;
+  var iconClass = isOpen ? 'trade-icon-open' : (pnl > 0 ? 'trade-icon-win' : 'trade-icon-loss');
+  var icon = isOpen ? '⏳' : (pnl > 0 ? '↑' : '↓');
+  var pnlStr = isOpen ? 'OPEN' : ((pnl>=0?'+':'')+'₹'+Math.abs(pnl||0).toFixed(0));
+  var pnlClass = isOpen ? 'open' : (pnl >= 0 ? 'pos' : 'neg');
+  return `<div class="trade-item">
+    <div class="trade-icon ${iconClass}">${icon}</div>
+    <div class="trade-meta">
+      <div class="trade-strat">${t.strategy} · ${t.symbol?.split(':')[1]||t.symbol}</div>
+      <div class="trade-date">${t.date} · ATM ${t.atm} · ${(t.mode||'paper').toUpperCase()}</div>
+    </div>
+    <div class="trade-pnl ${pnlClass}">${pnlStr}</div>
+  </div>`;
+}
 
+// ═══════════════════════════════════════════════════════
+// BROKERS
+// ═══════════════════════════════════════════════════════
+async function loadBrokers() {
+  try {
+    var d = await api('GET','/api/brokers');
+    myBrokers = d.brokers||[];
+    renderConnectedBrokers();
+    renderBrokerOptions();
+
+    // Populate auto broker select
+    var sel = document.getElementById('auto-broker');
+    if (sel) sel.innerHTML = myBrokers.map(b=>`<option value="${b.broker_id}">${b.broker_name}</option>`).join('') ||
+      '<option value="">No brokers — connect one first</option>';
+  } catch(e){}
+}
+
+function renderConnectedBrokers() {
+  var connected = myBrokers.filter(b=>b.is_connected);
+  var el = document.getElementById('connectedBrokersList');
+  if (!connected.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">🔗</div><div class="empty-title">No brokers connected</div><div class="empty-sub">Add a broker below</div></div>';
+    document.getElementById('liveTestSection').style.display = 'none';
+    return;
+  }
+  el.innerHTML = connected.map(b => `
+    <div class="broker-option connected" style="cursor:default">
+      <div class="broker-flag">${brokerDefs.find(x=>x.id===b.broker_id)?.flag||'🏦'}</div>
+      <div class="broker-info">
+        <div class="broker-name">${b.broker_name}</div>
+        <div class="broker-sub">${b.market} · ${(b.mode||'paper').toUpperCase()} mode${b.last_token_refresh?' · Refreshed '+new Date(b.last_token_refresh).toLocaleTimeString():''}</div>
+      </div>
+      <div class="broker-status">
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <span class="badge badge-green"><span class="badge-dot dot-green"></span>Active</span>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:4px 8px" onclick="testBrokerConn('${b.broker_id}',this)">Refresh</button>
+            <button class="btn btn-outline btn-sm" style="font-size:11px;padding:4px 8px;color:var(--red);border-color:var(--red)" onclick="if(confirm('Disconnect?'))disconnectBroker('${b.broker_id}')">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>`).join('');
+  document.getElementById('liveTestSection').style.display = 'block';
+}
+
+function renderBrokerOptions() {
+  var notAdded = brokerDefs.filter(b => !myBrokers.find(x=>x.broker_id===b.id));
+  var needsConnect = myBrokers.filter(b=>!b.is_connected);
+  var el = document.getElementById('brokerOptionsList');
   var html = '';
 
-  // Section: Connected brokers
-  if (connected.length) {
-    html += '<div class="stitle" style="margin-top:0;margin-bottom:8px;color:var(--gr)">Connected</div>';
-    html += connected.map(b => {
-      var bc = myBrokers.find(x=>x.broker_id===b.id);
-      return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;margin-bottom:8px">
-        <span style="font-size:22px">${b.flag}</span>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:600;color:#14532d">${b.name}</div>
-          <div style="font-size:11px;color:#16a34a;margin-top:2px">✓ Connected · ${bc?.mode?.toUpperCase()||'PAPER'} mode</div>
-          ${bc?.last_token_refresh ? `<div style="font-size:10px;color:#16a34a;margin-top:2px">Last refresh: ${new Date(bc.last_token_refresh).toLocaleString()}</div>` : ''}
+  if (needsConnect.length) {
+    needsConnect.forEach(b => {
+      var def = brokerDefs.find(x=>x.id===b.broker_id);
+      html += `<div class="broker-option" style="border-color:var(--amber)">
+        <div class="broker-flag">${def?.flag||'🏦'}</div>
+        <div class="broker-info">
+          <div class="broker-name">${b.broker_name}</div>
+          <div class="broker-sub">Credentials saved — click Connect to authorise</div>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btng" style="padding:5px 10px;font-size:11px" onclick="startLiveTest('${b.id}')">Live Data</button>
-          <button class="btn btnb" style="padding:5px 10px;font-size:11px" onclick="testBroker('${b.id}',this)">Refresh Token</button>
-          <button class="btn btnr" style="padding:5px 10px;font-size:11px" onclick="if(confirm('Disconnect ${b.name}?'))removeBroker('${b.id}')">Disconnect</button>
-        </div>
+        <button class="btn btn-black btn-sm" onclick="startFyersConnect('${b.broker_id}')">Connect</button>
       </div>`;
-    }).join('');
+    });
   }
 
-  // Section: Saved but not connected
-  if (savedOnly.length) {
-    html += '<div class="stitle" style="color:var(--am)">Saved — needs connection</div>';
-    html += savedOnly.map(b => `
-      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:10px;margin-bottom:8px">
-        <span style="font-size:22px">${b.flag}</span>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:600">${b.name}</div>
-          <div style="font-size:11px;color:var(--am2);margin-top:2px">Credentials saved — click Connect to authorise</div>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btng" style="padding:5px 10px;font-size:11px" onclick="selectedBroker='${b.id}';connectFyers()">Connect →</button>
-          <button class="btn btnr" style="padding:5px 10px;font-size:11px" onclick="if(confirm('Remove?'))removeBroker('${b.id}')">Remove</button>
-        </div>
-      </div>`).join('');
-  }
-
-  // Section: Add new broker
   if (notAdded.length) {
-    html += '<div class="stitle">Add a broker</div>';
-    html += '<div class="broker-grid">';
-    html += notAdded.map(b => `
-      <div class="bkc ${selectedBroker===b.id?'sel':''}" onclick="selectBroker('${b.id}')">
-        <span class="bk-flag">${b.flag}</span>
-        <div class="bk-name">${b.name}</div>
-        <div class="bk-mkt">${b.market}</div>
-        <div class="bk-ref">↻ ${b.refresh}</div>
-      </div>`).join('');
-    html += '</div>';
+    notAdded.forEach(b => {
+      html += `<div class="broker-option" onclick="selectBrokerToAdd('${b.id}')">
+        <div class="broker-flag">${b.flag}</div>
+        <div class="broker-info">
+          <div class="broker-name">${b.name}</div>
+          <div class="broker-sub">${b.market} · ${b.refresh}</div>
+        </div>
+        <span style="color:var(--g400);font-size:18px">›</span>
+      </div>`;
+    });
   }
 
-  document.getElementById('brokerGrid').innerHTML = html;
+  if (!html) html = '<div style="color:var(--g400);font-size:13px;text-align:center;padding:16px">All available brokers connected ✓</div>';
+  el.innerHTML = html;
 }
 
-function selectBroker(id) {
-  selectedBroker = id;
-  renderBrokerGrid();
-  var b = brokerDefs.find(x=>x.id===id);
-  if (!b) return;
-
-  var existing = myBrokers.find(x=>x.broker_id===id);
-
-  // Already connected — handled inline in the grid, no form needed
-  if (existing && existing.is_connected) {
-    document.getElementById('brokerFormWrap').style.display = 'none';
-    return;
-  }
-
-  document.getElementById('brokerFormWrap').style.display = 'block';
-  document.getElementById('brokerFormTitle').textContent  = b.flag + ' ' + b.name;
-  var noteEl = document.getElementById('brokerRefreshNote');
-  noteEl.querySelector('span:last-child').textContent = 'Token refresh: ' + b.refresh;
-
-  if (false) { // dead code — connected state now handled in grid
-    document.getElementById('brokerFields').innerHTML = `
-      <div class="abox as"><span class="ic">✓</span><div>
-        <strong>${b.name} is connected.</strong><br>
-        Token auto-refreshes daily at 8:50 AM IST.<br>
-        Last refresh: ${existing.last_token_refresh ? new Date(existing.last_token_refresh).toLocaleString() : 'Not yet refreshed'}<br><br>
-        To update credentials, disconnect first then reconnect.
-      </div></div>`;
-    document.getElementById('brokerTestResult').innerHTML = '';
-    document.getElementById('brokerTestResult').style.display = 'none';
-    // Show reconnect and disconnect buttons only
-    document.getElementById('brokerSaveBtn').style.display = 'none';
-    document.getElementById('brokerFormWrap').innerHTML = document.getElementById('brokerFormWrap').innerHTML;
-    // Re-render with connected state
-    var wrap = document.getElementById('brokerFormWrap');
-    wrap.style.display = 'block';
-    wrap.innerHTML = `
-      <hr class="divr">
-      <div class="stitle">${b.flag} ${b.name}</div>
-      <div class="abox as"><span class="ic">✓</span><div>
-        <strong>Connected and active.</strong><br>
-        Token auto-refreshes daily at 8:50 AM IST.<br>
-        Last refresh: ${existing.last_token_refresh ? new Date(existing.last_token_refresh).toLocaleString() : 'Pending first refresh'}
-      </div></div>
-      <div class="brow">
-        <button class="btn btng" onclick="testBroker('${id}', this)">Refresh Token Now</button>
-        <button class="btn btnr" onclick="if(confirm('Disconnect ${b.name}?'))removeBroker('${id}')">Disconnect</button>
-        <button class="btn btnx" onclick="cancelBroker()">Close</button>
-      </div>`;
-    document.getElementById('brokerFormWrap').scrollIntoView({behavior:'smooth'});
-    return;
-  }
-
-  // Not connected — show credentials form
-  document.getElementById('brokerSaveBtn').style.display = 'inline-flex';
-  document.getElementById('brokerFields').innerHTML = b.fields.map(f => {
-    if (f.type === 'select') return `
-      <div class="frow">
-        <label>${f.label}</label>
-        <select id="bf-${f.key}">${(f.options||[]).map(o=>`<option value="${o}">${o}</option>`).join('')}</select>
-        <div class="fhint">${f.hint}</div>
-      </div>`;
-    return `
-      <div class="frow">
-        <label>${f.label}</label>
-        <input id="bf-${f.key}" type="${f.secret?'password':'text'}" placeholder="${f.hint.substring(0,50)}..." autocomplete="off">
-        ${f.default?`<script>document.getElementById('bf-${f.key}').value='${f.default}';<\/script>`:''}
-        <div class="fhint">${f.hint}</div>
-      </div>`;
-  }).join('');
-  document.getElementById('brokerTestResult').style.display = 'none';
-  document.getElementById('brokerFormWrap').scrollIntoView({behavior:'smooth'});
+function selectBrokerToAdd(id) {
+  selectedBrokerDef = brokerDefs.find(b=>b.id===id);
+  if (!selectedBrokerDef) return;
+  var sec = document.getElementById('brokerFormSection');
+  sec.style.display = 'block';
+  document.getElementById('brokerFormTitle').textContent = selectedBrokerDef.flag + ' ' + selectedBrokerDef.name;
+  document.getElementById('brokerFormFields').innerHTML = selectedBrokerDef.fields.map(f => `
+    <div class="field">
+      <label>${f.label}</label>
+      <input id="bf-${f.key}" type="${f.secret?'password':'text'}" autocomplete="off"
+             placeholder="${f.hint.substring(0,60)}${f.hint.length>60?'...':''}"
+             ${f.default?`value="${f.default}"`:''}>>
+      <div class="field-hint">${f.hint}</div>
+    </div>`).join('');
+  document.getElementById('brokerSaveArea').style.display = 'block';
+  document.getElementById('brokerConnectArea').style.display = 'none';
+  sec.scrollIntoView({behavior:'smooth'});
 }
 
-async function saveBroker() {
-  if (!selectedBroker) return;
-  var b = brokerDefs.find(x=>x.id===selectedBroker);
+async function saveBrokerCredentials() {
+  if (!selectedBrokerDef) return;
   var fields = {};
-  b.fields.forEach(f => {
+  selectedBrokerDef.fields.forEach(f => {
     var el = document.getElementById('bf-'+f.key);
-    if (el) fields[f.key] = el.value.trim();
-    if (!fields[f.key] && f.default) fields[f.key] = f.default;
+    if (el) fields[f.key] = el.value.trim() || f.default || '';
   });
   var btn = document.getElementById('brokerSaveBtn');
-  btn.innerHTML = '<span class="spin"></span> Saving...'; btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>'; btn.disabled=true;
   try {
-    await api('POST', '/api/brokers', { broker_id: selectedBroker, fields, mode: fields.mode||'paper' });
-    var el = document.getElementById('brokerTestResult');
-    el.style.display = 'block';
-    if (selectedBroker === 'fyers') {
-      el.innerHTML = `
-        <div class="abox as"><span class="ic">✓</span>
-          <div>Credentials saved. Now click <strong>Connect to Fyers</strong> to complete setup.</div>
-        </div>
-        <div class="brow"><button class="btn btng" onclick="connectFyers()">Connect to Fyers →</button></div>`;
-    } else {
-      el.innerHTML = `<div class="abox as"><span class="ic">✓</span><div>Credentials saved.</div></div>`;
-    }
-    toast('Credentials saved ✓', 'ok');
-    loadMyBrokers();
-  } catch(e) { toast(e.message,'err'); }
-  btn.innerHTML = 'Save Credentials'; btn.disabled = false;
+    await api('POST','/api/brokers',{broker_id:selectedBrokerDef.id, fields, mode:'paper'});
+    toast('Credentials saved ✓', 'success');
+    document.getElementById('brokerSaveArea').style.display='none';
+    startFyersConnect(selectedBrokerDef.id);
+    await loadBrokers();
+  } catch(e) { toast(e.message,'error'); }
+  btn.innerHTML='Save Credentials'; btn.disabled=false;
 }
 
-async function connectFyers() {
+async function startFyersConnect(brokerId) {
   try {
-    var r = await api('GET', '/api/brokers/fyers/login-url');
-    if (!r.ok) { toast(r.detail || r.message || 'Save credentials first', 'err'); return; }
+    var r = await api('GET','/api/brokers/fyers/login-url');
     window.open(r.login_url, '_blank');
-    var el = document.getElementById('brokerTestResult');
-    el.style.display = 'block';
-    el.innerHTML = `
-      <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;padding:16px;margin-bottom:14px">
-        <div style="font-size:13px;font-weight:600;color:#14532d;margin-bottom:10px">Step 1 — Log in to Fyers</div>
-        <div style="font-size:12px;color:#166534;margin-bottom:12px;line-height:1.6">
-          A Fyers login page has opened in a new tab.<br>
-          Enter your Fyers username and password and complete the login.<br>
-          After login, Fyers shows a page with a code — come back here.
-        </div>
-        <button class="btn btng" onclick="window.open('${r.login_url}','_blank')" style="font-size:11px">Re-open Fyers Login →</button>
+    var area = document.getElementById('brokerConnectArea');
+    area.style.display='block';
+    area.innerHTML = `
+      <div class="connect-step connect-step-1">
+        <div class="step-title"><span class="step-num step-num-1">1</span>Log in to Fyers</div>
+        <div class="step-desc">A Fyers login page has opened. Log in with your username and password. After login you will be redirected to a page — look at the browser address bar.</div>
+        <button class="btn btn-black btn-sm" onclick="window.open('${r.login_url}','_blank')">Re-open Login →</button>
       </div>
-      <div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:12px;padding:16px">
-        <div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:10px">Step 2 — Paste the auth code</div>
-        <div style="font-size:12px;color:#1e40af;margin-bottom:12px;line-height:1.6">
-          After logging in, look at your browser address bar. You will see a long URL.<br>
-          The auth code is the long text that starts with <strong>eyJ</strong> after <strong>auth_code=</strong> in that URL.<br><br>
-          <strong>Easiest way:</strong> Click in your browser address bar → Press Cmd+A → Press Cmd+C → Paste below. We extract the code automatically.
+      <div class="connect-step connect-step-2">
+        <div class="step-title"><span class="step-num step-num-2">2</span>Paste the auth code</div>
+        <div class="step-desc">After login, copy the full URL from your browser address bar and paste below. We extract the code automatically.</div>
+        <div class="field">
+          <label>Auth Code or Full Redirect URL</label>
+          <textarea id="fyersAuthCode" rows="3" style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:10px;font-size:12px;font-family:var(--mono);resize:vertical;outline:none;background:var(--white)"
+            placeholder="Paste the entire URL from address bar&#10;e.g. https://trade.fyers.in/...?auth_code=eyJhbGci..."></textarea>
         </div>
-        <div class="frow">
-          <label>Paste auth code or full URL here</label>
-          <textarea id="fyersAuthCode" rows="4" style="width:100%;font-size:11px;font-family:var(--mono);padding:10px 12px;border-radius:8px;border:1.5px solid #93c5fd;background:#fff;color:#1e3a8a;resize:vertical;outline:none;line-height:1.6" placeholder="Paste either:&#10;• The full URL from your browser address bar&#10;• Or just the auth_code value starting with eyJ..."></textarea>
-          <div class="hint" style="color:#3b82f6">Both work — paste whichever is easier to copy</div>
-        </div>
-        <div class="brow">
-          <button class="btn btng" onclick="submitFyersCode()">Complete Connection →</button>
-          <button class="btn btnx" onclick="connectFyers()">Get New Login URL</button>
-        </div>
+        <button class="btn btn-black btn-full" onclick="completeFyersConnect()">Complete Connection →</button>
       </div>`;
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { toast(e.message,'error'); }
 }
 
-async function submitFyersCode() {
+async function completeFyersConnect() {
   var raw = document.getElementById('fyersAuthCode')?.value.trim();
-  if (!raw) { toast('Paste the redirect URL first', 'err'); return; }
-  // Extract auth_code from URL automatically
+  if (!raw) { toast('Paste the auth code first','error'); return; }
   var code = raw;
-  if (raw.includes('auth_code=')) {
-    code = raw.split('auth_code=')[1].split('&')[0].trim();
-  } else if (raw.includes('code=')) {
-    code = raw.split('code=')[1].split('&')[0].trim();
-  }
-  if (!code || code.length < 20) { toast('Could not find auth_code in URL. Paste the full redirect URL.', 'err'); return; }
-  console.log('auth_code extracted, length:', code.length);
-  var btn = document.getElementById('brokerSaveBtn');
-  btn.innerHTML = '<span class="spin"></span> Connecting...'; btn.disabled = true;
+  if (raw.includes('auth_code=')) code = raw.split('auth_code=')[1].split('&')[0].trim();
+  else if (raw.includes('code=')) code = raw.split('code=')[1].split('&')[0].trim();
+  if (!code||code.length<20) { toast('Could not find auth_code in the URL','error'); return; }
+
+  var btn = event.target;
+  btn.innerHTML='<span class="spin"></span> Connecting...'; btn.disabled=true;
   try {
-    var r = await api('POST', '/api/brokers/fyers/connect', { auth_code: code });
-    var el = document.getElementById('brokerTestResult');
+    var r = await api('POST','/api/brokers/fyers/connect',{auth_code:code});
     if (r.ok) {
-      el.innerHTML = `<div class="abox as"><span class="ic">✓</span><div>
-        <strong>Fyers connected!</strong><br>
-        Token auto-refreshes daily at 8:50 AM IST. You never need to do this again.
-      </div></div>`;
-      toast('Fyers connected ✓', 'ok');
-      loadMyBrokers(); cancelBroker();
+      document.getElementById('brokerConnectArea').innerHTML =
+        `<div class="alert alert-success"><span class="alert-icon">✓</span>
+        <div><strong>Fyers connected!</strong><br>Token refreshes automatically on every use. You never need to reconnect.</div></div>`;
+      toast('Fyers connected ✓','success');
+      await loadBrokers();
     } else {
-      el.innerHTML = `
-        <div class="abox ae"><span class="ic">✕</span><div>${r.message||'Connection failed'}</div></div>
-        <div class="brow"><button class="btn btng" onclick="connectFyers()">Try Again →</button></div>`;
-      toast(r.message || 'Failed', 'err');
+      document.getElementById('brokerConnectArea').innerHTML +=
+        `<div class="alert alert-error" style="margin-top:10px"><span class="alert-icon">✕</span><span>${r.message}</span></div>`;
+      toast(r.message,'error');
     }
-  } catch(e) { toast(e.message, 'err'); }
-  btn.innerHTML = 'Save Credentials'; btn.disabled = false;
+  } catch(e) { toast(e.message,'error'); }
+  btn.innerHTML='Complete Connection →'; btn.disabled=false;
 }
 
-function cancelBroker() {
-  selectedBroker = null;
-  document.getElementById('brokerFormWrap').style.display = 'none';
-  renderBrokerGrid();
-}
-
-async function testBroker(id, btn) {
+async function testBrokerConn(id, btn) {
   var orig = btn.textContent;
-  btn.innerHTML = '<span class="spin"></span>'; btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>'; btn.disabled=true;
   try {
-    if (id === 'fyers') {
-      // For Fyers: do a manual token refresh to test connection
-      var r = await api('POST', '/api/brokers/fyers/refresh');
-      toast(r.ok ? 'Fyers token refreshed ✓' : r.message, r.ok?'ok':'err');
+    var r = await api('GET','/api/market/profile');
+    toast(r.ok ? 'Token refreshed ✓ '+JSON.stringify(r.profile?.name||'') : r.message,
+          r.ok?'success':'error');
+    await loadBrokers();
+  } catch(e) { toast(e.message,'error'); }
+  btn.textContent=orig; btn.disabled=false;
+}
+
+async function disconnectBroker(id) {
+  await api('DELETE','/api/brokers/'+id);
+  toast('Broker disconnected','success');
+  await loadBrokers();
+  refreshDashboard();
+}
+
+// Live data test
+var liveTestInterval = null;
+async function startLiveTest() {
+  stopLiveTest();
+  document.getElementById('liveDot').style.display='inline-block';
+  document.getElementById('liveStatus').textContent = 'Loading...';
+  await fetchLiveChain();
+  liveTestInterval = setInterval(fetchLiveChain, 15000);
+}
+
+function stopLiveTest() {
+  if (liveTestInterval) { clearInterval(liveTestInterval); liveTestInterval=null; }
+  document.getElementById('liveDot').style.display='none';
+  document.getElementById('liveStatus').textContent = 'Press Test to load';
+}
+
+async function fetchLiveChain() {
+  try {
+    var d = await api('GET','/api/market/live');
+    if (d.ok) {
+      var spot = d.spot||0;
+      var atm = Math.round(spot/50)*50;
+      document.getElementById('lt-spot').textContent = '₹'+spot.toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+      document.getElementById('lt-comb').textContent = (d.chain?.[atm]?.combined||0).toFixed(1);
+      document.getElementById('liveStatus').textContent = 'Live · '+new Date().toLocaleTimeString();
+      document.getElementById('liveDot').style.display='inline-block';
+      if (d.chain&&Object.keys(d.chain).length) {
+        document.getElementById('lt-chain').innerHTML = `
+          <table class="strike-table">
+            <thead><tr><th>Strike</th><th>CE</th><th>PE</th><th>Combined</th></tr></thead>
+            <tbody>${Object.entries(d.chain).sort((a,b)=>a[0]-b[0]).map(([s,v])=>`
+              <tr class="${parseInt(s)===atm?'atm-row':''}">
+                <td>${s}${parseInt(s)===atm?' ●':''}</td>
+                <td class="ce-col">${v.ce_ltp?.toFixed(1)||'—'}</td>
+                <td class="pe-col">${v.pe_ltp?.toFixed(1)||'—'}</td>
+                <td style="font-weight:600">${v.combined?.toFixed(1)||'—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`;
+      }
     } else {
-      var r = await api('POST', `/api/brokers/${id}/test`);
-      toast(r.message, r.connected?'ok':'info');
+      document.getElementById('liveStatus').textContent = d.message||'Error';
     }
-    loadMyBrokers();
-  } catch(e) { toast(e.message,'err'); }
-  btn.textContent = orig; btn.disabled = false;
+  } catch(e) {
+    document.getElementById('liveStatus').textContent = 'Error: '+e.message;
+  }
 }
 
-async function removeBroker(id) {
-  if (!confirm('Remove this broker?')) return;
-  await api('DELETE', `/api/brokers/${id}`);
-  toast('Broker removed', 'ok');
-  loadMyBrokers();
-}
-
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 // AUTOMATE
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 async function loadAutomate() {
   try {
-    var d    = await api('GET', '/api/automations');
-    var strd = await api('GET', '/api/strategies');
-    var autos = d.automations || [];
-    var el = document.getElementById('autoList');
+    var d   = await api('GET','/api/automations');
+    var strd = await api('GET','/api/strategies');
+    var autos = d.automations||[];
+    var el = document.getElementById('automationsList');
     el.innerHTML = autos.length ? autos.map(a=>`
-      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:11px;margin-bottom:8px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
-          <span style="font-size:13px;font-weight:600">${a.name||a.symbol}</span>
-          <div style="display:flex;gap:6px">
-            <span class="bd ${a.mode==='live'?'bdg':'bda'}">${a.mode?.toUpperCase()}</span>
-            <span class="bd bdx">${a.status}</span>
-            <button class="btn btnr" style="padding:2px 7px;font-size:10px" onclick="deleteAuto('${a.id}')">Delete</button>
+      <div class="card" style="margin-bottom:8px">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${a.name}</div>
+            <div style="font-size:11px;color:var(--g400);margin-top:2px">${a.symbol?.split(':')[1]||a.symbol} · ${a.strategies?.join(', ')}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="badge ${a.mode==='live'?'badge-green':'badge-amber'}">${(a.mode||'paper').toUpperCase()}</span>
+            <span class="badge ${a.is_running?'badge-green':'badge-gray'}">${a.is_running?'Running':'Idle'}</span>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;color:var(--tx3)">
-          <div>Symbol: <span style="color:var(--tx2)">${a.symbol}</span></div>
-          <div>Broker: <span style="color:var(--tx2)">${a.broker_id}</span></div>
-          <div>Strategies: <span style="color:var(--tx2)">${(a.strategies||[]).join(', ')}</span></div>
+        <div class="card-body" style="padding:10px 16px">
+          <div class="btn-row">
+            ${!a.is_running?`<button class="btn btn-black btn-sm" onclick="quickStart('${a.id}')">▶ Start</button>`:''}
+            ${a.is_running?`<button class="btn btn-red btn-sm" onclick="stopEngine()">■ Stop</button>`:''}
+            <button class="btn btn-ghost btn-sm" onclick="deleteAuto('${a.id}')">Delete</button>
+          </div>
         </div>
       </div>`).join('')
-    : '<div style="color:var(--tx3);font-size:12px">No automations yet. Click + New to create one.</div>';
+    : '<div class="empty"><div class="empty-icon">⚙️</div><div class="empty-title">No automations</div><div class="empty-sub">Create one to start trading</div></div>';
 
-    // Build strategy checklist for new auto form
-    document.getElementById('autoStratList').innerHTML = (strd.strategies||[]).map(s=>`
-      <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card2);border:1px solid ${selectedStrategies.has(s.code)?'var(--gr)':'var(--border)'};border-radius:6px;margin-bottom:5px;cursor:pointer" onclick="togStrat('${s.code}',this)" id="asl-${s.code}">
-        <div style="width:14px;height:14px;border-radius:50%;background:${selectedStrategies.has(s.code)?'var(--gr2)':'var(--card)'};border:1px solid ${selectedStrategies.has(s.code)?'var(--gr)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:8px;color:${selectedStrategies.has(s.code)?'#000':'var(--tx3)'};">${selectedStrategies.has(s.code)?'✓':''}</div>
-        <div style="flex:1"><span style="font-size:12px;font-weight:600">${s.code}: ${s.name}</span> <span class="bd ${s.tier==='PRO'?'bdp':'bdb'}" style="font-size:8px">${s.tier}</span></div>
+    // Build strategy picker
+    document.getElementById('autoStratPicker').innerHTML = (strd.strategies||[]).map(s=>`
+      <div class="strat-item">
+        <div class="strat-info">
+          <div class="strat-name">${s.code}: ${s.name} <span class="badge ${s.tier==='PRO'?'badge-blue':'badge-gray'}" style="font-size:10px">${s.tier}</span></div>
+          <div class="strat-desc">${s.description||''}</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" ${selectedStrategies.has(s.code)?'checked':''} onchange="toggleStrategy('${s.code}',this.checked)">
+          <div class="toggle-track"></div>
+        </label>
       </div>`).join('');
-  } catch(e) { console.error(e); }
+
+    // Populate broker select
+    var brok = await api('GET','/api/brokers');
+    myBrokers = brok.brokers||[];
+    var sel = document.getElementById('auto-broker');
+    if (sel) sel.innerHTML = myBrokers.filter(b=>b.is_connected).map(b=>`<option value="${b.broker_id}">${b.broker_name}</option>`).join('') ||
+      '<option value="">Connect a broker first</option>';
+  } catch(e) {}
 }
 
-function showNewAuto() { document.getElementById('newAutoCard').style.display='block'; loadAutomate(); }
+function showNewAutoForm() {
+  document.getElementById('newAutoForm').style.display='block';
+  document.getElementById('newAutoForm').scrollIntoView({behavior:'smooth'});
+}
 
-function togStrat(code, el) {
-  selectedStrategies.has(code) ? selectedStrategies.delete(code) : selectedStrategies.add(code);
-  loadAutomate();
+function toggleStrategy(code, checked) {
+  checked ? selectedStrategies.add(code) : selectedStrategies.delete(code);
 }
 
 async function saveAuto(mode) {
-  var sym   = document.getElementById('auto-sym').value;
-  var brok  = document.getElementById('auto-broker').value;
-  if (!brok) { toast('Connect a broker first', 'err'); return; }
-  if (mode === 'live' && !confirm('Switch to LIVE mode?\n\nReal orders will be placed with real money.\nOnly do this after successful paper testing.')) return;
+  var sym  = document.getElementById('auto-sym').value;
+  var brok = document.getElementById('auto-broker').value;
+  if (!brok) { toast('Connect a broker first','error'); return; }
+  if (mode==='live' && !confirm('Switch to LIVE?\n\nReal money orders will be placed.\nOnly do this after successful paper testing.')) return;
   try {
-    await api('POST', '/api/automations', {
-      name: sym + ' — ' + [...selectedStrategies].join('+'),
-      symbol: sym, broker_id: brok,
-      strategies: [...selectedStrategies],
-      mode,
-      config: {
+    await api('POST','/api/automations',{
+      name: sym.split(':')[1]+' — '+[...selectedStrategies].join('+'),
+      symbol:sym, broker_id:brok,
+      strategies:[...selectedStrategies], mode,
+      config:{
         max_loss: +document.getElementById('auto-maxloss').value,
-        auto_exit: document.getElementById('auto-exit').value,
+        auto_exit_time: document.getElementById('auto-exit').value,
       }
     });
-    document.getElementById('newAutoCard').style.display = 'none';
-    toast('Automation saved in ' + mode.toUpperCase() + ' mode ✓', 'ok');
+    document.getElementById('newAutoForm').style.display='none';
+    toast('Automation saved ✓','success');
     loadAutomate();
-  } catch(e) { toast(e.message,'err'); }
+  } catch(e) { toast(e.message,'error'); }
 }
 
 async function deleteAuto(id) {
   if (!confirm('Delete this automation?')) return;
-  await api('DELETE', `/api/automations/${id}`);
-  toast('Deleted', 'ok'); loadAutomate();
+  await api('DELETE','/api/automations/'+id);
+  toast('Deleted','success');
+  loadAutomate();
 }
 
-// ═══════════════════════════════════════════════════
+async function quickStart(autoId) {
+  try {
+    await api('POST','/api/engine/start',{automation_id:autoId});
+    toast('Engine started ✓','success');
+    engineRunning = true;
+    connectWS();
+    nav('live');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ═══════════════════════════════════════════════════════
+// LIVE MONITOR
+// ═══════════════════════════════════════════════════════
+function refreshLive() {
+  if (engineRunning) connectWS();
+}
+
+function connectWS() {
+  if (wsConn) return;
+  var proto = location.protocol==='https:'?'wss:':'ws:';
+  wsConn = new WebSocket(`${proto}//${location.host}/ws/${session.user.email}`);
+  wsConn.onmessage = e => {
+    var d = JSON.parse(e.data);
+    if (d.type==='tick') updateLiveUI(d);
+  };
+  wsConn.onclose = () => {
+    wsConn=null;
+    if (engineRunning) setTimeout(connectWS, 5000);
+  };
+}
+
+function updateLiveUI(d) {
+  var fmt = v => v ? Number(v).toFixed(1) : '—';
+  var fmtInt = v => v ? Number(v).toLocaleString('en-IN') : '—';
+
+  document.getElementById('live-spot').textContent = d.spot ? '₹'+fmtInt(d.spot) : '—';
+  document.getElementById('live-atm').textContent  = d.atm ? fmtInt(d.atm) : '—';
+  document.getElementById('live-comb').textContent = fmt(d.combined);
+  document.getElementById('live-vwap').textContent = fmt(d.vwap);
+  document.getElementById('live-ema').textContent  = fmt(d.ema75);
+  document.getElementById('live-orb').textContent  = fmt(d.orb_low);
+  document.getElementById('topNifty').textContent  = d.spot ? fmtInt(d.spot) : '—';
+
+  var pnl = d.day_pnl || 0;
+  var pnlEl = document.getElementById('live-pnl');
+  if (pnlEl) {
+    pnlEl.textContent = (pnl>=0?'+':'')+'₹'+Math.abs(pnl).toFixed(0);
+    pnlEl.style.color = pnl>0?'var(--green)':pnl<0?'var(--red)':'inherit';
+  }
+
+  // Engine state
+  var dot = document.getElementById('eng-dot');
+  var state = document.getElementById('eng-state');
+  if (dot && state) {
+    dot.className = 'engine-dot ' + (d.mode==='IN_TRADE'?'live':d.mode==='MONITORING'?'live':'');
+    state.textContent = d.mode || 'MONITORING';
+  }
+
+  // Position card
+  if (d.position) {
+    var sig = d.position.signal || {};
+    document.getElementById('positionSection').style.display='block';
+    document.getElementById('positionCard').innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">${sig.name||'Open Position'}</div>
+          <span class="badge badge-green">OPEN</span>
+        </div>
+        <div class="card-body">
+          <div class="card-row"><span class="card-label">Strategy</span><span class="card-value">${sig.code}</span></div>
+          <div class="card-row"><span class="card-label">Entry</span><span class="card-value">${Number(d.position.entry_combined||0).toFixed(1)}</span></div>
+          <div class="card-row"><span class="card-label">Current</span><span class="card-value">${Number(d.combined||0).toFixed(1)}</span></div>
+          <div class="card-row"><span class="card-label">P&L</span>
+            <span class="card-value" style="color:${(d.combined||0)<(d.position.entry_combined||0)?'var(--green)':'var(--red)'}">
+              ${((d.position.entry_combined-d.combined)*25).toFixed(0)}
+            </span>
+          </div>
+        </div>
+        <div style="padding:0 16px 14px">
+          <button class="btn btn-red btn-sm btn-full" onclick="forceExit()">Force Exit</button>
+        </div>
+      </div>`;
+  }
+
+  // Strike table
+  if (d.strikes && d.strikes.length) {
+    document.getElementById('strikeTable').innerHTML = `
+      <table class="strike-table">
+        <thead><tr><th>Strike</th><th>Combined</th><th>ORB Low</th><th>Status</th></tr></thead>
+        <tbody>${d.strikes.map(s=>`
+          <tr class="${s.is_atm?'atm-row':''}">
+            <td>${s.strike}${s.is_atm?' ●':''}</td>
+            <td>${Number(s.combined||0).toFixed(1)}</td>
+            <td>${s.orb_low?Number(s.orb_low).toFixed(1):'—'}</td>
+            <td><span class="badge ${s.combined<s.orb_low&&s.orb_low?'badge-red':s.fired?'badge-amber':'badge-gray'}" style="font-size:10px">
+              ${s.combined<s.orb_low&&s.orb_low?'BELOW ORB':s.fired?'FIRED':'ABOVE'}
+            </span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // Log
+  if (d.log && d.log.length) {
+    var logEl = document.getElementById('engineLog');
+    if (logEl) {
+      logEl.innerHTML = d.log.slice(-15).reverse().map(l => `
+        <div class="log-entry">
+          <span class="log-time">${l.ts}</span>
+          <span class="log-msg log-${(l.kind||'info').toLowerCase()}">${esc(l.msg)}</span>
+        </div>`).join('');
+    }
+  }
+}
+
+async function startEngine() {
+  try {
+    var autos = await api('GET','/api/automations');
+    var list = autos.automations||[];
+    if (!list.length) { toast('Create an automation first','error'); nav('automate'); return; }
+    var auto = list[0];
+    await api('POST','/api/engine/start',{automation_id:auto.id});
+    engineRunning=true;
+    document.getElementById('eng-start').style.display='none';
+    document.getElementById('eng-stop').style.display='flex';
+    document.getElementById('eng-exit').style.display='flex';
+    document.getElementById('eng-state').textContent='STARTING';
+    document.getElementById('eng-dot').classList.add('live');
+    connectWS();
+    toast('Engine started ✓','success');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function stopEngine() {
+  try {
+    await api('POST','/api/engine/stop');
+    engineRunning=false;
+    if(wsConn){wsConn.close();wsConn=null;}
+    document.getElementById('eng-start').style.display='flex';
+    document.getElementById('eng-stop').style.display='none';
+    document.getElementById('eng-exit').style.display='none';
+    document.getElementById('eng-state').textContent='IDLE';
+    document.getElementById('eng-dot').classList.remove('live');
+    toast('Engine stopped','success');
+    refreshDashboard();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function forceExit() {
+  if (!confirm('Force exit all positions now?')) return;
+  await api('POST','/api/engine/force-exit');
+  toast('Force exit triggered','success');
+}
+
+// ═══════════════════════════════════════════════════════
+// TRADES
+// ═══════════════════════════════════════════════════════
+async function loadTrades() {
+  try {
+    var [td, ts] = await Promise.all([api('GET','/api/trades'), api('GET','/api/trades/summary')]);
+    var trades = td.trades||[];
+    document.getElementById('tr-total').textContent = (ts.total_pnl>=0?'+':'')+'₹'+Math.abs(ts.total_pnl||0).toFixed(0);
+    document.getElementById('tr-total').style.color = ts.total_pnl>0?'var(--green)':ts.total_pnl<0?'var(--red)':'inherit';
+    document.getElementById('tr-wr').textContent = (ts.win_rate||0)+'%';
+    document.getElementById('tr-count').textContent = ts.total_trades||0;
+    document.getElementById('tr-open').textContent = ts.open_trades||0;
+    var el = document.getElementById('tradesList');
+    el.innerHTML = trades.length ? trades.map(t=>tradeItemHTML(t)).join('') :
+      '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No trades yet</div></div>';
+  } catch(e){}
+}
+
+// ═══════════════════════════════════════════════════════
 // PROFILE
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 async function loadProfile() {
   try {
-    var u = await api('GET', '/api/me');
-    document.getElementById('prof-name').value  = u.name||'';
-    document.getElementById('prof-email').value = u.email||'';
-    document.getElementById('prof-plan').value  = (u.plan||'FREE') + ' · ' + (u.role||'USER');
-  } catch(e) {}
+    var u = await api('GET','/api/me');
+    document.getElementById('prof-name').value = u.name||'';
+    document.getElementById('prof-tz').value   = u.timezone||'Asia/Kolkata';
+    document.getElementById('prof-email').textContent = u.email;
+    document.getElementById('profName').textContent = u.name;
+    document.getElementById('profEmail').textContent = u.email;
+    document.getElementById('profBadge').innerHTML =
+      `<span class="badge badge-gray">${u.plan}</span> <span class="badge badge-gray">${u.role.replace('_',' ')}</span>`;
+  } catch(e){}
 }
 
 async function saveProfile() {
   var name = document.getElementById('prof-name').value.trim();
   var tz   = document.getElementById('prof-tz').value;
   try {
-    await api('PUT', '/api/me', { name, timezone: tz });
+    await api('PUT','/api/me',{name,timezone:tz});
     session.user.name = name;
-    localStorage.setItem('algo_session', JSON.stringify(session));
-    document.getElementById('userNameBadge').textContent = name;
-    toast('Profile saved ✓', 'ok');
-  } catch(e) { toast(e.message,'err'); }
+    localStorage.setItem('algodesk_session',JSON.stringify(session));
+    toast('Profile saved ✓','success');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function saveTelegram() {
+  var tg   = document.getElementById('prof-tg').value.trim();
+  var chat = document.getElementById('prof-tgchat').value.trim();
+  try {
+    await api('PUT','/api/me',{telegram_token:tg,telegram_chat:chat});
+    toast('Telegram saved ✓','success');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function testTelegram() {
+  try {
+    await api('POST','/api/telegram/test');
+    toast('Test message sent ✓','success');
+  } catch(e) { toast(e.message,'error'); }
 }
 
 async function changePassword() {
@@ -1046,67 +1693,51 @@ async function changePassword() {
   var nw2  = document.getElementById('pw-new2').value;
   document.getElementById('pwErr').style.display='none';
   document.getElementById('pwOk').style.display='none';
-  if (nw !== nw2) {
-    document.getElementById('pwErr').style.display='flex';
-    document.getElementById('pwErrMsg').textContent='Passwords do not match'; return;
-  }
+  if (nw!==nw2) { document.getElementById('pwErr').style.display='flex'; document.getElementById('pwErrMsg').textContent='Passwords do not match'; return; }
   try {
-    await api('POST', '/api/auth/change-password', { current_password: cur, new_password: nw });
+    await api('POST','/api/auth/change-password',{current_password:cur,new_password:nw});
     document.getElementById('pwOk').style.display='flex';
-    document.getElementById('pw-cur').value='';
-    document.getElementById('pw-new').value='';
-    document.getElementById('pw-new2').value='';
-  } catch(e) {
-    document.getElementById('pwErr').style.display='flex';
-    document.getElementById('pwErrMsg').textContent=e.message;
-  }
+    ['pw-cur','pw-new','pw-new2'].forEach(id=>document.getElementById(id).value='');
+  } catch(e) { document.getElementById('pwErr').style.display='flex'; document.getElementById('pwErrMsg').textContent=e.message; }
 }
 
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 // ADMIN
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 async function loadAdmin() {
   try {
-    var stats = await api('GET', '/api/admin/stats');
-    var users = await api('GET', '/api/admin/users');
-
+    var [stats, users] = await Promise.all([api('GET','/api/admin/stats'), api('GET','/api/admin/users')]);
     document.getElementById('adminStats').innerHTML = [
-      {l:'Total Users',v:stats.total_users,c:'c-bl'},
-      {l:'Active',v:stats.active_users,c:'c-gr'},
-      {l:'Brokers',v:stats.total_brokers,c:'c-am'},
-      {l:'Automations',v:stats.total_automations,c:'c-pu'},
-    ].map(x=>`<div class="m"><div class="ml">${x.l}</div><div class="mv ${x.c}">${x.v}</div></div>`).join('');
+      {l:'Users',v:stats.total_users,c:''},
+      {l:'Active',v:stats.active_users,c:'tile green'},
+      {l:'Brokers',v:stats.total_brokers,c:'tile blue'},
+      {l:'Automations',v:stats.total_automations,c:''},
+    ].map(x=>`<div class="tile ${x.c}"><div class="tile-label">${x.l}</div><div class="tile-value">${x.v}</div></div>`).join('');
 
-    document.getElementById('platformStats').innerHTML = `
-      <div class="stitle" style="margin-top:0">Plans</div>
-      ${Object.entries(stats.plans||{}).map(([k,v])=>`
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(26,48,80,.4)">
-          <span>${k}</span><span style="font-family:var(--mono);font-weight:600">${v} users</span>
-        </div>`).join('')}`;
-
-    document.getElementById('userTB').innerHTML = (users.users||[]).map(u=>`
-      <tr>
-        <td><strong>${u.name}</strong><br><span style="font-size:10px;color:var(--tx3)">${u.email}</span></td>
-        <td><span class="bd ${u.role==='SUPER_ADMIN'?'bda':u.role==='ADMIN'?'bdb':'bdx'}">${u.role.replace('_',' ')}</span></td>
-        <td><span class="bd ${u.plan==='PRO'||u.plan==='ENTERPRISE'?'bdp':u.plan==='STARTER'?'bdb':'bdx'}">${u.plan}</span></td>
-        <td><span class="bd ${u.is_active?'bdg':'bdr'}">${u.is_active?'Active':'Suspended'}</span></td>
-        <td class="mn">${u.broker_count||0}</td>
-        <td style="font-size:10px;color:var(--tx3)">${u.last_login?new Date(u.last_login).toLocaleDateString():'Never'}</td>
-        <td>
-          <div style="display:flex;gap:4px;flex-wrap:wrap">
-            ${u.is_active
-              ? `<button class="btn btnr" style="padding:2px 7px;font-size:10px" onclick="suspendUser('${u.email}')">Suspend</button>`
-              : `<button class="btn btng" style="padding:2px 7px;font-size:10px" onclick="activateUser('${u.email}')">Activate</button>`}
-            <button class="btn btnb" style="padding:2px 7px;font-size:10px" onclick="adminResetPw('${u.email}')">Reset PW</button>
+    document.getElementById('usersList').innerHTML = (users.users||[]).map(u=>`
+      <div class="user-row">
+        <div class="user-av">${(u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}</div>
+        <div class="user-info">
+          <div class="user-name">${u.name}</div>
+          <div class="user-email">${u.email}</div>
+          <div style="margin-top:3px;display:flex;gap:4px">
+            <span class="badge badge-gray" style="font-size:10px">${u.role.replace('_',' ')}</span>
+            <span class="badge badge-gray" style="font-size:10px">${u.plan}</span>
+            <span class="badge ${u.is_active?'badge-green':'badge-red'}" style="font-size:10px">${u.is_active?'Active':'Suspended'}</span>
           </div>
-        </td>
-      </tr>`).join('');
-  } catch(e) { console.error(e); }
+        </div>
+        <div class="user-actions">
+          ${u.is_active
+            ?`<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="suspendUser('${u.id}')">Suspend</button>`
+            :`<button class="btn btn-green btn-sm" style="font-size:11px" onclick="activateUser('${u.id}')">Activate</button>`}
+        </div>
+      </div>`).join('');
+  } catch(e){}
 }
 
-function showCreateUser() {
-  var el = document.getElementById('adminUserCreate');
-  el.style.display = el.style.display==='none' ? 'block' : 'none';
+function showCreateUserForm() {
+  var el = document.getElementById('createUserForm');
+  el.style.display = el.style.display==='none'?'block':'none';
 }
 
 async function createUser() {
@@ -1115,362 +1746,43 @@ async function createUser() {
   var pass  = document.getElementById('nu-pass').value;
   var role  = document.getElementById('nu-role').value;
   var plan  = document.getElementById('nu-plan').value;
-  if (!name||!email||!pass) { toast('Fill all fields','err'); return; }
+  if (!name||!email||!pass) { toast('Fill all fields','error'); return; }
   try {
-    await api('POST', '/api/admin/users', { email, name, password:pass, role, plan });
-    toast('User created: ' + email, 'ok');
-    document.getElementById('nu-name').value='';
-    document.getElementById('nu-email').value='';
-    document.getElementById('nu-pass').value='';
+    await api('POST','/api/admin/users',{email,name,password:pass,role,plan});
+    toast('User created ✓','success');
+    document.getElementById('createUserForm').style.display='none';
     loadAdmin();
-  } catch(e) { toast(e.message,'err'); }
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function suspendUser(id) {
+  if (!confirm('Suspend this user?')) return;
+  await api('POST',`/api/admin/users/${id}/suspend`);
+  toast('Suspended','success'); loadAdmin();
+}
+
+async function activateUser(id) {
+  await api('POST',`/api/admin/users/${id}/activate`);
+  toast('Activated','success'); loadAdmin();
 }
 
 async function createInvite() {
   var role = document.getElementById('inv-role').value;
   var plan = document.getElementById('inv-plan').value;
   try {
-    var d = await api('POST', '/api/admin/invite', { role, plan });
+    var d = await api('POST','/api/admin/invite',{role,plan});
     var el = document.getElementById('inviteResult');
-    el.style.display = 'block';
-    el.innerHTML = `<div class="abox as"><span class="ic">✓</span><div>Invite link created:<br><code style="font-size:11px;word-break:break-all;color:var(--gr)">${d.invite_url}</code><br><small>Send this to the new user. They click it to register with ${role} role and ${plan} plan.</small></div></div>`;
-  } catch(e) { toast(e.message,'err'); }
+    el.style.display='block';
+    el.innerHTML=`<div class="alert alert-success"><span class="alert-icon">✓</span>
+      <div>Invite link:<br><code style="font-size:11px;word-break:break-all">${d.invite_url}</code></div></div>`;
+  } catch(e) { toast(e.message,'error'); }
 }
 
-async function suspendUser(email) {
-  if (!confirm('Suspend ' + email + '?')) return;
-  await api('POST', `/api/admin/users/${encodeURIComponent(email)}/suspend`);
-  toast('User suspended', 'ok'); loadAdmin();
-}
-
-async function activateUser(email) {
-  await api('POST', `/api/admin/users/${encodeURIComponent(email)}/activate`);
-  toast('User activated', 'ok'); loadAdmin();
-}
-
-async function adminResetPw(email) {
-  try {
-    var d = await api('POST', `/api/admin/users/${encodeURIComponent(email)}/reset-password`);
-    prompt('Send this reset link to ' + email + ':', d.reset_url);
-  } catch(e) { toast(e.message,'err'); }
-}
-
-// ═══════════════════════════════════════════════════
-// LIVE ENGINE (placeholder)
-// ═══════════════════════════════════════════════════
-function startEngine() {
-  document.getElementById('startBtn').style.display='none';
-  document.getElementById('stopBtn').style.display='inline-flex';
-  document.getElementById('lv-eng').textContent='MONITORING';
-  toast('Engine started in paper mode','ok');
-}
-function stopEngine() {
-  document.getElementById('startBtn').style.display='inline-flex';
-  document.getElementById('stopBtn').style.display='none';
-  document.getElementById('lv-eng').textContent='IDLE';
-}
-
-// ═══════════════════════════════════════════════════
-// TOAST
-// ═══════════════════════════════════════════════════
-function toast(msg, type='ok') {
-  var t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast show ' + type;
-  setTimeout(() => t.classList.remove('show'), 3500);
-}
-
-
-// ── LIVE DATA TEST ─────────────────────────────────────────
-var liveInterval = null;
-
-async function startLiveTest(brokerId) {
-  document.getElementById('liveDataPanel').style.display = 'block';
-  document.getElementById('liveDataPanel').scrollIntoView({behavior:'smooth'});
-  document.getElementById('liveStatus').textContent = 'Connecting...';
-  stopLiveTest();
-  await fetchLiveData(brokerId);
-  liveInterval = setInterval(() => fetchLiveData(brokerId), 15000);
-}
-
-function stopLiveTest() {
-  if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
-}
-
-async function fetchLiveData(brokerId) {
-  try {
-    var r = await api('GET', '/api/market/live?symbol=NSE:NIFTY50-INDEX');
-    if (r.ok) {
-      var spot = r.spot || 0;
-      var atm = Math.round(spot / 50) * 50;
-      document.getElementById('lm-spot').textContent = '₹' + spot.toLocaleString('en-IN', {minimumFractionDigits:1});
-      document.getElementById('lm-atm').textContent = atm.toLocaleString('en-IN');
-      document.getElementById('lm-time').textContent = new Date().toLocaleTimeString();
-      document.getElementById('liveStatus').textContent = 'Live — updates every 15s';
-
-      if (r.chain && Object.keys(r.chain).length > 0) {
-        document.getElementById('lm-combined').textContent =
-          (r.chain[atm]?.combined || 0).toFixed(1);
-        var rows = Object.entries(r.chain)
-          .sort((a,b) => a[0]-b[0])
-          .map(([strike, d]) => `
-            <div style="display:grid;grid-template-columns:80px 80px 80px 80px 1fr;gap:4px;padding:6px 8px;background:${parseInt(strike)===atm?'#eff6ff':'transparent'};border-radius:6px;font-family:var(--mono);font-size:11px;border-bottom:1px solid var(--border)">
-              <span style="font-weight:${parseInt(strike)===atm?'700':'400'};color:${parseInt(strike)===atm?'var(--bl)':'var(--tx)'}">${strike}${parseInt(strike)===atm?' ←ATM':''}</span>
-              <span style="color:#16a34a">${d.ce_ltp?.toFixed(1)||'—'}</span>
-              <span style="color:#dc2626">${d.pe_ltp?.toFixed(1)||'—'}</span>
-              <span style="font-weight:600">${d.combined?.toFixed(1)||'—'}</span>
-              <span style="color:var(--tx3);font-size:10px">${d.ce_symbol?.split(':')[1]||''}</span>
-            </div>`).join('');
-        document.getElementById('liveChainTable').innerHTML = `
-          <div style="display:grid;grid-template-columns:80px 80px 80px 80px 1fr;gap:4px;padding:6px 8px;margin-bottom:4px">
-            <span style="font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase">Strike</span>
-            <span style="font-size:10px;font-weight:600;color:#16a34a;text-transform:uppercase">CE LTP</span>
-            <span style="font-size:10px;font-weight:600;color:#dc2626;text-transform:uppercase">PE LTP</span>
-            <span style="font-size:10px;font-weight:600;color:var(--tx2);text-transform:uppercase">Combined</span>
-            <span style="font-size:10px;font-weight:600;color:var(--tx3);text-transform:uppercase">Symbol</span>
-          </div>${rows}`;
-      }
-    } else {
-      document.getElementById('liveStatus').textContent = r.message || 'Error fetching data';
-    }
-  } catch(e) {
-    document.getElementById('liveStatus').textContent = 'Error: ' + e.message;
-  }
-}
-
+// Auto-refresh dashboard every 60 seconds
+setInterval(()=>{
+  var dashPage = document.getElementById('pg-dashboard');
+  if (dashPage&&dashPage.classList.contains('on')) refreshDashboard();
+}, 60000);
 </script>
 </body>
 </html>
-<!-- Additional functionality injected by v4 build -->
-<script>
-// ── LIVE MONITOR enhancements ──────────────────────────────────
-var wsConn = null;
-var engineRunning = false;
-
-function connectWebSocket(userId) {
-  if (wsConn) wsConn.close();
-  var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  wsConn = new WebSocket(`${protocol}//${window.location.host}/ws/${userId}`);
-  wsConn.onmessage = function(e) {
-    var d = JSON.parse(e.data);
-    if (d.type === 'tick') updateLiveUI(d);
-  };
-  wsConn.onclose = function() {
-    if (engineRunning) setTimeout(() => connectWebSocket(userId), 5000);
-  };
-}
-
-function updateLiveUI(d) {
-  var set = (id, val) => { var el=document.getElementById(id); if(el) el.textContent=val; };
-  set('lv-s',  d.spot ? d.spot.toFixed(1) : '—');
-  set('lv-a',  d.atm || '—');
-  set('lv-c',  d.combined ? d.combined.toFixed(1) : '—');
-  set('lv-v',  d.vwap ? d.vwap.toFixed(1) : '—');
-  set('lv-eng', d.mode || 'IDLE');
-  var pnl = d.day_pnl || 0;
-  var pnlEl = document.getElementById('lv-pnl');
-  if (pnlEl) {
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '₹' + Math.round(pnl).toLocaleString();
-    pnlEl.className = 'mv ' + (pnl >= 0 ? 'c-gr' : 'c-rd');
-  }
-  // Update log
-  if (d.log && d.log.length) {
-    var lg = document.getElementById('engineLog');
-    if (lg) {
-      lg.innerHTML = d.log.slice(-15).reverse().map(l =>
-        `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(26,48,80,.3)">
-          <span style="color:var(--tx3);font-family:var(--mono);font-size:10px;min-width:55px">${l.ts}</span>
-          <span style="font-size:11px;color:${l.kind==='ERROR'?'var(--rd)':l.kind==='SIGNAL'?'var(--gr)':l.kind==='OK'?'var(--gr)':l.kind==='SL'?'var(--rd)':'var(--tx2)'}">${l.msg}</span>
-        </div>`
-      ).join('');
-    }
-  }
-  // Update position
-  if (d.position) {
-    var posEl = document.getElementById('positionCard');
-    if (posEl) {
-      var sig = d.position.signal || {};
-      posEl.innerHTML = `
-        <div style="background:var(--card2);border:1px solid var(--gr);border-radius:8px;padding:11px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <strong>${sig.name || 'Open Position'}</strong>
-            <span class="bd bdg">OPEN</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;color:var(--tx3)">
-            <div>Strategy<br><span style="color:var(--tx2);font-weight:600">${sig.code}</span></div>
-            <div>Entry<br><span style="font-family:var(--mono);color:var(--am);font-weight:600">${d.position.entry_combined?.toFixed(1)}</span></div>
-            <div>Current<br><span style="font-family:var(--mono);color:var(--tx2);font-weight:600">${d.combined?.toFixed(1)}</span></div>
-          </div>
-          <div style="margin-top:8px;font-size:11px;color:var(--bl)">
-            Sell: ${sig.sell_ce}CE + ${sig.sell_pe}PE
-            ${sig.buy_ce ? ` | Hedge: ${sig.buy_ce}CE + ${sig.buy_pe}PE` : ''}
-          </div>
-        </div>`;
-    }
-  } else {
-    var posEl = document.getElementById('positionCard');
-    if (posEl) posEl.innerHTML = '<div class="abox ai"><span class="ic">ℹ</span><span>No open position. Engine monitoring for signals.</span></div>';
-  }
-}
-
-// Override startEngine to use real API
-var _origStart = window.startEngine;
-window.startEngine = async function() {
-  var autos = await api('GET', '/api/automations');
-  var list = autos.automations || [];
-  if (!list.length) { toast('Create an automation first', 'err'); return; }
-
-  // Use first active automation, or show picker
-  var auto = list[0];
-  try {
-    await api('POST', '/api/engine/start', { automation_id: auto.id });
-    engineRunning = true;
-    connectWebSocket(session.user.id);
-    document.getElementById('startBtn').style.display = 'none';
-    document.getElementById('stopBtn').style.display = 'inline-flex';
-    document.getElementById('lv-eng').textContent = 'STARTING';
-    toast('Engine started: ' + auto.name, 'ok');
-  } catch(e) { toast(e.message, 'err'); }
-};
-
-var _origStop = window.stopEngine;
-window.stopEngine = async function() {
-  try {
-    await api('POST', '/api/engine/stop');
-    engineRunning = false;
-    if (wsConn) wsConn.close();
-    document.getElementById('startBtn').style.display = 'inline-flex';
-    document.getElementById('stopBtn').style.display = 'none';
-    document.getElementById('lv-eng').textContent = 'IDLE';
-    toast('Engine stopped', 'ok');
-  } catch(e) { toast(e.message, 'err'); }
-};
-
-// Enhance live page with log panel and position card
-var _origNav = window.nav;
-window.nav = function(id) {
-  _origNav(id);
-  if (id === 'live') enhanceLivePage();
-  if (id === 'trades') loadTrades();
-};
-
-function enhanceLivePage() {
-  var page = document.getElementById('pg-live');
-  if (!page || page.querySelector('#positionCard')) return;
-  var extra = document.createElement('div');
-  extra.innerHTML = `
-    <div class="g2" style="margin-top:0">
-      <div class="card">
-        <div class="ch"><span class="ct">Open Position</span></div>
-        <div class="cb" id="positionCard">
-          <div class="abox ai"><span class="ic">ℹ</span><span>Start the engine to begin monitoring.</span></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="ch"><span class="ct">Force Exit</span></div>
-        <div class="cb">
-          <div class="abox aw"><span class="ic">⚠</span><span>Force exit closes all open legs immediately at market price.</span></div>
-          <button class="btn btnr" onclick="forceExit()">Force Exit All Positions</button>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="ch"><span class="ct">Engine Log</span></div>
-      <div class="cb" id="engineLog" style="font-size:11px;max-height:220px;overflow-y:auto;background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
-        <div style="color:var(--tx3)">Start the engine to see live log...</div>
-      </div>
-    </div>`;
-  page.appendChild(extra);
-}
-
-async function forceExit() {
-  if (!confirm('Force exit all open positions now?')) return;
-  try {
-    await api('POST', '/api/engine/force-exit');
-    toast('Force exit triggered', 'ok');
-  } catch(e) { toast(e.message, 'err'); }
-}
-
-// ── TRADES PAGE ──────────────────────────────────────────────
-async function loadTrades() {
-  var page = document.getElementById('pg-trades');
-  if (!page) return;
-  try {
-    var d = await api('GET', '/api/trades');
-    var trades = d.trades || [];
-    page.innerHTML = `
-      <div class="card">
-        <div class="ch"><span class="ct">Trade History</span><span class="bd bdb">${trades.length} trades</span></div>
-        <div class="cb twrap">
-          <table>
-            <thead><tr><th>Date</th><th>Symbol</th><th>Strategy</th><th>Mode</th><th>ATM</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th></tr></thead>
-            <tbody>
-              ${trades.length ? trades.map(t => `
-                <tr>
-                  <td>${t.date}</td>
-                  <td style="font-size:10px">${t.symbol}</td>
-                  <td><span class="bd bdb">${t.strategy}</span></td>
-                  <td><span class="bd ${t.mode==='live'?'bdg':'bda'}">${t.mode?.toUpperCase()}</span></td>
-                  <td class="mn">${t.atm}</td>
-                  <td class="mn">${t.entry?.toFixed(1)||'—'}</td>
-                  <td class="mn">${t.exit?.toFixed(1)||'—'}</td>
-                  <td class="mn" style="color:${(t.pnl||0)>=0?'var(--gr)':'var(--rd)'}">${t.pnl!=null?(t.pnl>=0?'+':'')+'₹'+Math.round(t.pnl):'—'}</td>
-                  <td><span class="bd bdx" style="font-size:9px">${t.exit_reason||t.is_open?'OPEN':'—'}</span></td>
-                </tr>`).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--tx3);padding:20px">No trades yet. Start the engine in paper mode first.</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
-  } catch(e) { console.error(e); }
-}
-
-// Add Trades tab to nav
-document.addEventListener('DOMContentLoaded', () => {
-  // Add Trades tab
-  var tabs = document.getElementById('mainTabs');
-  if (tabs && !document.getElementById('tradesTab')) {
-    var t = document.createElement('div');
-    t.className = 'tab'; t.id = 'tradesTab';
-    t.textContent = 'Trades';
-    t.onclick = () => nav('trades');
-    tabs.insertBefore(t, document.getElementById('adminTab'));
-  }
-  // Add trades page
-  var content = document.querySelector('.content');
-  if (content && !document.getElementById('pg-trades')) {
-    var p = document.createElement('div');
-    p.className = 'page'; p.id = 'pg-trades';
-    p.innerHTML = '<div style="color:var(--tx3);padding:20px">Loading trades...</div>';
-    content.appendChild(p);
-  }
-  // Update nav ids
-  var ids = ['dashboard','brokers','automate','live','profile','trades','admin'];
-  var origNav = window.nav;
-  window.nav = function(id) {
-    document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('on', ids[i]===id));
-    document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
-    if (id==='live') enhanceLivePage();
-    if (id==='trades') loadTrades();
-    if (id==='admin') loadAdmin();
-    if (id==='profile') loadProfile();
-    if (id==='brokers') loadMyBrokers();
-    if (id==='automate') loadAutomate();
-  };
-});
-
-// Override loadApp to also start WebSocket
-var _origLoadApp = window.loadApp;
-window.loadApp = async function() {
-  await _origLoadApp();
-  // Check engine status
-  try {
-    var status = await api('GET', '/api/engine/status');
-    if (status.running) {
-      engineRunning = true;
-      connectWebSocket(session.user.id);
-      document.getElementById('startBtn').style.display = 'none';
-      document.getElementById('stopBtn').style.display = 'inline-flex';
-    }
-  } catch(e) {}
-};
-</script>
