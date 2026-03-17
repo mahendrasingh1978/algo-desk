@@ -1,325 +1,352 @@
 """
-ALGO-DESK — Trading Engine
-===========================
-Runs per automation. Manages the full trading lifecycle:
-  - ORB window collection (9:15-9:21)
-  - Strategy signal detection (9:22+)
-  - Order placement via broker
-  - SL monitoring every minute
-  - Auto-exit at configured time
-  - Telegram alerts
-  - Trade persistence to DB
+ALGO-DESK — Trading Engine v2
+==============================
+Stop Loss approach: Industry standard for NIFTY short straddle/strangle.
+Based on research from AlgoTest, AlgoBulls, professional NIFTY traders.
+
+Core principle (non-negotiable):
+  ALL SL and profit target decisions based ONLY on combined premium.
+  No hardcoded numbers. No spot price. No individual legs.
+
+Three-layer SL system:
+  Layer 1 — Trailing SL      : locks in gains as premium decays
+  Layer 2 — VWAP SL          : exit if combined closes above VWAP
+  Layer 3 — Max loss backstop : exit if combined rises 30%+ above entry
+
+All layers percentage-based relative to entry combined premium.
+All layers configurable per automation.
 """
 
 import logging
-import asyncio
 from datetime import datetime, time as dtime
-from typing import Optional
-import numpy as np
-import pandas as pd
+from typing import Optional, List
+from dataclasses import dataclass, field
 
 log = logging.getLogger("engine")
 
-# ── Math helpers ──────────────────────────────────────────────────
 
-def ema(values: list, period: int) -> float:
-    if not values: return 0.0
-    return float(pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1])
-
-def vwap(prices: list, volumes: list) -> float:
-    if not prices: return 0.0
-    vols = volumes if volumes and sum(volumes) > 0 else [1.0] * len(prices)
-    return sum(p * v for p, v in zip(prices, vols)) / sum(vols)
-
-def rsi(values: list, period: int = 14) -> float:
-    if len(values) < period + 1: return 50.0
-    s = pd.Series(values)
-    delta = s.diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
-    rs = gain / loss.replace(0, np.nan)
-    r = (100 - (100 / (1 + rs))).iloc[-1]
-    return float(r) if not pd.isna(r) else 50.0
-
-def bollinger_width(values: list, period: int = 15) -> float:
-    if len(values) < period: return 1.0
-    s = pd.Series(values[-period:])
-    mid = s.mean()
-    return float(s.std() * 2 / mid) if mid > 0 else 1.0
-
-def iv_percentile(history: list, lookback: int = 30) -> float:
-    if len(history) < lookback: return 50.0
-    w = history[-lookback:]
-    cur, mn, mx = w[-1], min(w), max(w)
-    return (cur - mn) / (mx - mn) * 100 if mx != mn else 50.0
-
-def nearest_strike(spot: float, gap: int) -> int:
-    return round(spot / gap) * gap
-
-# ── Engine state ──────────────────────────────────────────────────
-
+@dataclass
 class StrikeState:
-    def __init__(self, strike: int, offset: int, is_atm: bool = False):
-        self.strike   = strike
-        self.offset   = offset
-        self.is_atm   = is_atm
-        self.orb_high = 0.0
-        self.orb_low  = 0.0
-        self.combined_history: list[float] = []
-        self.vol_history:      list[float] = []
-        self.ce_symbol = ""
-        self.pe_symbol = ""
-        self.fired     = False
+    strike: int
+    offset: int
+    is_atm: bool = False
+    ce_symbol: str = ""
+    pe_symbol: str = ""
+    combined_history: List[float] = field(default_factory=list)
+    orb_high: float = 0.0
+    orb_low: float = 0.0
+    fired: bool = False
+    _vwap_pv: float = 0.0
+    _vwap_v: float = 0.0
+    vwap_val: float = 0.0
+    ema75: float = 0.0
+    _ema_count: int = 0
 
     @property
-    def current(self) -> float:
+    def current(self):
         return self.combined_history[-1] if self.combined_history else 0.0
 
-    @property
-    def vwap_val(self) -> float:
-        return vwap(self.combined_history, self.vol_history)
+    def update(self, combined: float, volume: float = 1.0):
+        self.combined_history.append(combined)
+        self._vwap_pv += combined * volume
+        self._vwap_v  += volume
+        self.vwap_val  = self._vwap_pv / self._vwap_v if self._vwap_v else combined
+        k = 2 / 76
+        self._ema_count += 1
+        self.ema75 = combined * k + self.ema75 * (1 - k) if self.ema75 else combined
 
-    @property
-    def ema75(self) -> float:
-        return ema(self.combined_history, 75)
 
-    @property
-    def ema20(self) -> float:
-        return ema(self.combined_history, 20)
+class SLState:
+    """
+    Manages stop loss entirely based on combined premium.
+    No fixed numbers. Everything relative to entry combined.
+    """
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.entry_combined = 0.0
+        self.trailing_low = 0.0
+        self.trailing_sl = 0.0
+        self.candles = 0
+        self.sl_type = "NONE"
+
+    def activate(self, entry_combined, config):
+        self.entry_combined = entry_combined
+        self.trailing_low = entry_combined
+        max_loss_pct = config.get("max_loss_pct", 30) / 100
+        self.trailing_sl = entry_combined * (1 + max_loss_pct)
+        self.candles = 0
+        self.sl_type = "VWAP"
+
+    def update(self, current, vwap, ema75, ema_count, config):
+        """
+        Returns (exit: bool, reason: str).
+        All checks on combined premium only.
+        """
+        self.candles += 1
+        max_loss_pct = config.get("max_loss_pct", 30) / 100
+        trail_pct = config.get("trail_pct", 20) / 100
+        min_profit_pct = config.get("min_profit_pct", 15) / 100
+        vwap_buf = config.get("vwap_buffer_pct", 2) / 100
+        ema_buf = config.get("ema_buffer_pct", 1) / 100
+        target_pct = config.get("profit_target_pct", 30) / 100
+
+        # Update trailing SL as premium decays
+        if current < self.trailing_low:
+            self.trailing_low = current
+            self.trailing_sl = self.trailing_low * (1 + trail_pct)
+
+        # Layer 1: Trailing SL
+        # Only after minimum profit locked in
+        if (self.trailing_low <= self.entry_combined * (1 - min_profit_pct)
+                and current >= self.trailing_sl):
+            return True, (f"TRAILING_SL entry={self.entry_combined:.1f} "
+                         f"low={self.trailing_low:.1f} "
+                         f"trail_sl={self.trailing_sl:.1f} "
+                         f"current={current:.1f}")
+
+        # Layer 2: VWAP SL (after 3 candles to avoid noise)
+        if self.candles >= 3 and vwap > 0:
+            if current > vwap * (1 + vwap_buf):
+                return True, (f"VWAP_SL combined={current:.1f} "
+                             f"vwap={vwap:.1f} "
+                             f"buffer={vwap_buf*100:.0f}%")
+
+        # Layer 2b: EMA75 SL when below VWAP (tighter)
+        if (ema_count >= 75 and ema75 > 0 and vwap > 0
+                and ema75 < vwap and self.candles >= 3):
+            if current > ema75 * (1 + ema_buf):
+                return True, (f"EMA75_SL combined={current:.1f} "
+                             f"ema75={ema75:.1f}")
+
+        # Layer 3: Maximum loss backstop
+        if current > self.entry_combined * (1 + max_loss_pct):
+            return True, (f"MAX_LOSS combined={current:.1f} "
+                         f"entry={self.entry_combined:.1f} "
+                         f"max={max_loss_pct*100:.0f}%")
+
+        # Profit target
+        if current <= self.entry_combined * target_pct:
+            return True, (f"PROFIT_TARGET entry={self.entry_combined:.1f} "
+                         f"current={current:.1f} "
+                         f"captured={(1-target_pct)*100:.0f}%")
+
+        return False, ""
+
 
 class EngineState:
-    def __init__(self, config: dict):
-        self.config        = config
-        self.spot_locked   = 0.0
-        self.atm_strike    = 0
-        self.strikes: list[StrikeState] = []
-        self.orb_complete  = False
-        self.no_breakdown  = False
-        self.all_breakdown = False
-        self.position      = None
-        self.is_running    = False
-        self.day_pnl       = 0.0
-        self.spot_history: list[float] = []
-        self.prev_close    = 0.0
-        self.is_expiry_day = config.get("is_expiry_day", False)
-        self.log: list[dict] = []
+    def __init__(self, config):
+        self.config = config
+        self.is_running = False
+        self.spot_history = []
+        self.atm_strike = None
+        self.spot_locked = None
+        self.strikes = []
+        self.orb_complete = False
+        self.position = None
+        self.day_pnl = 0.0
+        self.sl_state = SLState()
+        self.log = []
 
     @property
-    def gap(self) -> int:
-        return int(self.config.get("strike_round", 50))
-
-    @property
-    def sides(self) -> int:
-        return int(self.config.get("strike_sides", 3))
-
-    @property
-    def atm(self) -> Optional[StrikeState]:
+    def atm(self):
         return next((s for s in self.strikes if s.is_atm), None)
 
-    def emit(self, msg: str, kind: str = "INFO"):
-        entry = {"ts": datetime.now().strftime("%H:%M:%S"), "msg": msg, "kind": kind}
-        self.log.append(entry)
+    def emit(self, msg, kind="INFO"):
+        self.log.append({"ts": datetime.now().strftime("%H:%M:%S"),
+                         "msg": msg, "kind": kind})
         if len(self.log) > 200:
             self.log = self.log[-200:]
-        log.info(f"[engine] {msg}")
+        log.info(f"[engine][{kind}] {msg}")
 
-# ── Strategy checks ───────────────────────────────────────────────
 
-def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
-    """
-    Check all strategies in priority order.
-    Returns signal dict or None.
-    """
-    t = now.time()
-    enabled = state.config.get("strategies", ["S7","S1","S2","S8","S3","S4","S6","S9"])
-    atm = state.atm
-    if not atm or atm.current == 0:
-        return None
+def nearest_strike(spot, gap=50):
+    return round(spot / gap) * gap
 
-    # ── S7: All-Strike Iron Butterfly ────────────────────────────
-    if "S7" in enabled and state.all_breakdown and not state.position:
-        broken = [s for s in state.strikes if s.orb_low > 0 and s.current < s.orb_low * 0.98]
-        if len(broken) >= len(state.strikes) and atm.current >= state.config.get("min_premium", 120):
-            gap = state.gap
-            return {
-                "code": "S7", "name": "All-Strike Iron Butterfly",
-                "strike": atm.strike,
-                "sell_ce": atm.strike, "sell_pe": atm.strike,
-                "sell_ce2": atm.strike + gap, "sell_pe2": atm.strike - gap,
-                "buy_ce": atm.strike + 3*gap, "buy_pe": atm.strike - 3*gap,
-                "combined": atm.current,
-                "reason": f"All {len(state.strikes)} strikes broke ORB low",
-            }
 
-    # ── S1: ORB Breakdown ────────────────────────────────────────
-    if "S1" in enabled and state.orb_complete and t >= dtime(9,22) and not state.position:
-        if not state.all_breakdown:
-            candidates = [s for s in state.strikes
-                          if not s.fired and s.orb_low > 0 and s.current < s.orb_low]
-            if candidates:
-                winner = sorted(candidates, key=lambda s: (abs(s.offset), s.current/s.orb_low))[0]
-                winner.fired = True
-                gap = state.gap
-                hedge = state.config.get("hedging_enabled", True)
-                return {
-                    "code": "S1", "name": "ORB Breakdown Sell",
-                    "strike": winner.strike,
-                    "sell_ce": winner.strike, "sell_pe": winner.strike,
-                    "sell_ce2": None, "sell_pe2": None,
-                    "buy_ce": winner.strike + 2*gap if hedge else None,
-                    "buy_pe": winner.strike - 2*gap if hedge else None,
-                    "combined": winner.current,
-                    "reason": f"Strike {winner.strike} broke ORB low {winner.orb_low:.1f}",
-                }
-
-    # ── S2: VWAP Squeeze ─────────────────────────────────────────
-    if "S2" in enabled and state.no_breakdown and dtime(9,22) <= t <= dtime(10,30) and not state.position:
-        c, v, e = atm.current, atm.vwap_val, atm.ema75
-        if (v > 0 and e > 0 and c < v and e < v
-                and abs(c-v)/v < 0.025 and rsi(atm.combined_history) < 45):
-            gap = state.gap
-            return {
-                "code": "S2", "name": "VWAP Squeeze",
-                "strike": atm.strike,
-                "sell_ce": atm.strike, "sell_pe": atm.strike,
-                "sell_ce2": None, "sell_pe2": None,
-                "buy_ce": atm.strike + 2*gap, "buy_pe": atm.strike - 2*gap,
-                "combined": c,
-                "reason": f"VWAP squeeze: combined {c:.1f} below VWAP {v:.1f}",
-            }
-
-    # ── S8: Gap Fade ─────────────────────────────────────────────
-    if "S8" in enabled and dtime(9,22) <= t <= dtime(9,45) and not state.position:
-        if state.prev_close > 0:
-            gap_pct = abs(state.spot_locked - state.prev_close) / state.prev_close * 100
-            c, v = atm.current, atm.vwap_val
-            if gap_pct > 0.4 and c > 100 and c < v:
-                gap = state.gap
-                return {
-                    "code": "S8", "name": "Opening Gap Fade",
-                    "strike": atm.strike,
-                    "sell_ce": atm.strike, "sell_pe": atm.strike,
-                    "sell_ce2": None, "sell_pe2": None,
-                    "buy_ce": atm.strike + 2*gap, "buy_pe": atm.strike - 2*gap,
-                    "combined": c,
-                    "reason": f"Gap fade: {gap_pct:.2f}% gap, premium compressing",
-                }
-
-    # ── S3: Breakout Reversal ────────────────────────────────────
-    if "S3" in enabled and t >= dtime(9,22) and not state.position:
-        c, v, e = atm.current, atm.vwap_val, atm.ema75
-        if not hasattr(state, '_s3_was_above'): state._s3_was_above = False
-        if not hasattr(state, '_s3_spike'): state._s3_spike = 0.0
-        vb = state.config.get("vwap_buffer", 5) / 100
-        if c > v*(1+vb) and c > e:
-            state._s3_was_above = True
-            state._s3_spike = max(state._s3_spike, c)
-        if state._s3_was_above and c < v and c < e:
-            state._s3_was_above = False
-            spike = state._s3_spike; state._s3_spike = 0.0
-            gap = state.gap
-            return {
-                "code": "S3", "name": "Breakout Reversal",
-                "strike": atm.strike,
-                "sell_ce": atm.strike, "sell_pe": atm.strike,
-                "sell_ce2": None, "sell_pe2": None,
-                "buy_ce": atm.strike + gap, "buy_pe": atm.strike - gap,
-                "combined": c,
-                "reason": f"Reversal from spike {spike:.1f} back below VWAP",
-            }
-
-    # ── S4: Iron Condor ──────────────────────────────────────────
-    if "S4" in enabled and dtime(9,30) <= t <= dtime(10,0) and not state.position:
-        c, v = atm.current, atm.vwap_val
-        gap = state.gap
-        if (len(atm.combined_history) >= 15 and
-                bollinger_width(atm.combined_history) < 0.08 and
-                30 < iv_percentile(atm.combined_history) < 65 and
-                40 < rsi(atm.combined_history) < 60):
-            return {
-                "code": "S4", "name": "Iron Condor",
-                "strike": atm.strike,
-                "sell_ce": atm.strike + gap, "sell_pe": atm.strike - gap,
-                "sell_ce2": None, "sell_pe2": None,
-                "buy_ce": atm.strike + 3*gap, "buy_pe": atm.strike - 3*gap,
-                "combined": c,
-                "reason": "Range-bound day: Bollinger squeeze",
-            }
-
-    # ── S6: Theta Decay Strangle ─────────────────────────────────
-    if "S6" in enabled and dtime(9,45) <= t <= dtime(10,30) and not state.position:
-        c, v = atm.current, atm.vwap_val
-        gap = state.gap
-        iv_pct = iv_percentile(atm.combined_history)
-        if (len(atm.combined_history) >= 30 and iv_pct > 65
-                and abs(c-v)/v < 0.04):
-            return {
-                "code": "S6", "name": "Theta Decay Strangle",
-                "strike": atm.strike,
-                "sell_ce": atm.strike + gap, "sell_pe": atm.strike - gap,
-                "sell_ce2": None, "sell_pe2": None,
-                "buy_ce": atm.strike + 4*gap, "buy_pe": atm.strike - 4*gap,
-                "combined": c,
-                "reason": f"High IV {iv_pct:.0f}pct, premium stable near VWAP",
-            }
-
-    # ── S9: Pre-Expiry Theta Crush ───────────────────────────────
-    if "S9" in enabled and state.is_expiry_day and not state.position:
-        expiry_start = dtime(*[int(x) for x in state.config.get("expiry_start","11:00").split(":")])
-        expiry_end   = dtime(*[int(x) for x in state.config.get("expiry_end","12:00").split(":")])
-        if expiry_start <= t <= expiry_end:
-            c = atm.current
-            gap = state.gap
-            if (c > state.config.get("min_premium_expiry", 80) and
-                    iv_percentile(atm.combined_history) > 40 and
-                    abs(state.spot_locked - atm.strike) / atm.strike < 0.003):
-                return {
-                    "code": "S9", "name": "Pre-Expiry Theta Crush",
-                    "strike": atm.strike,
-                    "sell_ce": atm.strike, "sell_pe": atm.strike,
-                    "sell_ce2": None, "sell_pe2": None,
-                    "buy_ce": atm.strike + 2*gap, "buy_pe": atm.strike - 2*gap,
-                    "combined": c,
-                    "reason": f"Expiry theta crush: tight butterfly",
-                }
-
-    return None
-
-def check_sl(state: EngineState) -> Optional[str]:
-    """Check stop loss. Returns exit reason or None."""
+def check_sl(state):
     if not state.position:
         return None
     atm = state.atm
     if not atm:
         return None
-
-    pos    = state.position
-    c      = atm.current
-    v      = atm.vwap_val
-    e      = atm.ema75
-    config = state.config
-
-    vb  = config.get("vwap_buffer", 5) / 100
-    eb  = config.get("ema_buffer", 1) / 100
-    hsl = config.get("hard_sl_pct", 150) / 100
-    pt  = config.get("profit_target_pct", 50) / 100
-
-    # Hard stop
-    if c > pos["entry_combined"] * (1 + hsl):
-        return "HARD_SL"
-
-    # Profit target
-    if c <= pos["entry_combined"] * (1 - pt):
-        return "PROFIT_TARGET"
-
-    # Trailing SL
-    if e > 0 and e < v:
-        sl_val = e * (1 + eb)
-        if c > sl_val:
-            return "EMA_SL"
-    else:
-        sl_val = v * (1 + vb)
-        if c > sl_val:
-            return "VWAP_SL"
-
+    current = atm.current
+    vwap = atm.vwap_val
+    ema75 = atm.ema75
+    ema_count = atm._ema_count
+    config = {
+        "max_loss_pct":      state.config.get("max_loss_pct", 30),
+        "trail_pct":         state.config.get("trail_pct", 20),
+        "min_profit_pct":    state.config.get("min_profit_pct", 15),
+        "vwap_buffer_pct":   state.config.get("vwap_buffer_pct", 2),
+        "ema_buffer_pct":    state.config.get("ema_buffer_pct", 1),
+        "profit_target_pct": state.config.get("profit_target_pct", 30),
+    }
+    exit_, reason = state.sl_state.update(current, vwap, ema75, ema_count, config)
+    if exit_:
+        state.emit(f"SL triggered: {reason}", "SL")
+        return reason
+    if state.sl_state.candles % 5 == 0:
+        state.emit(
+            f"Position: combined={current:.1f} vwap={vwap:.1f} "
+            f"entry={state.sl_state.entry_combined:.1f} "
+            f"trail_sl={state.sl_state.trailing_sl:.1f}",
+            "INFO")
     return None
+
+
+def check_all_strategies(state, now):
+    if not state.orb_complete or state.position:
+        return None
+    enabled = set(state.config.get("strategies", ["S1", "S8"]))
+    t = now.time()
+    checks = [
+        ("S7", _s7), ("S1", _s1), ("S8", _s8),
+        ("S2", _s2), ("S3", _s3), ("S4", _s4),
+        ("S6", _s6), ("S9", _s9), ("S5", _s5),
+    ]
+    for code, fn in checks:
+        if code in enabled:
+            sig = fn(state, t, now)
+            if sig:
+                return sig
+    return None
+
+
+def _sb(state):
+    return {s.offset: s for s in state.strikes}
+
+
+def _s7(state, t, now):
+    if not (dtime(9,22) <= t <= dtime(10,0)): return None
+    broken = [s for s in state.strikes if s.orb_low > 0 and s.current < s.orb_low]
+    if len(broken) < len(state.strikes) or len(broken) < 5: return None
+    atm = state.atm
+    if not atm: return None
+    sb = _sb(state)
+    return {"code":"S7","name":"All-Strike Iron Butterfly","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":sb.get(3,atm).ce_symbol,"buy_pe":sb.get(-3,atm).pe_symbol,
+            "combined":atm.current,
+            "reason":f"All {len(broken)} strikes below ORB low simultaneously"}
+
+
+def _s1(state, t, now):
+    if not (dtime(9,22) <= t <= dtime(14,0)): return None
+    candidates = [s for s in state.strikes
+                  if s.orb_low > 0 and s.current < s.orb_low and not s.fired]
+    if not candidates: return None
+    w = sorted(candidates, key=lambda s: abs(s.offset))[0]
+    w.fired = True
+    sb = _sb(state)
+    bce = sb.get(w.offset+2) or sb.get(2)
+    bpe = sb.get(w.offset-2) or sb.get(-2)
+    return {"code":"S1","name":"ORB Breakdown Sell","strike":w.strike,
+            "sell_ce":w.ce_symbol,"sell_pe":w.pe_symbol,
+            "buy_ce":bce.ce_symbol if bce else None,
+            "buy_pe":bpe.pe_symbol if bpe else None,
+            "combined":w.current,
+            "reason":f"Strike {w.strike} broke ORB low {w.orb_low:.1f}"}
+
+
+def _s8(state, t, now):
+    if not (dtime(9,22) <= t <= dtime(9,45)): return None
+    atm = state.atm
+    if not atm: return None
+    prev = state.config.get("prev_close", 0)
+    if not prev or not state.spot_locked: return None
+    gap = abs(state.spot_locked - prev) / prev * 100
+    if gap < 0.4 or atm.current < 50: return None
+    sb = _sb(state)
+    return {"code":"S8","name":"Opening Gap Fade","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":sb.get(2,atm).ce_symbol,"buy_pe":sb.get(-2,atm).pe_symbol,
+            "combined":atm.current,"reason":f"Gap {gap:.2f}% — premium elevated"}
+
+
+def _s2(state, t, now):
+    if not (dtime(9,22) <= t <= dtime(10,30)): return None
+    atm = state.atm
+    if not atm or len(atm.combined_history) < 10: return None
+    if atm.current >= atm.vwap_val: return None
+    if atm._ema_count >= 30 and atm.ema75 > atm.vwap_val: return None
+    sb = _sb(state)
+    return {"code":"S2","name":"VWAP Squeeze","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":sb.get(2,atm).ce_symbol,"buy_pe":sb.get(-2,atm).pe_symbol,
+            "combined":atm.current,
+            "reason":f"Below VWAP {atm.vwap_val:.1f} — bearish momentum"}
+
+
+def _s3(state, t, now):
+    if not (dtime(9,22) <= t <= dtime(14,0)): return None
+    atm = state.atm
+    if not atm or len(atm.combined_history) < 5: return None
+    recent_high = max(atm.combined_history[-5:])
+    if recent_high < atm.vwap_val * 1.05 or atm.current >= atm.vwap_val: return None
+    sb = _sb(state)
+    return {"code":"S3","name":"Breakout Reversal","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":sb.get(1,atm).ce_symbol,"buy_pe":sb.get(-1,atm).pe_symbol,
+            "combined":atm.current,
+            "reason":f"Spike to {recent_high:.1f} reversed below VWAP"}
+
+
+def _s4(state, t, now):
+    if not (dtime(9,30) <= t <= dtime(10,0)): return None
+    atm = state.atm
+    if not atm or len(atm.combined_history) < 15: return None
+    hist = atm.combined_history[-15:]
+    rng = (max(hist)-min(hist)) / atm.current if atm.current else 1
+    if rng > 0.08: return None
+    sb = _sb(state)
+    s1=sb.get(1,atm); sm1=sb.get(-1,atm)
+    s3=sb.get(3) or sb.get(2,atm); sm3=sb.get(-3) or sb.get(-2,atm)
+    return {"code":"S4","name":"Iron Condor","strike":atm.strike,
+            "sell_ce":s1.ce_symbol,"sell_pe":sm1.pe_symbol,
+            "buy_ce":s3.ce_symbol,"buy_pe":sm3.pe_symbol,
+            "combined":s1.current+sm1.current,
+            "reason":f"Range-bound — {rng*100:.1f}% range in 15 candles"}
+
+
+def _s6(state, t, now):
+    if not (dtime(9,45) <= t <= dtime(10,30)): return None
+    atm = state.atm
+    if not atm or not atm.orb_high: return None
+    if atm.current < atm.orb_high * 0.95: return None
+    sb = _sb(state)
+    s1=sb.get(1,atm); sm1=sb.get(-1,atm)
+    s4=sb.get(4) or sb.get(3,atm); sm4=sb.get(-4) or sb.get(-3,atm)
+    return {"code":"S6","name":"Theta Decay Strangle","strike":atm.strike,
+            "sell_ce":s1.ce_symbol,"sell_pe":sm1.pe_symbol,
+            "buy_ce":s4.ce_symbol,"buy_pe":sm4.pe_symbol,
+            "combined":s1.current+sm1.current,
+            "reason":f"Elevated premium {atm.current:.1f} near ORB high"}
+
+
+def _s9(state, t, now):
+    if now.weekday() != 3: return None
+    if not (dtime(11,0) <= t <= dtime(12,0)): return None
+    atm = state.atm
+    if not atm: return None
+    sb = _sb(state)
+    return {"code":"S9","name":"Pre-Expiry Theta Crush","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":sb.get(1,atm).ce_symbol,"buy_pe":sb.get(-1,atm).pe_symbol,
+            "combined":atm.current,"reason":"Expiry day — rapid theta decay 11:00-12:00"}
+
+
+def _s5(state, t, now):
+    if not (dtime(9,30) <= t <= dtime(11,0)): return None
+    atm = state.atm
+    if not atm or atm._ema_count < 20: return None
+    if atm.current >= atm.ema75 * 0.95: return None
+    sb = _sb(state)
+    s3=sb.get(3) or sb.get(2,atm); sm3=sb.get(-3) or sb.get(-2,atm)
+    return {"code":"S5","name":"Ratio Spread","strike":atm.strike,
+            "sell_ce":atm.ce_symbol,"sell_pe":atm.pe_symbol,
+            "buy_ce":s3.ce_symbol,"buy_pe":sm3.pe_symbol,
+            "lots_multiplier":2,
+            "combined":atm.current,
+            "reason":f"Strong downtrend — combined {atm.current:.1f} below EMA {atm.ema75:.1f}"}

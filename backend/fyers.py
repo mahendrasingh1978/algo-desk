@@ -1,22 +1,11 @@
 """
-ALGO-DESK — Fyers Broker
+ALGO-DESK — Fyers Engine
 =========================
-Self-service. Every user connects their own account.
-No admin involvement. No TOTP needed.
-
-Flow:
-  First time (30 seconds, user does once):
-    1. User clicks Connect → opens Fyers login URL
-    2. User logs in on Fyers normally
-    3. User pastes auth_code back into ALGO-DESK
-    4. System exchanges auth_code for access_token + refresh_token
-    5. Both stored encrypted in DB
-
-  Every day (fully automatic, no user action ever):
-    - 8:50 AM: POST /validate-refresh-token
-    - Returns new access_token
-    - refresh_token extends itself automatically
-    - Runs forever — user never needs to reconnect
+Token approach matches N8N flow exactly:
+  - Refresh token called before EVERY data fetch
+  - Never expires as long as system is running
+  - Uses options-chain-v3 (single call for spot + chain)
+  - User connects once via browser, never again
 """
 
 import os, hashlib, base64, logging
@@ -26,14 +15,15 @@ import httpx
 
 log = logging.getLogger("fyers")
 
-API = "https://api-t1.fyers.in/api/v3"
+API  = "https://api-t1.fyers.in/api/v3"
+DATA = "https://api-t1.fyers.in/data"
 
 
 # ── Encryption ────────────────────────────────────────────────
 
 def _fernet(user_id: str):
     from cryptography.fernet import Fernet
-    master = os.environ.get("ENCRYPTION_KEY", "changeme-set-in-env-file-please!!").encode()
+    master = os.environ.get("ENCRYPTION_KEY", "changeme-set-in-env-32bytes!!").encode()
     key = hashlib.sha256(master + user_id.encode()).digest()
     return Fernet(base64.urlsafe_b64encode(key))
 
@@ -53,12 +43,10 @@ def decrypt(user_id: str, value: str) -> str:
             return ""
 
 
-# ── Fyers connection ──────────────────────────────────────────
-
 class FyersConnection:
     """
-    One instance per user per broker connection.
-    Holds decrypted tokens in memory only during use.
+    One instance per user. Matches N8N flow exactly.
+    Token refreshed before every data call.
     """
 
     def __init__(self, user_id: str, client_id: str, secret_key: str,
@@ -66,191 +54,181 @@ class FyersConnection:
                  access_token_enc: Optional[str] = None,
                  refresh_token_enc: Optional[str] = None,
                  mode: str = "paper"):
-
         self.user_id      = user_id
         self.client_id    = client_id
         self.secret_key   = secret_key
         self.pin          = pin
         self.redirect_uri = redirect_uri
         self.mode         = mode
-
-        # Decrypt tokens if present
-        self._access_token  = decrypt(user_id, access_token_enc)  if access_token_enc  else None
-        self._refresh_token = decrypt(user_id, refresh_token_enc) if refresh_token_enc else None
-
-    @property
-    def app_id(self) -> str:
-        """Extract app ID from client_id e.g. FYXXXXX from FYXXXXX-100"""
-        return self.client_id.split("-")[0]
+        self._access      = decrypt(user_id, access_token_enc)  if access_token_enc  else None
+        self._refresh     = decrypt(user_id, refresh_token_enc) if refresh_token_enc else None
 
     @property
     def app_hash(self) -> str:
-        """SHA256 of client_id:secret_key — required by Fyers API"""
-        return hashlib.sha256(
-            f"{self.client_id}:{self.secret_key}".encode()
-        ).hexdigest()
+        return hashlib.sha256(f"{self.client_id}:{self.secret_key}".encode()).hexdigest()
+
+    @property
+    def _auth(self) -> dict:
+        return {"Authorization": f"{self.client_id}:{self._access}",
+                "Content-Type": "application/json"}
 
     def login_url(self) -> str:
-        """
-        Generate the Fyers login URL.
-        User opens this, logs in, gets redirected with auth_code.
-        """
-        return (
-            f"{API}/generate-authcode"
-            f"?client_id={self.client_id}"
-            f"&redirect_uri={self.redirect_uri}"
-            f"&response_type=code"
-            f"&state=algo_desk"
-        )
+        return (f"{API}/generate-authcode"
+                f"?client_id={self.client_id}"
+                f"&redirect_uri={self.redirect_uri}"
+                f"&response_type=code&state=algo_desk")
+
+    # ── ONE TIME: exchange auth_code ──────────────────────────
 
     async def exchange_auth_code(self, auth_code: str) -> dict:
-        """
-        Step 1 (one time): Exchange auth_code for access_token + refresh_token.
-        Returns encrypted tokens to store in DB.
-        """
-        log.info(f"[fyers:{self.user_id}] Exchanging auth_code for tokens...")
-
+        """Called once by user. Returns encrypted tokens."""
+        log.info(f"[fyers:{self.user_id}] Exchanging auth_code...")
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(f"{API}/validate-authcode",
                 headers={"Content-Type": "application/json"},
-                json={
-                    "grant_type": "authorization_code",
-                    "appIdHash":  self.app_hash,
-                    "code":       auth_code,
-                })
-
+                json={"grant_type": "authorization_code",
+                      "appIdHash": self.app_hash,
+                      "code": auth_code.strip()})
         d = r.json()
-        log.info(f"[fyers:{self.user_id}] Exchange response: s={d.get('s')} msg={d.get('message','')}")
+        log.info(f"[fyers:{self.user_id}] Exchange: s={d.get('s')} msg={d.get('message','')}")
 
         if d.get("s") == "ok":
-            self._access_token  = d["access_token"]
-            self._refresh_token = d.get("refresh_token", "")
-
+            self._access  = d["access_token"]
+            self._refresh = d.get("refresh_token", "")
             return {
                 "ok": True,
-                "message": "Connected to Fyers successfully",
-                "access_token_enc":  encrypt(self.user_id, self._access_token),
-                "refresh_token_enc": encrypt(self.user_id, self._refresh_token),
+                "message": "Connected to Fyers",
+                "access_token_enc":  encrypt(self.user_id, self._access),
+                "refresh_token_enc": encrypt(self.user_id, self._refresh),
             }
-        else:
-            msg = d.get("message", "Unknown error")
-            # Give helpful error messages
-            if "code" in msg.lower() or "expired" in msg.lower():
-                msg = "Auth code expired or already used. Please click Connect again and paste the new code immediately."
-            elif "invalid" in msg.lower():
-                msg = "Invalid credentials. Check your Client ID and Secret Key in Fyers app settings."
-            return {"ok": False, "message": msg, "raw": d}
+        msg = d.get("message", "Unknown error")
+        if "expired" in msg.lower() or "code" in msg.lower():
+            msg = "Auth code expired — please get a fresh one (valid ~60 seconds)"
+        return {"ok": False, "message": msg}
 
-    async def refresh_access_token(self) -> dict:
+    # ── EVERY CALL: refresh token first (matches N8N) ─────────
+
+    async def refresh_token(self) -> dict:
         """
-        Daily refresh (automatic at 8:50 AM).
+        Called before EVERY data fetch — matches N8N Map Token → Refresh Token flow.
         Uses refresh_token to get new access_token.
-        refresh_token renews itself automatically — runs forever.
+        Refresh token renews itself on each call — never expires.
         """
-        if not self._refresh_token:
-            return {"ok": False, "message": "No refresh token. User must connect once first."}
-
-        log.info(f"[fyers:{self.user_id}] Daily token refresh...")
+        if not self._refresh:
+            return {"ok": False, "message": "No refresh token. Connect Fyers first."}
 
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(f"{API}/validate-refresh-token",
                 headers={"Content-Type": "application/json"},
-                json={
-                    "grant_type":    "refresh_token",
-                    "appIdHash":     self.app_hash,
-                    "refresh_token": self._refresh_token,
-                    "pin":           self.pin,
-                })
-
+                json={"grant_type": "refresh_token",
+                      "appIdHash": self.app_hash,
+                      "refresh_token": self._refresh,
+                      "pin": self.pin})
         d = r.json()
-        log.info(f"[fyers:{self.user_id}] Refresh response: s={d.get('s')} msg={d.get('message','')}")
 
         if d.get("s") == "ok":
-            self._access_token = d["access_token"]
-            # refresh_token may also be renewed — save it if returned
+            self._access = d["access_token"]
             if d.get("refresh_token"):
-                self._refresh_token = d["refresh_token"]
-
+                self._refresh = d["refresh_token"]
             return {
                 "ok": True,
-                "message": "Token refreshed successfully",
-                "access_token_enc":  encrypt(self.user_id, self._access_token),
-                "refresh_token_enc": encrypt(self.user_id, self._refresh_token),
+                "access_token_enc":  encrypt(self.user_id, self._access),
+                "refresh_token_enc": encrypt(self.user_id, self._refresh),
             }
-        else:
-            msg = d.get("message", "Refresh failed")
-            if "pin" in msg.lower():
-                msg = "PIN incorrect. Check your Fyers trading PIN."
-            elif "token" in msg.lower() and "invalid" in msg.lower():
-                msg = "Refresh token invalid. User needs to reconnect once."
-            return {"ok": False, "message": msg}
+        msg = d.get("message", "Refresh failed")
+        if "pin" in msg.lower():
+            msg = "PIN incorrect — check your Fyers trading PIN"
+        log.error(f"[fyers:{self.user_id}] Refresh failed: {msg}")
+        return {"ok": False, "message": msg}
 
-    # ── Market data ───────────────────────────────────────────
+    # ── CORE DATA: options-chain-v3 (one call = spot + chain) ─
 
-    @property
-    def _auth_header(self) -> dict:
-        return {
-            "Authorization": f"{self.client_id}:{self._access_token}",
-            "Content-Type":  "application/json",
-        }
+    async def get_spot_and_chain(self, symbol: str = "NSE:NIFTY50-INDEX",
+                                  strike_count: int = 7) -> dict:
+        """
+        Matches N8N 'SPOT Price with Option Chain' node.
+        Single call to options-chain-v3 returns everything.
+        """
+        # Refresh token first — every time (N8N approach)
+        refresh = await self.refresh_token()
+        if not refresh["ok"]:
+            return {"ok": False, "message": refresh["message"]}
 
-    async def get_ltp(self, symbol: str) -> Optional[float]:
-        if not self._access_token:
-            return None
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(f"{API}/quotes",
-                    headers=self._auth_header,
-                    params={"symbols": symbol})
-            d = r.json()
-            if d.get("s") == "ok" and d.get("d"):
-                return float(d["d"][0]["v"]["lp"])
-        except Exception as e:
-            log.error(f"[fyers] get_ltp error: {e}")
-        return None
-
-    async def get_option_chain(self, symbol: str, strike_count: int = 10,
-                                expiry: Optional[str] = None) -> dict:
-        if not self._access_token:
-            return {}
-        try:
-            params = {"symbol": symbol, "strikecount": strike_count}
-            if expiry:
-                params["timestamp"] = expiry
             async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.get(f"{API}/option-chain",
-                    headers=self._auth_header, params=params)
+                r = await c.get(f"{DATA}/options-chain-v3",
+                    headers=self._auth,
+                    params={"symbol": symbol, "strikecount": strike_count})
             d = r.json()
+
             if d.get("s") != "ok":
-                return {}
+                return {"ok": False, "message": d.get("message", "Option chain failed")}
+
+            chain_data = d.get("data", {}).get("optionsChain", [])
+
+            # Extract spot — matches N8N TM CE/PE Extractor
+            spot_item = next((x for x in chain_data
+                              if x.get("symbol", "").endswith("INDEX")), None)
+            spot = float(spot_item["ltp"]) if spot_item else 0.0
+            atm  = round(spot / 50) * 50
+
+            # Build strike map — symbols come directly from API
             chain = {}
-            for row in d.get("data", {}).get("optionChain", []):
-                strike   = int(row.get("strikePrice", 0))
+            for row in chain_data:
+                strike   = int(row.get("strike_price", 0))
                 opt_type = row.get("option_type", "")
-                ltp      = float(row.get("ltp", 0))
-                sym      = row.get("symbol", "")
+                if not opt_type or strike == 0:
+                    continue
                 if strike not in chain:
-                    chain[strike] = {"ce_ltp": 0, "pe_ltp": 0,
-                                     "ce_symbol": "", "pe_symbol": ""}
+                    chain[strike] = {"strike": strike, "offset": (strike - atm) // 50,
+                                     "ce_ltp": 0, "pe_ltp": 0,
+                                     "ce_symbol": "", "pe_symbol": "",
+                                     "ce_oi": 0, "pe_oi": 0, "combined": 0}
                 if opt_type == "CE":
-                    chain[strike]["ce_ltp"]    = ltp
-                    chain[strike]["ce_symbol"] = sym
+                    chain[strike]["ce_ltp"]    = float(row.get("ltp", 0))
+                    chain[strike]["ce_symbol"] = row.get("symbol", "")
+                    chain[strike]["ce_oi"]     = int(row.get("oi", 0))
                 elif opt_type == "PE":
-                    chain[strike]["pe_ltp"]    = ltp
-                    chain[strike]["pe_symbol"] = sym
-            return chain
+                    chain[strike]["pe_ltp"]    = float(row.get("ltp", 0))
+                    chain[strike]["pe_symbol"] = row.get("symbol", "")
+                    chain[strike]["pe_oi"]     = int(row.get("oi", 0))
+
+            for s in chain.values():
+                s["combined"] = round(s["ce_ltp"] + s["pe_ltp"], 2)
+
+            return {
+                "ok": True, "spot": spot, "atm": atm,
+                "chain": chain,
+                "refresh_tokens": refresh,  # return new tokens for DB update
+                "time": datetime.now().isoformat(),
+            }
         except Exception as e:
-            log.error(f"[fyers] option_chain error: {e}")
-            return {}
+            log.error(f"[fyers] options-chain-v3 error: {e}")
+            return {"ok": False, "message": str(e)}
+
+    # ── Profile (connection test) ─────────────────────────────
+
+    async def get_profile(self) -> dict:
+        """Test if token is valid — works 24/7."""
+        if not self._access:
+            return {"ok": False, "message": "No access token"}
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{API}/profile", headers=self._auth)
+        d = r.json()
+        if d.get("s") == "ok":
+            return {"ok": True, "data": d.get("data", {})}
+        return {"ok": False, "message": d.get("message", "Token invalid")}
+
+    # ── Historical data (for backtest) ────────────────────────
 
     async def get_historical(self, symbol: str, resolution: str,
                               from_ts: int, to_ts: int) -> list:
-        if not self._access_token:
+        if not self._access:
             return []
         try:
             async with httpx.AsyncClient(timeout=30) as c:
-                r = await c.get("https://api-t1.fyers.in/data/history",
-                    headers=self._auth_header,
+                r = await c.get(f"{DATA}/history",
+                    headers=self._auth,
                     params={"symbol": symbol, "resolution": resolution,
                             "date_format": "1", "range_from": from_ts,
                             "range_to": to_ts, "cont_flag": "1"})
@@ -267,55 +245,40 @@ class FyersConnection:
 
     async def place_order(self, symbol: str, side: str, qty: int,
                            product: str = "INTRADAY") -> dict:
-        # Paper mode — simulate
         if self.mode == "paper":
             import random
             price = 50 + random.random() * 200
             slippage = 2 if side == "BUY" else -2
-            oid = f"PAPER_{datetime.now().strftime('%H%M%S%f')[:14]}"
-            log.info(f"[PAPER] {side} {qty}x {symbol} @ {price+slippage:.1f}")
-            return {"ok": True, "order_id": oid,
+            return {"ok": True,
+                    "order_id": f"PAPER_{datetime.now().strftime('%H%M%S%f')[:14]}",
                     "fill_price": round(price + slippage, 1),
                     "mode": "paper"}
 
-        # Live mode
-        if not self._access_token:
+        if not self._access:
             return {"ok": False, "message": "Not authenticated"}
 
         try:
             async with httpx.AsyncClient(timeout=15) as c:
                 r = await c.post(f"{API}/orders/sync",
-                    headers=self._auth_header,
-                    json={"symbol": symbol, "qty": qty,
-                          "type": 2, "side": 1 if side == "BUY" else -1,
+                    headers=self._auth,
+                    json={"symbol": symbol, "qty": qty, "type": 2,
+                          "side": 1 if side == "BUY" else -1,
                           "productType": product, "limitPrice": 0,
                           "stopPrice": 0, "validity": "DAY",
                           "disclosedQty": 0, "offlineOrder": False})
             d = r.json()
             if d.get("s") == "ok":
-                return {"ok": True, "order_id": d.get("id"),
-                        "mode": "live"}
+                return {"ok": True, "order_id": d.get("id"), "mode": "live"}
             return {"ok": False, "message": d.get("message", "Order failed")}
         except Exception as e:
             return {"ok": False, "message": str(e)}
 
-    async def get_positions(self) -> list:
-        if not self._access_token:
-            return []
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(f"{API}/positions", headers=self._auth_header)
-            d = r.json()
-            return d.get("netPositions", []) if d.get("s") == "ok" else []
-        except Exception:
-            return []
-
     async def get_funds(self) -> dict:
-        if not self._access_token:
+        if not self._access:
             return {}
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(f"{API}/funds", headers=self._auth_header)
+                r = await c.get(f"{API}/funds", headers=self._auth)
             d = r.json()
             if d.get("s") == "ok":
                 return {f["title"]: f.get("equityAmount", 0)

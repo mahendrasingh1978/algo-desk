@@ -92,8 +92,9 @@ class BrokerConnection(Base):
     market          = Column(String(50), default="INDIA")
     mode            = Column(String(20), default="paper")      # paper | live
     encrypted_fields= Column(JSON, default=dict)               # encrypted creds
-    access_token_enc= Column(Text, nullable=True)              # encrypted token
-    token_expires_at= Column(DateTime, nullable=True)
+    access_token_enc  = Column(Text, nullable=True)            # encrypted access token (1 day)
+    refresh_token_enc = Column(Text, nullable=True)            # encrypted refresh token (renews forever)
+    token_expires_at  = Column(DateTime, nullable=True)
     is_connected    = Column(Boolean, default=False)
     last_tested     = Column(DateTime, nullable=True)
     last_token_refresh = Column(DateTime, nullable=True)
@@ -151,3 +152,30 @@ class Trade(Base):
     user           = relationship("User", back_populates="trades")
     automation     = relationship("Automation", back_populates="trades")
     __table_args__ = (Index("idx_trades_user_date", "user_id", "trade_date"),)
+
+
+# ── Auto-migration ────────────────────────────────────────────
+# Adds any missing columns to existing tables on startup.
+# Handles cases where new columns are added to models after
+# the database was first created.
+
+MIGRATIONS = [
+    "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS refresh_token_enc TEXT",
+    "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS access_token_enc TEXT",
+    "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS last_token_refresh TIMESTAMP",
+    "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMP",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_token VARCHAR(255)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat VARCHAR(100)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'Asia/Kolkata'",
+]
+
+def run_migrations(engine):
+    """Run safe migrations — adds missing columns, never drops."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for sql in MIGRATIONS:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists or other non-critical error
