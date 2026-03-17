@@ -138,8 +138,9 @@ input,button,select,textarea{font-family:var(--sans)}
 .dot-gray{background:var(--g300)}
 
 /* ── AUTH ──────────────────────────────────────────────── */
-.auth-screen{display:none;flex-direction:column;min-height:100vh;background:var(--white);padding:0}
+.auth-screen{display:none;flex-direction:column;min-height:100vh;background:var(--g50);padding:0;align-items:center;justify-content:flex-start}
 .auth-screen.on{display:flex}
+.auth-inner{width:100%;max-width:420px;background:var(--white);min-height:100vh;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,0,0,.06)}
 .auth-hero{padding:48px 24px 32px;display:flex;flex-direction:column;align-items:center;text-align:center}
 .auth-logo{font-size:28px;font-weight:700;letter-spacing:-1px;margin-bottom:8px}
 .auth-logo span{color:var(--green)}
@@ -276,6 +277,7 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
 
 <!-- ════ AUTH — LOGIN ════ -->
 <div class="auth-screen on" id="loginScreen">
+  <div class="auth-inner">
   <div class="auth-hero">
     <div class="auth-logo">ALGO<span>DESK</span></div>
     <div class="auth-tagline">Automated options trading for NIFTY</div>
@@ -299,10 +301,12 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
   <div class="auth-footer">
     Don't have an account? <a onclick="showScreen('registerScreen')">Sign up</a>
   </div>
+  </div>
 </div>
 
 <!-- ════ AUTH — REGISTER ════ -->
 <div class="auth-screen" id="registerScreen">
+  <div class="auth-inner">
   <div class="auth-hero">
     <div class="auth-logo">ALGO<span>DESK</span></div>
     <div class="auth-tagline">Create your account</div>
@@ -318,10 +322,12 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
     <button class="btn btn-black btn-full" onclick="doRegister()">Create Account</button>
   </div>
   <div class="auth-footer">Already have an account? <a onclick="showScreen('loginScreen')">Sign in</a></div>
+  </div>
 </div>
 
 <!-- ════ AUTH — FORGOT ════ -->
 <div class="auth-screen" id="forgotScreen">
+  <div class="auth-inner">
   <div class="auth-hero">
     <div class="auth-logo">ALGO<span>DESK</span></div>
     <div class="auth-tagline">Reset your password</div>
@@ -333,6 +339,7 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
     <div class="field"><label>Email</label><input id="forgot-email" type="email" placeholder="you@email.com"></div>
     <button class="btn btn-black btn-full" onclick="doForgot()">Send Reset Link</button>
     <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="showScreen('loginScreen')">← Back</button>
+  </div>
   </div>
 </div>
 
@@ -904,29 +911,47 @@ function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 
 // ── SCREENS ───────────────────────────────────────────
 function showScreen(id) {
-  document.querySelectorAll('.auth-screen').forEach(s => s.classList.remove('on'));
+  document.querySelectorAll('.auth-screen').forEach(s => {
+    s.classList.remove('on');
+    if (s.id === 'mainApp') s.style.display = 'none';
+  });
   var el = document.getElementById(id);
-  if (el) el.classList.add('on');
+  if (el) {
+    if (id === 'mainApp') {
+      el.style.display = 'flex';
+    }
+    el.classList.add('on');
+  }
 }
 
 // ── AUTH ──────────────────────────────────────────────
 async function doLogin() {
   var email = document.getElementById('li-email').value.trim();
   var pass  = document.getElementById('li-pass').value;
-  if (!email||!pass) return;
+  var errEl = document.getElementById('loginErr');
+  var errMsg = document.getElementById('loginErrMsg');
+  errEl.style.display = 'none';
+  if (!email||!pass) {
+    errEl.style.display='flex';
+    errMsg.textContent='Enter your email and password';
+    return;
+  }
   var btn = document.getElementById('loginBtn');
-  btn.innerHTML = '<span class="spin"></span>';
+  btn.innerHTML = '<span class="spin"></span> Signing in...';
   btn.disabled = true;
   try {
     var d = await api('POST','/api/auth/login',{email,password:pass});
+    if (!d.token) throw new Error('No token returned');
     session.token = d.token;
     session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
     localStorage.setItem('algodesk_session', JSON.stringify(session));
+    showScreen('mainApp');
     loadApp();
   } catch(e) {
-    document.getElementById('loginErr').style.display='flex';
-    document.getElementById('loginErrMsg').textContent = e.message;
-    btn.innerHTML = 'Sign In'; btn.disabled = false;
+    errEl.style.display='flex';
+    errMsg.textContent = e.message || 'Login failed. Check your email and password.';
+    btn.innerHTML = 'Sign In';
+    btn.disabled = false;
   }
 }
 
@@ -965,10 +990,11 @@ function showErr(boxId, msgId, msg) {
 function logout() {
   session={token:null,user:null};
   localStorage.removeItem('algodesk_session');
-  if(wsConn) wsConn.close();
+  if(wsConn){wsConn.close();wsConn=null;}
   stopLiveTest();
-  showScreen('loginScreen');
+  document.getElementById('mainApp').style.display='none';
   document.getElementById('mainApp').classList.remove('on');
+  showScreen('loginScreen');
 }
 
 // ── INIT ──────────────────────────────────────────────
@@ -990,13 +1016,15 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       var s = JSON.parse(saved);
       session = s;
-      loadApp();
+      loadApp(); // loadApp handles showing mainApp
     } catch(e) { localStorage.removeItem('algodesk_session'); }
   }
 });
 
 async function loadApp() {
-  showScreen('mainApp');
+  document.querySelectorAll('.auth-screen').forEach(s => s.classList.remove('on'));
+  document.getElementById('mainApp').style.display = 'flex';
+  document.getElementById('mainApp').classList.add('on');
   var u = session.user;
   document.getElementById('topAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   document.getElementById('profAv').textContent = document.getElementById('topAv').textContent;
