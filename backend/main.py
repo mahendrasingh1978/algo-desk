@@ -25,6 +25,12 @@ from models import Base, User, BrokerConnection, BrokerDefinition, Automation, T
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
 
+# Global market data cache - updated every 60s by background service
+market_cache: dict = {
+    "spot": 0.0, "atm": 0, "chain": {}, "updated": None,
+    "status": "waiting", "message": "Starting...",
+}
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("algodesk")
@@ -184,7 +190,149 @@ def _save_tokens(user_id: str, conn: FyersConnection,
 @app.on_event("startup")
 async def startup():
     init_db()
+    asyncio.create_task(_market_data_service())
+    asyncio.create_task(_auto_resume_engines())
     log.info("ALGO-DESK v5 started ✓")
+
+
+async def _market_data_service():
+    import pytz
+    from datetime import time as dtime
+    ist = pytz.timezone("Asia/Kolkata")
+    log.info("Market data service started")
+    await asyncio.sleep(8)
+
+    while True:
+        try:
+            now = datetime.now(ist)
+            t = now.time()
+            is_mkt = dtime(9,15) <= t <= dtime(15,30) and now.weekday() < 5
+
+            if not is_mkt:
+                market_cache["status"] = "closed"
+                market_cache["message"] = "Market closed · Opens 9:15 AM IST Mon-Fri"
+                await asyncio.sleep(60)
+                continue
+
+            db = SessionLocal()
+            conn = None
+            bc_ref = None
+            try:
+                bcs = db.query(BrokerConnection).filter(
+                    BrokerConnection.broker_id == "fyers",
+                    BrokerConnection.is_connected == True
+                ).all()
+                for bc in bcs:
+                    user = db.query(User).filter(
+                        User.id == bc.user_id, User.is_active == True).first()
+                    if not user or not bc.refresh_token_enc:
+                        continue
+                    fields = {k.replace("_enc",""):decrypt(user.id,v)
+                              for k,v in (bc.encrypted_fields or {}).items()}
+                    conn = FyersConnection(
+                        user_id=user.id,
+                        client_id=fields.get("client_id",""),
+                        secret_key=fields.get("secret_key",""),
+                        pin=fields.get("pin",""),
+                        redirect_uri=fields.get("redirect_uri",""),
+                        access_token_enc=bc.access_token_enc,
+                        refresh_token_enc=bc.refresh_token_enc,
+                    )
+                    bc_ref = bc
+                    break
+            except Exception as e:
+                log.error(f"Market svc DB error: {e}")
+
+            if not conn:
+                market_cache["status"] = "waiting"
+                market_cache["message"] = "No broker connected. Go to My Brokers to connect Fyers."
+                db.close()
+                await asyncio.sleep(60)
+                continue
+
+            result = await conn.get_spot_and_chain("NSE:NIFTY50-INDEX", strike_count=7)
+
+            if result.get("ok"):
+                rt = result.get("refresh_tokens", {})
+                if rt.get("ok") and bc_ref:
+                    if rt.get("access_token_enc"):
+                        bc_ref.access_token_enc = rt["access_token_enc"]
+                    if rt.get("refresh_token_enc"):
+                        bc_ref.refresh_token_enc = rt["refresh_token_enc"]
+                    bc_ref.last_token_refresh = datetime.utcnow()
+                    db.commit()
+
+                market_cache.update({
+                    "spot": result["spot"], "atm": result["atm"],
+                    "chain": result["chain"],
+                    "updated": datetime.now(ist).strftime("%H:%M:%S"),
+                    "status": "live",
+                    "message": f"Live · {datetime.now(ist).strftime('%H:%M:%S')} IST",
+                })
+
+                # Feed running engines
+                for uid, eng in active_engines.items():
+                    if not eng.is_running:
+                        continue
+                    eng.spot_history.append(result["spot"])
+                    if eng.strikes:
+                        for sk in eng.strikes:
+                            cd = result["chain"].get(sk.strike)
+                            if cd:
+                                sk.update(cd["combined"])
+                                sk.ce_symbol = cd.get("ce_symbol","")
+                                sk.pe_symbol = cd.get("pe_symbol","")
+                                if dtime(9,15) <= t <= dtime(9,21):
+                                    if sk.orb_high == 0:
+                                        sk.orb_high = sk.orb_low = cd["combined"]
+                                    sk.orb_high = max(sk.orb_high, cd["combined"])
+                                    sk.orb_low  = min(sk.orb_low,  cd["combined"])
+                    if t >= dtime(9,22) and not eng.orb_complete:
+                        eng.orb_complete = True
+                        atm_sk = eng.atm
+                        if atm_sk:
+                            eng.emit(f"ORB complete. ATM {atm_sk.strike}: Low={atm_sk.orb_low:.1f} High={atm_sk.orb_high:.1f}", "OK")
+
+                log.info(f"Market data: NIFTY={result['spot']:.1f} ATM={result['atm']}")
+            else:
+                market_cache["status"] = "error"
+                market_cache["message"] = result.get("message","Fetch failed")
+                log.warning(f"Market data error: {result.get('message')}")
+
+            db.close()
+
+        except Exception as e:
+            log.error(f"Market data service: {e}")
+            market_cache["status"] = "error"
+            market_cache["message"] = f"Error: {e}"
+            try: db.close()
+            except: pass
+
+        await asyncio.sleep(60)
+
+
+async def _auto_resume_engines():
+    await asyncio.sleep(30)
+    db = SessionLocal()
+    try:
+        running = db.query(Automation).filter(Automation.status=="RUNNING").all()
+        for auto in running:
+            user = db.query(User).filter(
+                User.id==auto.user_id, User.is_active==True).first()
+            if not user:
+                continue
+            conn = _get_fyers(user, db)
+            if not conn:
+                auto.status = "IDLE"; db.commit(); continue
+            config = {**auto.config, "strategies":auto.strategies, "mode":auto.mode}
+            state = EngineState(config)
+            active_engines[user.id] = state
+            asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
+            log.info(f"Auto-resumed: {user.email} / {auto.name}")
+    except Exception as e:
+        log.error(f"Auto-resume: {e}")
+    finally:
+        db.close()
 
 # ── Health ────────────────────────────────────────────────────
 
@@ -472,22 +620,28 @@ def delete_broker(broker_id: str, user: User = Depends(get_current_user),
 async def market_live(symbol: str = "NSE:NIFTY50-INDEX",
                       user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
-    """
-    Live spot + option chain. Refreshes token automatically.
-    Used by dashboard, live monitor, broker test panel.
-    """
+    """Returns live data from cache (updated every 60s by background service)."""
+    if market_cache.get("spot") and market_cache.get("status") == "live":
+        return {"ok":True, "spot":market_cache["spot"], "atm":market_cache["atm"],
+                "chain":market_cache["chain"], "updated":market_cache["updated"],
+                "status":"live", "source":"cache"}
+    # Cache empty - try direct fetch
     conn = _get_fyers(user, db)
     if not conn:
-        return {"ok": False, "message": "Connect Fyers broker first",
-                "connected": False}
-
+        return {"ok":False,
+                "message":market_cache.get("message","Connect Fyers broker first"),
+                "status":market_cache.get("status","waiting"), "connected":False}
     result = await conn.get_spot_and_chain(symbol)
-
-    # Save refreshed tokens back to DB
     if result.get("ok") and result.get("refresh_tokens"):
         _save_tokens(user.id, conn, result["refresh_tokens"], db)
-
     return result
+
+
+@app.get("/api/market/status")
+def market_status(user: User = Depends(get_current_user)):
+    return {"spot":market_cache.get("spot",0), "atm":market_cache.get("atm",0),
+            "status":market_cache.get("status","waiting"),
+            "message":market_cache.get("message",""), "updated":market_cache.get("updated")}
 
 @app.get("/api/market/profile")
 async def market_profile(user: User = Depends(get_current_user),
