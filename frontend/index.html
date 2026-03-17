@@ -378,14 +378,20 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Admin
       </div>
+      <div style="flex:1"></div>
+      <div class="sidenav-item" onclick="logout()" style="color:var(--red)">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </div>
     </nav>
 
     <!-- Mobile topbar -->
     <div class="topbar">
       <div class="topbar-logo">ALGO<span>DESK</span></div>
       <div class="topbar-right">
-        <div class="notif" id="topNifty" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--g700);width:auto;padding:0 8px;min-width:32px">—</div>
-        <div class="av" id="topAv" onclick="nav('profile')">?</div>
+        <div id="topNifty" style="font-size:12px;font-weight:600;font-family:var(--mono);color:var(--g700);padding:0 8px;background:var(--g100);border-radius:99px;height:32px;display:flex;align-items:center">—</div>
+        <div class="av" id="topAv" onclick="nav('profile')" title="Profile">?</div>
+        <button onclick="logout()" title="Sign out" style="width:32px;height:32px;border-radius:50%;background:var(--g100);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px" title="Sign out">⏻</button>
       </div>
     </div>
 
@@ -998,27 +1004,48 @@ function logout() {
 }
 
 // ── INIT ──────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  // Always start on login screen
+  showScreen('loginScreen');
+
   // Check URL params
   var params = new URLSearchParams(location.search);
   if (params.get('reset_token')) {
     window._resetToken = params.get('reset_token');
-    // Show reset screen (simplified: use forgot screen)
     showScreen('forgotScreen');
+    return;
   } else if (params.get('invite')) {
     window._inviteToken = params.get('invite');
     showScreen('registerScreen');
+    return;
   }
 
-  // Auto-login
+  // Check saved session — verify token is still valid before auto-login
   var saved = localStorage.getItem('algodesk_session');
   if (saved) {
     try {
       var s = JSON.parse(saved);
-      session = s;
-      loadApp(); // loadApp handles showing mainApp
-    } catch(e) { localStorage.removeItem('algodesk_session'); }
+      if (s && s.token) {
+        // Verify token is still valid by calling /api/me
+        try {
+          var resp = await fetch('/api/me', {
+            headers: {'Authorization': 'Bearer ' + s.token}
+          });
+          if (resp.ok) {
+            var me = await resp.json();
+            session.token = s.token;
+            session.user = {email:me.email, name:me.name, role:me.role, plan:me.plan};
+            loadApp();
+            return;
+          }
+        } catch(e) {}
+      }
+    } catch(e) {}
+    // Token invalid or expired — clear and show login
+    localStorage.removeItem('algodesk_session');
   }
+  // Show login
+  showScreen('loginScreen');
 });
 
 async function loadApp() {
@@ -1054,6 +1081,7 @@ async function loadApp() {
 
   nav('dashboard');
   refreshDashboard();
+  startMarketTicker();
 }
 
 // ── NAV ───────────────────────────────────────────────
@@ -1083,6 +1111,23 @@ async function refreshDashboard() {
   var hour = new Date().getHours();
   var greeting = hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   document.getElementById('dashGreeting').textContent = greeting + ', ' + (session.user?.name?.split(' ')[0]||'');
+  // Show live data status
+  try {
+    var ms = await api('GET','/api/market/status');
+    if (ms.spot > 0) {
+      document.getElementById('dash-spot').textContent = '₹'+Number(ms.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+      document.getElementById('dash-spot-sub').textContent = ms.status==='live'?'Live · '+ms.updated:ms.message||ms.status;
+      document.getElementById('topNifty').textContent = Number(ms.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+      if (ms.chain) {
+        var atm = ms.atm || 0;
+        var combined = ms.chain[atm]?.combined || 0;
+        if (combined > 0) document.getElementById('dash-combined').textContent = combined.toFixed(1);
+        document.getElementById('dash-atm-sub').textContent = 'ATM '+atm;
+      }
+    } else {
+      document.getElementById('dash-spot-sub').textContent = ms.message || 'Connect broker to see live data';
+    }
+  } catch(e) {}
 
   try {
     // Engine status
@@ -1515,6 +1560,21 @@ async function quickStart(autoId) {
 // ═══════════════════════════════════════════════════════
 function refreshLive() {
   if (engineRunning) connectWS();
+  // Always show latest from cache even if engine not running
+  updateLiveFromCache();
+}
+
+async function updateLiveFromCache() {
+  try {
+    var d = await api('GET','/api/market/status');
+    if (d.spot > 0) {
+      document.getElementById('live-spot').textContent = '₹'+Number(d.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+      document.getElementById('live-atm').textContent = d.atm ? d.atm.toLocaleString('en-IN') : '—';
+    }
+    if (d.status === 'closed' || d.status === 'waiting') {
+      document.getElementById('eng-state').textContent = d.status==='closed'?'MARKET CLOSED':'NO BROKER';
+    }
+  } catch(e) {}
 }
 
 function connectWS() {
@@ -1804,6 +1864,40 @@ async function createInvite() {
     el.innerHTML=`<div class="alert alert-success"><span class="alert-icon">✓</span>
       <div>Invite link:<br><code style="font-size:11px;word-break:break-all">${d.invite_url}</code></div></div>`;
   } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Background market ticker — updates every 60s regardless of page ──
+var _tickerInterval = null;
+
+async function startMarketTicker() {
+  if (_tickerInterval) return;
+  await updateMarketTicker();
+  _tickerInterval = setInterval(updateMarketTicker, 60000);
+}
+
+async function updateMarketTicker() {
+  if (!session.token) return;
+  try {
+    var d = await api('GET', '/api/market/status');
+    if (d.spot && d.spot > 0) {
+      var fmt = Number(d.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
+      document.getElementById('topNifty').textContent = fmt;
+      document.getElementById('topNifty').style.color = 'var(--green-dark)';
+      // Update dashboard tiles if visible
+      var spotEl = document.getElementById('dash-spot');
+      if (spotEl) spotEl.textContent = '₹'+fmt;
+      var atmEl = document.getElementById('dash-spot-sub');
+      if (atmEl) atmEl.textContent = d.updated ? 'Updated '+d.updated : 'Live';
+    }
+    if (d.status === 'waiting') {
+      document.getElementById('topNifty').textContent = 'No broker';
+      document.getElementById('topNifty').style.color = 'var(--amber)';
+    } else if (d.status === 'closed') {
+      document.getElementById('topNifty').style.color = 'var(--g400)';
+    } else if (d.status === 'error') {
+      document.getElementById('topNifty').style.color = 'var(--red)';
+    }
+  } catch(e) {}
 }
 
 // Auto-refresh dashboard every 60 seconds
