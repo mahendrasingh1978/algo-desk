@@ -1382,7 +1382,179 @@ async def _close_shadow_trade(trade_id, user_id, reason,
         db.close()
 
 
+@app.get("/api/dashboard/summary")
+async def dashboard_summary(user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Combined KPIs across all user automations for dashboard."""
+    import pytz
+    from datetime import timedelta
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).strftime("%Y-%m-%d")
+    month_ago = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    # All automations
+    autos = db.query(Automation).filter(Automation.user_id == user.id).all()
+
+    # Today's trades (live)
+    today_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date == today
+    ).all()
+
+    # Today's shadow trades
+    today_shadow = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date == today
+    ).all()
+
+    # Month's closed trades
+    month_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date >= month_ago,
+        Trade.is_open == False
+    ).all()
+
+    month_shadow = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= month_ago,
+        ShadowTrade.is_open == False
+    ).all()
+
+    # Per-automation status
+    auto_status = []
+    for a in autos:
+        eng = active_engines.get(user.id + ":" + a.id) or active_engines.get(user.id)
+        a_today = [t for t in today_trades if t.automation_id == a.id]
+        a_shadow = [t for t in today_shadow if t.automation_id == a.id]
+        a_pnl = sum(t.net_pnl or 0 for t in a_today if not t.is_open)
+        a_shadow_pnl = sum(t.net_pnl or 0 for t in a_shadow if not t.is_open)
+        auto_status.append({
+            "id": a.id, "name": a.name,
+            "symbol": a.symbol.split(":")[1] if ":" in a.symbol else a.symbol,
+            "mode": a.mode,
+            "shadow_mode": a.shadow_mode,
+            "status": a.status,
+            "strategies": a.strategies,
+            "today_trades": len(a_today),
+            "today_pnl": round(a_pnl, 0),
+            "today_shadow_trades": len(a_shadow),
+            "today_shadow_pnl": round(a_shadow_pnl, 0),
+            "open_position": any(t.is_open for t in a_today),
+        })
+
+    today_live_pnl = sum(t.net_pnl or 0 for t in today_trades if not t.is_open)
+    today_paper_pnl = sum(t.net_pnl or 0 for t in today_shadow if not t.is_open)
+    month_live_pnl = sum(t.net_pnl or 0 for t in month_trades)
+    month_paper_pnl = sum(t.net_pnl or 0 for t in month_shadow)
+
+    cache = _user_cache(user.id)
+
+    return {
+        "spot":             cache.get("spot", 0),
+        "atm":              cache.get("atm", 0),
+        "market_status":    cache.get("status", "waiting"),
+        "market_updated":   cache.get("updated"),
+        "market_message":   cache.get("message", ""),
+        "today_live_pnl":   round(today_live_pnl, 0),
+        "today_paper_pnl":  round(today_paper_pnl, 0),
+        "today_live_trades": len([t for t in today_trades if not t.is_open]),
+        "today_paper_trades": len([t for t in today_shadow if not t.is_open]),
+        "open_positions":   len([t for t in today_trades if t.is_open]),
+        "month_live_pnl":   round(month_live_pnl, 0),
+        "month_paper_pnl":  round(month_paper_pnl, 0),
+        "automations":      auto_status,
+        "total_automations": len(autos),
+        "running_automations": len([a for a in autos if a.status=="RUNNING"]),
+    }
+
+
 @app.websocket("/ws/{user_id}")
+
+@app.get("/api/dashboard/summary")
+async def dashboard_summary(user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Combined KPIs across all user automations for dashboard."""
+    import pytz
+    from datetime import timedelta
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).strftime("%Y-%m-%d")
+    month_ago = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    # All automations
+    autos = db.query(Automation).filter(Automation.user_id == user.id).all()
+
+    # Today's trades (live)
+    today_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date == today
+    ).all()
+
+    # Today's shadow trades
+    today_shadow = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date == today
+    ).all()
+
+    # Month's closed trades
+    month_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date >= month_ago,
+        Trade.is_open == False
+    ).all()
+
+    month_shadow = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= month_ago,
+        ShadowTrade.is_open == False
+    ).all()
+
+    # Per-automation status
+    auto_status = []
+    for a in autos:
+        eng = active_engines.get(user.id + ":" + a.id) or active_engines.get(user.id)
+        a_today = [t for t in today_trades if t.automation_id == a.id]
+        a_shadow = [t for t in today_shadow if t.automation_id == a.id]
+        a_pnl = sum(t.net_pnl or 0 for t in a_today if not t.is_open)
+        a_shadow_pnl = sum(t.net_pnl or 0 for t in a_shadow if not t.is_open)
+        auto_status.append({
+            "id": a.id, "name": a.name,
+            "symbol": a.symbol.split(":")[1] if ":" in a.symbol else a.symbol,
+            "mode": a.mode,
+            "shadow_mode": a.shadow_mode,
+            "status": a.status,
+            "strategies": a.strategies,
+            "today_trades": len(a_today),
+            "today_pnl": round(a_pnl, 0),
+            "today_shadow_trades": len(a_shadow),
+            "today_shadow_pnl": round(a_shadow_pnl, 0),
+            "open_position": any(t.is_open for t in a_today),
+        })
+
+    today_live_pnl = sum(t.net_pnl or 0 for t in today_trades if not t.is_open)
+    today_paper_pnl = sum(t.net_pnl or 0 for t in today_shadow if not t.is_open)
+    month_live_pnl = sum(t.net_pnl or 0 for t in month_trades)
+    month_paper_pnl = sum(t.net_pnl or 0 for t in month_shadow)
+
+    cache = _user_cache(user.id)
+
+    return {
+        "spot":             cache.get("spot", 0),
+        "atm":              cache.get("atm", 0),
+        "market_status":    cache.get("status", "waiting"),
+        "market_updated":   cache.get("updated"),
+        "market_message":   cache.get("message", ""),
+        "today_live_pnl":   round(today_live_pnl, 0),
+        "today_paper_pnl":  round(today_paper_pnl, 0),
+        "today_live_trades": len([t for t in today_trades if not t.is_open]),
+        "today_paper_trades": len([t for t in today_shadow if not t.is_open]),
+        "open_positions":   len([t for t in today_trades if t.is_open]),
+        "month_live_pnl":   round(month_live_pnl, 0),
+        "month_paper_pnl":  round(month_paper_pnl, 0),
+        "automations":      auto_status,
+        "total_automations": len(autos),
+        "running_automations": len([a for a in autos if a.status=="RUNNING"]),
+    }
+
 
 @app.websocket("/ws/{user_id}")
 async def ws_endpoint(websocket: WebSocket, user_id: str):
@@ -1538,18 +1710,24 @@ async def _run_engine(user_id: str, auto: Automation,
             elif state.orb_complete:
                 signal = check_all_strategies(state, now)
                 if signal:
-                    state.emit(f"SIGNAL [{signal['code']}]: {signal['reason']}", "SIGNAL")
+                    # Auto-set hedge width per strategy if not overridden
+                    auto_hedges = {"S9":1,"S8":3,"S6":4}
+                    hw = auto_hedges.get(signal["code"], state.config.get("hedge_width",2))
+                    signal["hedge_width"] = hw
+                    state.emit(f"SIGNAL [{signal['code']}]: {signal['reason']} | hedge=±{hw}", "SIGNAL")
                     await _open_position(state, conn, signal,
                                           lot_sz, lots, user_id, auto.id)
                     db3 = SessionLocal()
                     try:
                         u = db3.query(User).filter(User.id == user_id).first()
-                        if u and u.telegram_token:
-                            await _send_telegram(u.telegram_token, u.telegram_chat,
-                                f"🟢 {signal['code']}: {signal['name']}\n"
-                                f"Strike: {signal['strike']} | "
-                                f"Combined: {signal['combined']:.1f}\n"
-                                f"Mode: {auto.mode.upper()}")
+                        if u:
+                            mode_tag = "🔴 LIVE" if auto.mode=="live" else "📋 PAPER"
+                            tg_ids = auto.config.get("telegram_accounts", [])
+                            msg = (f"{mode_tag} Signal: {signal['code']} — {signal['name']}\n"
+                                   f"Strike: {signal.get('strike','')} | Combined: ₹{signal.get('combined',0):.1f}\n"
+                                   f"Hedge: ±{signal.get('hedge_width',2)} | Reason: {signal.get('reason','')}\n"
+                                   f"{'⚠️ Simulation only' if auto.mode=='paper' else '✅ Live order placed'}")
+                            await _send_telegram_all(u, msg)
                     finally:
                         db3.close()
             else:
@@ -1573,20 +1751,59 @@ async def _run_engine(user_id: str, auto: Automation,
 async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
     qty = lot_sz * lots
     orders = []
-    for leg, sym_attr in [("sell_ce", "ce_symbol"), ("sell_pe", "pe_symbol")]:
+    is_live = conn.mode != "paper"
+    failed_legs = []
+
+    # Place sell legs first (collect premium)
+    for leg in ["sell_ce", "sell_pe"]:
         sym = signal.get(leg)
-        if sym:
+        if not sym:
+            continue
+        for attempt in range(3):  # retry up to 3 times on live
             r = await conn.place_order(sym, "SELL", qty)
-            orders.append({"leg": leg, "symbol": sym,
-                           "order_id": r.get("order_id"), "ok": r["ok"]})
-            state.emit(f"SELL {qty}x {sym} → {r.get('message','')}", "ORDER")
+            if r.get("ok"):
+                orders.append({"leg":leg,"symbol":sym,
+                               "order_id":r.get("order_id"),"ok":True,"side":"SELL"})
+                state.emit(f"✅ SELL {qty}x {sym} order_id={r.get('order_id','PAPER')}", "ORDER")
+                break
+            else:
+                if attempt < 2:
+                    state.emit(f"⚠️ SELL {sym} attempt {attempt+1} failed: {r.get('message')} — retrying", "WARN")
+                    await asyncio.sleep(2)
+                else:
+                    state.emit(f"❌ SELL {sym} FAILED after 3 attempts: {r.get('message')}", "ERROR")
+                    failed_legs.append(leg)
+
+    # If any sell leg failed on live — abort and don't open position
+    if is_live and failed_legs:
+        state.emit(f"❌ Aborting position — sell legs failed: {failed_legs}", "ERROR")
+        # Try to close any legs that did get placed
+        for o in orders:
+            close_side = "BUY" if o["side"]=="SELL" else "SELL"
+            await conn.place_order(o["symbol"], close_side, qty)
+            state.emit(f"↩ Reversed {o['symbol']} due to abort", "ORDER")
+        return
+
+    # Place hedge buy legs
     for leg in ["buy_ce", "buy_pe"]:
         sym = signal.get(leg)
-        if sym:
+        if not sym:
+            continue
+        for attempt in range(3):
             r = await conn.place_order(sym, "BUY", qty)
-            orders.append({"leg": leg, "symbol": sym,
-                           "order_id": r.get("order_id"), "ok": r["ok"]})
-            state.emit(f"BUY  {qty}x {sym} → {r.get('message','')}", "ORDER")
+            if r.get("ok"):
+                orders.append({"leg":leg,"symbol":sym,
+                               "order_id":r.get("order_id"),"ok":True,"side":"BUY"})
+                state.emit(f"✅ BUY  {qty}x {sym} order_id={r.get('order_id','PAPER')}", "ORDER")
+                break
+            else:
+                if attempt < 2:
+                    state.emit(f"⚠️ BUY {sym} attempt {attempt+1} failed — retrying", "WARN")
+                    await asyncio.sleep(2)
+                else:
+                    state.emit(f"⚠️ BUY hedge {sym} failed — position open but unhedged", "WARN")
+                    # Hedge failure is a warning not abort — sell legs already filled
+                    # But log clearly so user knows
 
     atm = state.atm
     combined = atm.current if atm else signal["combined"]
