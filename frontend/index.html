@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <title>AlgoDesk — NIFTY Options Trading</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
@@ -23,15 +23,15 @@
   --shadow:0 4px 24px rgba(0,0,0,.4);
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;overflow:hidden}
+html,body{height:100%;height:100dvh;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;overflow:hidden}
 
 /* ── Layout ── */
-#app{display:flex;height:100vh;overflow:hidden}
+#app{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:none;flex-direction:column;flex-shrink:0}
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#topbar{height:56px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
-#content{flex:1;overflow-y:auto;padding:16px}
-#bottomnav{height:56px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-around;flex-shrink:0}
+#topbar{height:calc(56px + env(safe-area-inset-top));background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:flex-end;padding:0 16px 12px;gap:12px;flex-shrink:0;padding-left:calc(16px + env(safe-area-inset-left));padding-right:calc(16px + env(safe-area-inset-right))}
+#content{flex:1;overflow-y:auto;padding:16px;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+#bottomnav{height:calc(56px + env(safe-area-inset-bottom));background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-around;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 
 /* ── Sidebar ── */
 .logo{padding:20px 16px 12px;font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:-.5px}
@@ -56,7 +56,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .tb-av{width:32px;height:32px;border-radius:50%;background:var(--green-bg);border:1px solid rgba(0,230,118,.3);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--green);cursor:pointer;flex-shrink:0}
 
 /* ── Bottom nav ── */
-.bn-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 12px;border-radius:var(--radius-sm);cursor:pointer;color:var(--text2);transition:all .15s;min-width:48px}
+.bn-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;border-radius:var(--radius-sm);cursor:pointer;color:var(--text2);transition:all .15s;min-width:48px;min-height:44px;-webkit-tap-highlight-color:transparent}
 .bn-item svg{width:20px;height:20px}
 .bn-item span{font-size:9px;font-weight:500;letter-spacing:.3px;text-transform:uppercase}
 .bn-item.active{color:var(--green)}
@@ -67,7 +67,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .page.active{display:block}
 
 /* ── Auth ── */
-#auth{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+#auth{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;padding:max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom))}
 .auth-box{width:100%;max-width:400px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
 .auth-header{padding:32px 28px 24px;text-align:center;background:linear-gradient(135deg,var(--bg3) 0%,var(--bg2) 100%);border-bottom:1px solid var(--border)}
 .auth-logo{font-family:var(--display);font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:6px}
@@ -234,17 +234,62 @@ details[open] summary{color:var(--text)}
 #toast.success{border-color:rgba(0,230,118,.4);color:var(--green)}
 #toast.error{border-color:rgba(255,82,82,.4);color:var(--red)}
 
-/* ── Desktop ── */
+/* ── Responsive breakpoints ── */
+
+/* Very small phones (SE, older Android) */
+@media(max-width:360px){
+  .kpi-grid{grid-template-columns:1fr 1fr}
+  .bn-item{min-width:36px;padding:6px 4px}
+  .bn-item span{font-size:8px}
+  #content{padding:10px;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+  .page-title{font-size:17px}
+  .kpi-value{font-size:18px}
+  .auth-box{margin:0 4px}
+}
+
+/* Normal phones (375–767px) — bottom nav visible */
+@media(max-width:767px){
+  #sidebar{display:none}
+  #bottomnav{display:flex}
+  /* Cards full width, no horizontal overflow */
+  .card{border-radius:10px}
+  .field-row{grid-template-columns:1fr}
+  .kpi-grid.four{grid-template-columns:1fr 1fr}
+  /* Tables scroll horizontally */
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* Automate form strategy grid 3 col on phone */
+  .strategy-grid{grid-template-columns:repeat(3,1fr)}
+}
+
+/* Tablet portrait (600–767px) — still bottom nav */
+@media(min-width:600px) and (max-width:767px){
+  .kpi-grid{grid-template-columns:repeat(4,1fr)}
+  .strategy-grid{grid-template-columns:repeat(5,1fr)}
+  .field-row{grid-template-columns:1fr 1fr}
+}
+
+/* Tablet landscape + desktop (768px+) — sidebar visible */
 @media(min-width:768px){
   #sidebar{display:flex}
   #bottomnav{display:none}
-  #content{padding:24px}
+  /* Remove mobile bottom padding — no bottom nav */
+  #content{padding:24px;padding-bottom:24px}
   .kpi-grid{grid-template-columns:repeat(4,1fr)}
   .strategy-grid{grid-template-columns:repeat(5,1fr)}
 }
-@media(max-width:360px){
-  .kpi-grid{grid-template-columns:1fr 1fr}
-  .bn-item{min-width:40px;padding:6px 8px}
+
+/* Wide desktop (1200px+) — wider sidebar */
+@media(min-width:1200px){
+  #sidebar{width:240px}
+  #content{padding:28px 32px;padding-bottom:28px}
+}
+
+/* iPhone landscape — shrink top/bottom bars */
+@media(max-height:500px) and (orientation:landscape){
+  #topbar{height:calc(44px + env(safe-area-inset-top));padding-bottom:8px}
+  #bottomnav{height:calc(44px + env(safe-area-inset-bottom))}
+  .bn-item{padding:4px 12px}
+  #content{padding:10px;padding-bottom:calc(50px + env(safe-area-inset-bottom))}
 }
 </style>
 </head>
@@ -639,6 +684,83 @@ function fmtDate(s) {
 // ══════════════════════════════════════════════════════════
 
 // ── DASHBOARD ────────────────────────────────────────────────
+// ── Dashboard symbol watchlist state ────────────────────────
+var _dashSymbol = 'NSE:NIFTY50-INDEX';
+var _dashSymbols = [
+  {value:'NSE:NIFTY50-INDEX',  label:'NIFTY',    short:'NF'},
+  {value:'NSE:NIFTYBANK-INDEX',label:'BANKNIFTY', short:'BNF'},
+  {value:'NSE:FINNIFTY-INDEX', label:'FINNIFTY',  short:'FNF'},
+  {value:'BSE:SENSEX-INDEX',   label:'SENSEX',    short:'SX'},
+];
+
+function setDashSymbol(sym) {
+  _dashSymbol = sym;
+  // Update tab styles
+  _dashSymbols.forEach(function(s) {
+    var btn = document.getElementById('dsym-'+s.short);
+    if (!btn) return;
+    if (s.value === sym) {
+      btn.style.background = 'var(--green-bg)';
+      btn.style.borderColor = 'rgba(0,230,118,.4)';
+      btn.style.color = 'var(--green)';
+    } else {
+      btn.style.background = 'var(--bg3)';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--text2)';
+    }
+  });
+  // Reload funds card for new symbol
+  _loadDashFunds();
+}
+
+async function _loadDashFunds() {
+  var fr = document.getElementById('dash-funds-row');
+  if (!fr) return;
+  try {
+    var d = await api('GET', '/api/capital/check?symbol='+encodeURIComponent(_dashSymbol)+'&lots=1&strategies=S1,S8');
+    if (!d || d.mode === 'paper' || !d.available) {
+      fr.innerHTML = '';
+      return;
+    }
+    var avail = d.available || 0;
+    var m = d.margin || {};
+    var canTrade = d.can_trade;
+    var maxLots = d.buffer_lots || 0;
+    var reg = {
+      'NSE:NIFTY50-INDEX':   {label:'NIFTY 50',    lot:65},
+      'NSE:NIFTYBANK-INDEX': {label:'BANK NIFTY',  lot:30},
+      'NSE:FINNIFTY-INDEX':  {label:'FINNIFTY',    lot:60},
+      'BSE:SENSEX-INDEX':    {label:'SENSEX',      lot:20},
+    };
+    var info = reg[_dashSymbol] || {label:_dashSymbol, lot:'—'};
+
+    fr.innerHTML = '<div class="card" style="margin-bottom:12px">'
+      + '<div class="card-header"><div class="card-title">Account Funds — '+esc(info.label)+'</div>'
+      + '<button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">+ New Automation</button></div>'
+      + '<div class="card-body">'
+      + '<div class="kpi-grid" style="margin-bottom:0">'
+      + '<div class="kpi green"><div class="kpi-label">Available Balance</div>'
+      + '<div class="kpi-value pos" style="font-size:20px">₹'+Number(avail).toLocaleString('en-IN')+'</div>'
+      + '<div class="kpi-sub">Fyers account</div></div>'
+      + '<div class="kpi '+(canTrade?'blue':'red')+'"><div class="kpi-label">1 Lot Margin</div>'
+      + '<div class="kpi-value neutral" style="font-size:20px">₹'+Number(m.net_required||0).toLocaleString('en-IN')+'</div>'
+      + '<div class="kpi-sub">'+esc(info.label)+' Iron Fly ±2</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Lot Size</div>'
+      + '<div class="kpi-value neutral">'+info.lot+'</div>'
+      + '<div class="kpi-sub">units per contract</div></div>'
+      + '<div class="kpi '+(canTrade?'green':'red')+'"><div class="kpi-label">Max Lots Possible</div>'
+      + '<div class="kpi-value '+(canTrade?'pos':'neg')+'">'+(canTrade ? maxLots+1 : 0)+'</div>'
+      + '<div class="kpi-sub">'+(canTrade?'with current balance':'insufficient funds')+'</div></div>'
+      + '</div>'
+      + (m.net_premium ? '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'
+        + '<span>Est. premium collected: <strong style="color:var(--green)">₹'+Number(m.net_premium).toLocaleString('en-IN')+'</strong></span>'
+        + '<span>Max profit (50% target): <strong style="color:var(--green)">₹'+Number(m.profit_at_50pct||0).toLocaleString('en-IN')+'</strong></span>'
+        + '<span>Max loss: <strong style="color:var(--red)">₹'+Number(m.max_loss||0).toLocaleString('en-IN')+'</strong></span>'
+        + '</div>' : '')
+      + '</div></div>';
+  } catch(e) {}
+}
+
 async function renderDashboard() {
   var el = document.getElementById('pg-dashboard');
   el.innerHTML = '<div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
@@ -658,23 +780,32 @@ async function renderDashboard() {
       var modeBadge = a.mode==='live' ? '<span class="badge live">Live</span>' : '<span class="badge paper">Paper</span>';
       var statusDot = a.status==='RUNNING' ? '<div class="dot green pulse"></div>' : '<div class="dot gray"></div>';
       var stratBadges = (a.strategies||[]).slice(0,4).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join(' ');
-      autoCards += '<div class="trade-item">'
+      // P&L colour and paper note
+      var pnlNote = a.mode!=='live' ? '<span style="font-size:9px;color:var(--amber)">(paper)</span>' : '';
+      autoCards += '<div class="trade-item" style="cursor:pointer" onclick="nav(\'live\')">'
         + '<div class="trade-icon" style="background:var(--bg3)">'+statusDot+'</div>'
         + '<div class="trade-info">'
         + '<div class="trade-name">'+esc(a.name)+'</div>'
         + '<div class="trade-meta" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+' '+stratBadges+'</div>'
         + '</div>'
         + '<div class="trade-pnl">'
-        + '<div class="trade-pnl-val '+pnlClass(pnl)+'">'+pnlFmt(pnl)+'</div>'
+        + '<div class="trade-pnl-val '+pnlClass(pnl)+'">'+pnlFmt(pnl)+' '+pnlNote+'</div>'
         + '<div class="trade-pnl-sub">'+trades+' trade'+(trades!==1?'s':'')+'</div>'
         + '</div></div>';
     });
 
-    el.innerHTML = '<div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">'+
-      (s.market_status==='live' ? 'Market open &bull; Updated '+esc(s.market_updated||'') : s.market_message||'Waiting for market')+'</div></div>'+
+    // Symbol tabs
+    var symTabs = _dashSymbols.map(function(sym) {
+      var isActive = sym.value === _dashSymbol;
+      return '<button id="dsym-'+sym.short+'" onclick="setDashSymbol(\''+sym.value+'\')" style="padding:5px 12px;border:1px solid '+(isActive?'rgba(0,230,118,.4)':'var(--border)')+';border-radius:var(--radius-sm);background:'+(isActive?'var(--green-bg)':'var(--bg3)')+';color:'+(isActive?'var(--green)':'var(--text2)')+';font-size:12px;font-weight:600;cursor:pointer;transition:all .15s">'+sym.label+'</button>';
+    }).join('');
+
+    el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><div class="page-title">Dashboard</div><div class="page-sub">'+
+      (s.market_status==='live' ? 'Market open &bull; Updated '+esc(s.market_updated||'') : s.market_message||'Waiting for market')+'</div></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'+symTabs+'</div></div>'+
 
       '<div class="kpi-grid">'
-      + '<div class="kpi green"><div class="kpi-label">NIFTY</div><div class="kpi-value mono '+( spot>0?'neutral':'neutral')+'">'+spotFmt+'</div><div class="kpi-sub">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
+      + '<div class="kpi green"><div class="kpi-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral">'+spotFmt+'</div><div class="kpi-sub">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub">'+(s.running_automations||0)+' running</div></div>'
       + '<div class="kpi '+(lp>=0?'green':'red')+'"><div class="kpi-label">Today Live P&amp;L</div><div class="kpi-value '+pnlClass(lp)+'">'+pnlFmt(lp)+'</div><div class="kpi-sub">'+(s.today_live_trades||0)+' closed</div></div>'
       + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Paper P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+(s.today_paper_trades||0)+' simulated</div></div>'
@@ -687,6 +818,7 @@ async function renderDashboard() {
       + '<div class="kpi"><div class="kpi-label">Total Trades</div><div class="kpi-value neutral">'+((s.today_live_trades||0)+(s.today_paper_trades||0))+'</div><div class="kpi-sub">Today</div></div>'
       + '</div>'
       + '<div id="dash-funds-row"></div>'
+      + '<div id="dash-quick-actions" style="margin-bottom:12px"></div>'
 
       + (s.automations && s.automations.length > 0 ? '<div class="card"><div class="card-header"><div class="card-title">Automations Today</div><button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">Manage</button></div><div class="card-body" style="padding:0 16px">'+ autoCards +'</div></div>' : '<div class="card"><div class="card-body"><div class="empty"><div class="empty-icon">&#9881;</div><div class="empty-title">No automations yet</div><div class="empty-sub">Create an automation to start trading</div><button class="btn btn-primary" style="margin-top:12px" onclick="nav(\'automate\')">Create Automation</button></div></div></div>');
 
@@ -1604,7 +1736,7 @@ function buildHelpPage() {
   + '<tr><td style="color:var(--green)">Iron Fly \u00b12 (default)</td><td>Standard hedge</td><td style="color:var(--green)">~\u20b945-55K</td><td style="color:var(--green)">Defined</td></tr>'
   + '<tr><td style="color:var(--green)">Iron Condor \u00b13</td><td>Wider hedge</td><td style="color:var(--green)">~\u20b935-45K</td><td style="color:var(--green)">Defined</td></tr>'
   + '</tbody></table>'
-  + '<div class="alert alert-warn" style="margin-top:10px">NIFTY lot size is 75 (SEBI mandate Nov 2024). Margins are approximate \u2014 use your broker SPAN calculator before going live.</div>'
+  + '<div class="alert alert-warn" style="margin-top:10px">NIFTY lot size is 65 (effective Jan 2026). Margins are approximate \u2014 use your broker SPAN calculator before going live.</div>'
   + '</div></div>';
 }
 
@@ -1704,6 +1836,15 @@ function showHedge(w) {
     + '</div>';
 }
 
+function renderHelp() {
+  var el = document.getElementById('pg-help');
+  if (!el) return;
+  if (_helpBuilt) return;
+  _helpBuilt = true;
+  el.innerHTML = buildHelpPage();
+  setTimeout(initHelpInteractive, 50);
+}
+
 // Init help with default selections
 function initHelpInteractive() {
   showStrat('S1');
@@ -1714,12 +1855,12 @@ function initHelpInteractive() {
 async function runCapitalCheck() {
   var el = document.getElementById('capital-check-result');
   if (!el) return;
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:8px 0"><div class="spin"></div> Checking funds...</div>';
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:10px 0"><div class="spin"></div> Fetching funds &amp; calculating margins...</div>';
 
-  var sym = document.getElementById('af-sym').value;
-  var lots = document.getElementById('af-lots').value || 1;
-  var lotSize = document.getElementById('af-lotsize').value || 0;
-  var strats = Array.from(selectedStrategies).join(',') || 'S1';
+  var sym     = document.getElementById('af-sym').value;
+  var lots    = parseInt(document.getElementById('af-lots').value) || 1;
+  var lotSize = parseInt(document.getElementById('af-lotsize').value) || 0;
+  var strats  = Array.from(selectedStrategies).join(',') || 'S1';
 
   try {
     var d = await api('GET',
@@ -1728,33 +1869,100 @@ async function runCapitalCheck() {
 
     var canTrade = d.can_trade;
     var m = d.margin || {};
-    var color = canTrade ? 'var(--green)' : 'var(--red)';
-    var icon = canTrade ? '&#9989;' : '&#10060;';
+    var avail = d.available || 0;
+    var isPaper = d.mode === 'paper';
+    var borderColor = canTrade ? 'rgba(0,230,118,.3)' : isPaper ? 'rgba(255,171,64,.3)' : 'rgba(255,82,82,.3)';
+    var headerColor = canTrade ? 'var(--green)' : isPaper ? 'var(--amber)' : 'var(--red)';
 
-    el.innerHTML = '<div style="background:var(--bg3);border:1px solid '+(canTrade?'rgba(0,230,118,.3)':'rgba(255,82,82,.3)')+';border-radius:var(--radius-sm);padding:12px">'
-      + '<div style="font-size:13px;font-weight:600;color:'+color+';margin-bottom:8px">'+icon+' '+esc(d.recommendation||'')+'</div>'
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;margin-bottom:8px">'
-      + '<div><div style="color:var(--text2)">Available funds</div><div style="font-weight:600;color:var(--green)">&#8377;'+Number(d.available||0).toLocaleString('en-IN')+'</div></div>'
-      + '<div><div style="color:var(--text2)">Margin required</div><div style="font-weight:600">&#8377;'+Number(m.net_required||0).toLocaleString('en-IN')+'</div></div>'
-      + '<div><div style="color:var(--text2)">Lot size ('+esc(d.label||'')+')</div><div style="font-weight:600">'+esc(String(d.lot_size||''))+'</div></div>'
-      + '<div><div style="color:var(--text2)">Per lot margin</div><div style="font-weight:600">&#8377;'+Number(m.per_lot||0).toLocaleString('en-IN')+'</div></div>'
-      + '</div>'
-      + (d.mode==='paper'?'<div style="font-size:10px;color:var(--text2)">Paper mode — no real funds needed</div>'
-        :'<div style="font-size:10px;color:var(--text2)">'+esc(m.note||'')+'</div>')
+    var html = '<div style="border:1px solid '+borderColor+';border-radius:var(--radius-sm);overflow:hidden">';
+
+    // Header bar
+    html += '<div style="background:'+(canTrade?'var(--green-bg)':isPaper?'var(--amber-bg)':'var(--red-bg)')+';padding:10px 14px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div style="font-size:13px;font-weight:600;color:'+headerColor+'">'+(canTrade?'&#9989;':isPaper?'&#128203;':'&#10060;')+' '+esc(d.recommendation||'')+'</div>'
+      + (isPaper ? '<span class="badge paper">Paper Mode</span>' : '')
       + '</div>';
 
-    // Per-strategy breakdown if multiple
-    if (d.strat_breakdown && d.strat_breakdown.length > 1) {
-      el.innerHTML += '<div style="margin-top:8px;font-size:11px">'
-        + '<div style="color:var(--text2);margin-bottom:4px;font-weight:600">Per strategy estimate:</div>'
-        + d.strat_breakdown.map(function(sb){
-            return '<div style="display:flex;justify-content:space-between;padding:3px 0">'
-              +'<span>'+sb.strategy+' (hedge ±'+sb.hedge_width+')</span>'
-              +'<span style="color:'+(sb.can_trade?'var(--green)':'var(--red)')+'">&#8377;'+Number(sb.net_required).toLocaleString('en-IN')+'</span>'
-              +'</div>';
-          }).join('')
-        + '</div>';
+    // Funds summary
+    html += '<div style="padding:12px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px;border-bottom:1px solid var(--border)">';
+    html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Available Balance</div>'
+      + '<div style="font-size:16px;font-weight:700;color:var(--green)">₹'+Number(avail).toLocaleString('en-IN')+'</div></div>';
+    html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Margin Required (1 lot)</div>'
+      + '<div style="font-size:16px;font-weight:700">₹'+Number(m.per_lot||0).toLocaleString('en-IN')+'</div></div>';
+    html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Qty ('+lots+' lot'+(lots>1?'s':'')+')</div>'
+      + '<div style="font-size:13px;font-weight:600">'+(d.qty||0)+' units</div></div>';
+    html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Max Lots Possible</div>'
+      + '<div style="font-size:13px;font-weight:600;color:'+(canTrade?'var(--green)':'var(--red))+'">'+(d.buffer_lots!=null?(d.buffer_lots+1):0)+'</div></div>';
+    html += '</div>';
+
+    // Per-strategy table
+    if (d.strat_breakdown && d.strat_breakdown.length > 0) {
+      html += '<div style="padding:12px;border-bottom:1px solid var(--border)">';
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Strategy Comparison</div>';
+      html += '<div style="overflow-x:auto"><table class="tbl"><thead><tr>'
+        + '<th>Strategy</th><th>Structure</th><th>Hedge</th>'
+        + '<th>Margin/lot</th><th>Net Premium</th>'
+        + '<th>Max Profit</th><th>Max Loss</th>'
+        + '<th>Status</th>'
+        + '</tr></thead><tbody>';
+      d.strat_breakdown.forEach(function(sb) {
+        var ok = sb.can_trade;
+        html += '<tr>'
+          + '<td><span class="badge strategy">'+sb.strategy+'</span> <span style="font-size:11px">'+esc(sb.label||'')+'</span></td>'
+          + '<td style="font-size:11px">'+esc(sb.structure||'')+'</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">±'+sb.hedge_width+'</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">₹'+Number(sb.per_lot||0).toLocaleString('en-IN')+'</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--green)">₹'+Number(sb.net_premium||0).toLocaleString('en-IN')+'</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--green)">₹'+Number(sb.max_profit||0).toLocaleString('en-IN')+'</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--red)">₹'+Number(sb.max_loss||0).toLocaleString('en-IN')+'</td>'
+          + '<td><span class="badge '+(ok?'running':'idle')+'">'+(ok?'&#9989; OK':'&#10060; Low funds')+'</span></td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+
+      // Break-even for first strategy
+      var first = d.strat_breakdown[0];
+      if (first && first.be_upper) {
+        html += '<div style="margin-top:8px;font-size:11px;color:var(--text2)">'
+          + 'Break-even range: '
+          + '<strong style="color:var(--text)">₹'+Number(first.be_lower).toLocaleString('en-IN')+'</strong>'
+          + ' — '
+          + '<strong style="color:var(--text)">₹'+Number(first.be_upper).toLocaleString('en-IN')+'</strong>'
+          + ' &nbsp;·&nbsp; 50% profit target: '
+          + '<strong style="color:var(--green)">₹'+Number(first.profit_at_50||0).toLocaleString('en-IN')+'</strong>'
+          + '</div>';
+      }
+      html += '</div>';
+
+      // Leg-by-leg breakdown for first strategy
+      var firstLegs = first && first.legs;
+      if (firstLegs && firstLegs.length) {
+        html += '<div style="padding:12px">';
+        html += '<div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Order Legs — '+esc(first.strategy||'')+'</div>';
+        firstLegs.forEach(function(leg) {
+          var isCredit = leg.type === 'credit';
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;align-items:center;gap:8px">'
+            + '<span style="width:40px;font-size:10px;font-weight:700;text-align:center;padding:2px 4px;border-radius:4px;background:'+(isCredit?'var(--green-bg)':'var(--red-bg)')+';color:'+(isCredit?'var(--green)':'var(--red)')+'">'+esc(leg.action)+'</span>'
+            + '<div><div style="font-size:12px;font-weight:500">'+esc(leg.leg)+'</div>'
+            + '<div style="font-size:10px;color:var(--text2)">'+esc(leg.note||'')+'</div></div>'
+            + '</div>'
+            + '<div style="text-align:right">'
+            + '<div style="font-size:12px;font-weight:600;font-family:var(--mono);color:'+(isCredit?'var(--green)':'var(--red)')+'">'+( isCredit?'+':'-')+'₹'+Number(leg.value||0).toLocaleString('en-IN')+'</div>'
+            + '<div style="font-size:10px;color:var(--text2)">₹'+leg.est_premium+' × '+leg.qty+' units</div>'
+            + '</div></div>';
+        });
+        // Net premium row
+        html += '<div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:600">'
+          + '<span style="font-size:12px">Net Premium Collected</span>'
+          + '<span style="font-size:13px;color:var(--green);font-family:var(--mono)">₹'+Number(m.net_premium||0).toLocaleString('en-IN')+'</span>'
+          + '</div>';
+        html += '<div style="font-size:10px;color:var(--text2);margin-top:4px">'+esc(m.note||'')+'</div>';
+        html += '</div>';
+      }
     }
+
+    html += '</div>';
+    el.innerHTML = html;
   } catch(e) {
     el.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
@@ -1804,7 +2012,7 @@ async function runReconcile() {
     // Positions table
     if (d.positions && d.positions.length > 0) {
       html += '<div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Open Positions in Fyers</div>'
-        + '<div style="overflow-x:auto"><table class="tbl">'
+        + '<div class="tbl-wrap"><table class="tbl">'
         + '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&L</th></tr></thead><tbody>'
         + d.positions.map(function(p){
             return '<tr>'
@@ -1825,7 +2033,7 @@ async function runReconcile() {
     var recentOrders = (d.orders||[]).slice(0,8);
     if (recentOrders.length > 0) {
       html += '<div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px">Recent Orders</div>'
-        + '<div style="overflow-x:auto"><table class="tbl">'
+        + '<div class="tbl-wrap"><table class="tbl">'
         + '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Fill Price</th></tr></thead><tbody>'
         + recentOrders.map(function(o){
             var statusColor = o.status_code===2?'var(--green)':o.status_code===5?'var(--red)':o.status_code===6?'var(--amber)':'var(--text2)';
