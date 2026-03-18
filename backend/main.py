@@ -209,7 +209,7 @@ def make_token(email, role):
         SECRET, algorithm=ALGO)
 
 def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer),
-                     db: Session = Depends(get_db)) -> User:
+                     db: Session = Depends(get_db)):
     if not creds:
         raise HTTPException(401, "Not authenticated")
     try:
@@ -222,7 +222,7 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer),
         raise HTTPException(401, "User not found or suspended")
     return user
 
-def require_admin(user: User = Depends(get_current_user)) -> User:
+def require_admin(user: User = Depends(get_current_user)):
     if user.role not in ("SUPER_ADMIN", "ADMIN"):
         raise HTTPException(403, "Admin access required")
     return user
@@ -532,12 +532,17 @@ def reset_password(req: ResetPwReq, db: Session = Depends(get_db)):
     return {"ok": True, "message": "Password updated"}
 
 class ChangePwReq(BaseModel):
-    current_password: str; new_password: str
+    current_password: str = None
+    old_password: str = None
+    new_password: str
 
 @app.post("/api/auth/change-password")
 def change_password(req: ChangePwReq, user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
-    if not bcrypt.checkpw(req.current_password.encode(), user.password_hash.encode()):
+    old_pw = req.current_password or req.old_password or ""
+    if not old_pw:
+        raise HTTPException(400, "Current password required")
+    if not bcrypt.checkpw(old_pw.encode(), user.password_hash.encode()):
         raise HTTPException(400, "Current password incorrect")
     if len(req.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
@@ -667,7 +672,8 @@ def fyers_login_url(user: User = Depends(get_current_user),
             "https://trade.fyers.in/api-login/redirect-uri/index.html"))
     if not conn.client_id:
         raise HTTPException(400, "Client ID not saved")
-    return {"ok": True, "login_url": conn.login_url()}
+    url_str = conn.login_url()
+    return {"ok": True, "url": url_str, "login_url": url_str}
 
 class FyersConnectReq(BaseModel):
     auth_code: str
@@ -854,19 +860,29 @@ def list_automations(user: User = Depends(get_current_user),
         {"id": a.id, "name": a.name, "symbol": a.symbol,
          "broker_id": a.broker_id, "strategies": a.strategies,
          "mode": a.mode, "status": a.status, "config": a.config,
+         "shadow_mode": a.shadow_mode,
+         "telegram_alerts": a.telegram_alerts,
          "is_running": a.id in active_engines}
         for a in autos]}
 
 class SaveAutoReq(BaseModel):
-    name: str; symbol: str; broker_id: str
-    strategies: list; mode: str = "paper"; config: dict = {}
+    name: str
+    symbol: str
+    broker_id: str
+    strategies: list = []
+    mode: str = "paper"
+    shadow_mode: bool = True
+    telegram_alerts: bool = True
+    config: dict = {}
 
 @app.post("/api/automations")
 def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
     a = Automation(user_id=user.id, name=req.name, symbol=req.symbol,
                    broker_id=req.broker_id, strategies=req.strategies,
-                   mode=req.mode, config=req.config, status="IDLE")
+                   mode=req.mode, shadow_mode=req.shadow_mode,
+                   telegram_alerts=req.telegram_alerts,
+                   config=req.config, status="IDLE")
     db.add(a); db.commit(); db.refresh(a)
     return {"ok": True, "automation": {"id": a.id, "name": a.name}}
 
@@ -1131,7 +1147,7 @@ def add_telegram_account(req: TelegramAccountReq,
                          user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     accounts = list(user.telegram_accounts or [])
-    accounts.append({"id": _uuid()[:8], "name": req.name,
+    accounts.append({"id": str(__import__("uuid").uuid4())[:8], "name": req.name,
                      "token": req.token, "chat": req.chat,
                      "active": req.active})
     user.telegram_accounts = accounts
@@ -1757,6 +1773,34 @@ async def reconcile_positions(
 
 
 @app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket, user_id: str):
+    """WebSocket endpoint — sends engine status updates every 5 seconds."""
+    from fastapi import WebSocket
+    await websocket.accept()
+    try:
+        while True:
+            state = active_engines.get(user_id)
+            if state:
+                atm = state.atm
+                data = {
+                    "running":     state.is_running,
+                    "mode":        "IN_TRADE" if state.position else "MONITORING",
+                    "engine_mode": state.config.get("mode","paper"),
+                    "spot":        state.spot_history[-1] if state.spot_history else 0,
+                    "atm":         state.atm_strike,
+                    "combined":    round(atm.current, 2) if atm else 0,
+                    "vwap":        round(atm.vwap_val, 2) if atm else 0,
+                    "position":    state.position,
+                    "day_pnl":     round(state.day_pnl, 2),
+                    "log":         state.log[-5:],
+                }
+            else:
+                data = {"running": False, "mode": "IDLE"}
+            await websocket.send_json(data)
+            await asyncio.sleep(5)
+    except Exception:
+        pass
+
 
 # ── Engine loop ───────────────────────────────────────────────
 
