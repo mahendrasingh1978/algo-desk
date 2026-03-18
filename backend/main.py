@@ -64,42 +64,150 @@ HEDGE_MARGIN_PCT = {
     0: 0.06,   # default / no hedge specified
 }
 
+# Strategy-specific margin config
+# Each strategy has: hedge_width, structure, typical_iv_pct, premium_pct_of_spot
+STRATEGY_MARGIN_CONFIG = {
+    "S1": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.014, "label": "ORB Breakdown"},
+    "S7": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.014, "label": "All-Strike Fly"},
+    "S8": {"hedge": 3, "structure": "Iron Condor",     "premium_pct": 0.010, "label": "Gap Fade"},
+    "S2": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.013, "label": "VWAP Squeeze"},
+    "S3": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.012, "label": "Breakout Rev."},
+    "S4": {"hedge": 3, "structure": "Iron Condor",     "premium_pct": 0.009, "label": "Iron Condor"},
+    "S6": {"hedge": 4, "structure": "Wide Condor",     "premium_pct": 0.011, "label": "Theta Strangle"},
+    "S9": {"hedge": 1, "structure": "Tight Iron Fly",  "premium_pct": 0.008, "label": "Expiry Crush"},
+    "S5": {"hedge": 3, "structure": "Ratio Spread",    "premium_pct": 0.018, "label": "Ratio Spread"},
+}
+
 def estimate_margin(symbol: str, lots: int, lot_size: int,
-                    hedge_width: int, spot_price: float) -> dict:
+                    hedge_width: int, spot_price: float,
+                    strategy_code: str = None) -> dict:
     """
-    Estimate margin required for an Iron Fly/Condor position.
-    Formula: spot × lot_size × lots × margin_pct × 4 legs
-    4 legs because sell legs use margin, buy legs reduce it.
-    Returns margin in rupees with breakdown.
+    Estimate SPAN margin and per-leg P&L for an Iron Fly/Condor.
+
+    Per-leg breakdown:
+    - Sell CE (ATM): collects premium, uses margin
+    - Sell PE (ATM): collects premium, uses margin
+    - Buy CE hedge:  pays premium, provides margin relief + defines max loss
+    - Buy PE hedge:  pays premium, provides margin relief + defines max loss
+
+    SPAN margin logic:
+    - Sell legs drive margin requirement
+    - Buy legs give ~60% margin relief each
+    - Net margin ≈ spot × lot × 5% × 2 sell legs × hedge_relief_factor
     """
     reg = SYMBOL_REGISTRY.get(symbol, {})
-    actual_lot = lot_size or reg.get("lot_size", 75)
-    margin_pct = HEDGE_MARGIN_PCT.get(hedge_width, 0.05)
+    actual_lot  = lot_size or reg.get("lot_size", 65)
+    gap         = reg.get("strike_gap", 50)
+    margin_pct  = HEDGE_MARGIN_PCT.get(hedge_width, 0.05)
 
-    # Sell legs drive margin (buy legs provide relief)
-    # For Iron Fly: 2 sell legs at ATM
-    # SPAN gives credit for hedge but not full offset
-    sell_notional  = spot_price * actual_lot * lots
-    # SPAN margin for 2 sell legs, with hedge benefit
-    required = sell_notional * margin_pct * 2  # 2 sell legs
+    # Use strategy config if provided
+    if strategy_code and strategy_code in STRATEGY_MARGIN_CONFIG:
+        sc = STRATEGY_MARGIN_CONFIG[strategy_code]
+        hedge_width  = sc["hedge"]
+        margin_pct   = HEDGE_MARGIN_PCT.get(hedge_width, 0.05)
+        premium_pct  = sc["premium_pct"]
+        structure    = sc["structure"]
+    else:
+        premium_pct  = 0.007 * 2   # ~0.7% per ATM leg × 2 legs
+        structure    = {1:"Iron Fly",2:"Iron Fly",3:"Iron Condor",4:"Wide Condor"}.get(hedge_width,"Iron Fly")
 
-    # Add premium component (collected upfront, reduces net outflow)
-    # Typical ATM premium ≈ 0.5-1% of spot
-    est_premium = spot_price * 0.007 * actual_lot * lots  # ~0.7% per leg × 2
-    net_outflow = max(required - est_premium, required * 0.6)
+    qty = actual_lot * lots
+
+    # ── Per-leg estimates ──────────────────────────────────────
+    # ATM premium (sell legs): typically 0.6-0.9% of spot per leg
+    atm_premium_per_leg  = spot_price * (premium_pct / 2)
+    # OTM hedge premium: typically 20-35% of ATM premium per leg
+    hedge_pct = 0.28 if hedge_width <= 2 else 0.22 if hedge_width == 3 else 0.18
+    hedge_premium_per_leg = atm_premium_per_leg * hedge_pct
+
+    # Total premium collected (net)
+    premium_collected = (atm_premium_per_leg * 2 - hedge_premium_per_leg * 2) * qty
+    # Gross premium (sell legs only)
+    gross_premium = atm_premium_per_leg * 2 * qty
+    # Hedge cost
+    hedge_cost = hedge_premium_per_leg * 2 * qty
+
+    # ── SPAN margin ────────────────────────────────────────────
+    # Sell CE margin
+    sell_ce_margin = spot_price * actual_lot * lots * margin_pct
+    # Sell PE margin (same structure)
+    sell_pe_margin = spot_price * actual_lot * lots * margin_pct
+    # Hedge relief: each buy leg reduces margin by ~60% of its notional
+    hedge_relief = hedge_premium_per_leg * qty * 0.6 * 2
+    gross_margin = sell_ce_margin + sell_pe_margin
+    net_margin   = max(gross_margin - hedge_relief, gross_margin * 0.55)
+
+    # ── Max loss / max profit ─────────────────────────────────
+    # Max profit = net premium collected (if both legs expire worthless)
+    max_profit = premium_collected
+    # Max loss = (hedge_width × gap × qty) − premium_collected
+    # e.g. ±2 on NIFTY = 100pt risk × 65 qty × lots − premium
+    max_loss = (hedge_width * gap * qty) - premium_collected
+
+    # ── Break-even points ─────────────────────────────────────
+    net_premium_per_unit = premium_collected / qty if qty else 0
+    be_upper = spot_price + net_premium_per_unit
+    be_lower = spot_price - net_premium_per_unit
+
+    # ── Profit target (50% decay default) ────────────────────
+    profit_at_50pct = premium_collected * 0.50
+
+    legs = [
+        {"leg": "Sell CE (ATM)",
+         "action": "SELL", "type": "credit",
+         "est_premium": round(atm_premium_per_leg, 1),
+         "qty": qty,
+         "value": round(atm_premium_per_leg * qty, 0),
+         "note": f"ATM call — collect ₹{atm_premium_per_leg:.0f}/unit"},
+        {"leg": "Sell PE (ATM)",
+         "action": "SELL", "type": "credit",
+         "est_premium": round(atm_premium_per_leg, 1),
+         "qty": qty,
+         "value": round(atm_premium_per_leg * qty, 0),
+         "note": f"ATM put — collect ₹{atm_premium_per_leg:.0f}/unit"},
+        {"leg": f"Buy CE (+{hedge_width} strike)",
+         "action": "BUY", "type": "debit",
+         "est_premium": round(hedge_premium_per_leg, 1),
+         "qty": qty,
+         "value": round(hedge_premium_per_leg * qty, 0),
+         "note": f"OTM call hedge — pay ₹{hedge_premium_per_leg:.0f}/unit"},
+        {"leg": f"Buy PE (-{hedge_width} strike)",
+         "action": "BUY", "type": "debit",
+         "est_premium": round(hedge_premium_per_leg, 1),
+         "qty": qty,
+         "value": round(hedge_premium_per_leg * qty, 0),
+         "note": f"OTM put hedge — pay ₹{hedge_premium_per_leg:.0f}/unit"},
+    ]
 
     return {
-        "symbol":        symbol,
-        "label":         reg.get("label", symbol),
-        "spot":          spot_price,
-        "lot_size":      actual_lot,
-        "lots":          lots,
-        "hedge_width":   hedge_width,
-        "gross_margin":  round(required, 0),
-        "est_premium":   round(est_premium, 0),
-        "net_required":  round(net_outflow, 0),
-        "per_lot":       round(net_outflow / lots if lots else 0, 0),
-        "note":          "Estimated SPAN margin. Use broker calculator for exact figure."
+        "symbol":           symbol,
+        "label":            reg.get("label", symbol),
+        "structure":        structure,
+        "spot":             round(spot_price, 1),
+        "lot_size":         actual_lot,
+        "lots":             lots,
+        "qty":              qty,
+        "hedge_width":      hedge_width,
+        "strike_gap":       gap,
+        # Margin
+        "gross_margin":     round(gross_margin, 0),
+        "hedge_relief":     round(hedge_relief, 0),
+        "net_required":     round(net_margin, 0),
+        "per_lot":          round(net_margin / lots if lots else 0, 0),
+        # Premium
+        "gross_premium":    round(gross_premium, 0),
+        "hedge_cost":       round(hedge_cost, 0),
+        "net_premium":      round(premium_collected, 0),
+        "net_per_unit":     round(net_premium_per_unit, 1),
+        # P&L
+        "max_profit":       round(max_profit, 0),
+        "max_loss":         round(max_loss, 0),
+        "profit_at_50pct":  round(profit_at_50pct, 0),
+        "be_upper":         round(be_upper, 0),
+        "be_lower":         round(be_lower, 0),
+        # Legs
+        "legs":             legs,
+        "note": "Estimated using typical ATM IV. Use Fyers SPAN calculator for exact margin.",
     }
 
 # Per-user market data cache
@@ -1620,17 +1728,32 @@ async def capital_check(
     shortfall = max(0, margin["net_required"] - available)
     buffer = available - margin["net_required"]
 
-    # Per-strategy breakdown
+    # Per-strategy full breakdown
     strat_breakdown = []
     for s in strategy_list:
-        hw = auto_hedges.get(s, hedge_width)
-        sm = estimate_margin(symbol, lots, actual_lot_size, hw, spot)
+        sc   = STRATEGY_MARGIN_CONFIG.get(s, {})
+        hw   = sc.get("hedge", hedge_width)
+        sm   = estimate_margin(symbol, lots, actual_lot_size, hw, spot, s)
         strat_breakdown.append({
-            "strategy":     s,
-            "hedge_width":  hw,
-            "net_required": sm["net_required"],
-            "can_trade":    available >= sm["net_required"],
+            "strategy":      s,
+            "label":         sc.get("label", s),
+            "structure":     sm["structure"],
+            "hedge_width":   hw,
+            "net_required":  sm["net_required"],
+            "per_lot":       sm["per_lot"],
+            "net_premium":   sm["net_premium"],
+            "max_profit":    sm["max_profit"],
+            "max_loss":      sm["max_loss"],
+            "profit_at_50":  sm["profit_at_50pct"],
+            "be_upper":      sm["be_upper"],
+            "be_lower":      sm["be_lower"],
+            "can_trade":     available >= sm["net_required"],
+            "legs":          sm["legs"],
         })
+
+    # Most capital-efficient strategy (lowest margin, still can trade)
+    tradeable = [s for s in strat_breakdown if s["can_trade"]]
+    best_fit   = min(tradeable, key=lambda s: s["net_required"]) if tradeable else None
 
     return {
         "ok":            True,
@@ -1639,16 +1762,19 @@ async def capital_check(
         "spot":          round(spot, 1),
         "lot_size":      actual_lot_size,
         "lots":          lots,
+        "qty":           actual_lot_size * lots,
         "strategies":    strategy_list,
         "margin":        margin,
         "available":     round(available, 0),
         "can_trade":     can_trade,
         "shortfall":     round(shortfall, 0),
         "buffer":        round(buffer, 0),
+        "buffer_lots":   int(buffer / margin["per_lot"]) if margin.get("per_lot") and margin["per_lot"] > 0 else 0,
         "funds":         funds,
         "funds_error":   funds_error,
         "mode":          conn.mode if conn else "no_broker",
         "strat_breakdown": strat_breakdown,
+        "best_fit":      best_fit,
         "recommendation": (
             "✅ Sufficient funds — can proceed"
             if can_trade else
