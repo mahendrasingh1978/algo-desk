@@ -283,8 +283,8 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
     <div class="auth-tagline">Automated options trading for NIFTY</div>
   </div>
   <div class="auth-body">
-    <div id="loginErr" class="alert alert-error" style="display:none">
-      <span class="alert-icon">✕</span><span id="loginErrMsg"></span>
+    <div id="loginErr" style="display:none;background:#fee2e2;border:2px solid #ef4444;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:13px;color:#991b1b;font-weight:500">
+      <span id="loginErrMsg">Login failed</span>
     </div>
     <div class="field"><label>Email</label>
       <input id="li-email" type="email" placeholder="you@email.com" autocomplete="email"
@@ -344,7 +344,7 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
 </div>
 
 <!-- ════ MAIN APP ════ -->
-<div id="mainApp" style="display:none" class="auth-screen">
+<div id="mainApp" style="display:none">
   <div id="app">
 
     <!-- Side nav (desktop) -->
@@ -977,10 +977,21 @@ async function api(method, path, body) {
   var opts = {method, headers:{'Content-Type':'application/json'}};
   if (session.token) opts.headers['Authorization'] = 'Bearer ' + session.token;
   if (body) opts.body = JSON.stringify(body);
-  var r = await fetch(API + path, opts);
-  var d = await r.json();
-  if (!r.ok) throw new Error(d.detail || d.message || 'Request failed');
-  return d;
+  try {
+    var r = await fetch(API + path, opts);
+    var d = await r.json();
+    if (!r.ok) {
+      var msg = d.detail || d.message || 'Request failed';
+      if (Array.isArray(msg)) msg = msg.map(e=>e.msg||e).join(', ');
+      throw new Error(msg);
+    }
+    return d;
+  } catch(e) {
+    if (e.name === 'TypeError' && e.message.includes('fetch')) {
+      throw new Error('Cannot connect to server. Check your network.');
+    }
+    throw e;
+  }
 }
 
 function toast(msg, type='') {
@@ -994,17 +1005,12 @@ function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 
 // ── SCREENS ───────────────────────────────────────────
 function showScreen(id) {
-  document.querySelectorAll('.auth-screen').forEach(s => {
-    s.classList.remove('on');
-    if (s.id === 'mainApp') s.style.display = 'none';
+  ['loginScreen','registerScreen','forgotScreen'].forEach(sid => {
+    var el = document.getElementById(sid);
+    if (el) { el.classList.remove('on'); el.style.display = 'none'; }
   });
   var el = document.getElementById(id);
-  if (el) {
-    if (id === 'mainApp') {
-      el.style.display = 'flex';
-    }
-    el.classList.add('on');
-  }
+  if (el) { el.style.display = 'flex'; el.classList.add('on'); }
 }
 
 // ── AUTH ──────────────────────────────────────────────
@@ -1013,25 +1019,25 @@ async function doLogin() {
   var pass  = document.getElementById('li-pass').value;
   var errEl = document.getElementById('loginErr');
   var errMsg = document.getElementById('loginErrMsg');
-  errEl.style.display = 'none';
-  if (!email||!pass) {
-    errEl.style.display='flex';
-    errMsg.textContent='Enter your email and password';
+  if (errEl) errEl.style.display = 'none';
+  if (!email || !pass) {
+    if (errEl && errMsg) { errEl.style.display='flex'; errMsg.textContent='Enter your email and password'; }
     return;
   }
   var btn = document.getElementById('loginBtn');
   btn.innerHTML = '<span class="spin"></span> Signing in...';
   btn.disabled = true;
   try {
-    var d = await api('POST','/api/auth/login',{email,password:pass});
+    var d = await api('POST', '/api/auth/login', {email: email, password: pass});
     if (!d.token) throw new Error('No token returned');
     session.token = d.token;
-    session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
+    session.user  = {email: d.email, name: d.name, role: d.role, plan: d.plan};
     localStorage.setItem('algodesk_session', JSON.stringify(session));
     await loadApp();
   } catch(e) {
-    errEl.style.display='flex';
-    errMsg.textContent = e.message || 'Login failed. Check your email and password.';
+    var msg = e.message || 'Login failed';
+    if (errEl && errMsg) { errEl.style.display='flex'; errMsg.textContent = msg; }
+    else alert('Login error: ' + msg);
     btn.innerHTML = 'Sign In';
     btn.disabled = false;
   }
@@ -1075,7 +1081,6 @@ function logout() {
   if(wsConn){wsConn.close();wsConn=null;}
   stopLiveTest();
   document.getElementById('mainApp').style.display='none';
-  document.getElementById('mainApp').classList.remove('on');
   showScreen('loginScreen');
 }
 
@@ -1125,21 +1130,27 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadApp() {
-  // Hide all auth screens cleanly
-  document.querySelectorAll('.auth-screen').forEach(s => {
-    s.classList.remove('on');
-    if (s.id !== 'mainApp') s.style.display = 'none';
+  try {
+  // Hide all auth screens
+  ['loginScreen','registerScreen','forgotScreen'].forEach(id => {
+    var el = document.getElementById(id);
+    if (el) { el.classList.remove('on'); el.style.display = 'none'; }
   });
   // Show main app
   var mainApp = document.getElementById('mainApp');
   mainApp.style.display = 'flex';
-  mainApp.classList.add('on');
   var u = session.user;
-  document.getElementById('topAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  document.getElementById('profAv').textContent = document.getElementById('topAv').textContent;
-  document.getElementById('profName').textContent = u.name;
-  document.getElementById('profEmail').textContent = u.email;
-  document.getElementById('profBadge').innerHTML =
+  var initials = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  var topAv = document.getElementById('topAv');
+  var profAv = document.getElementById('profAv');
+  var profName = document.getElementById('profName');
+  var profEmail = document.getElementById('profEmail');
+  var profBadge = document.getElementById('profBadge');
+  if (topAv) topAv.textContent = initials;
+  if (profAv) profAv.textContent = initials;
+  if (profName) profName.textContent = u.name;
+  if (profEmail) profEmail.textContent = u.email;
+  if (profBadge) profBadge.innerHTML =
     `<span class="badge badge-gray">${u.plan}</span> <span class="badge badge-gray">${u.role.replace('_',' ')}</span>`;
 
   // Show admin nav
@@ -1164,6 +1175,10 @@ async function loadApp() {
   nav('dashboard');
   refreshDashboard();
   startMarketTicker();
+  } catch(e) {
+    console.error('loadApp error:', e);
+    alert('App error: ' + e.message + '\n\nPlease refresh the page.');
+  }
 }
 
 // ── NAV ───────────────────────────────────────────────
