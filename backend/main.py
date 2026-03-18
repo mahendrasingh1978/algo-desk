@@ -21,10 +21,9 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
-from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations, SimulationTrade
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations, ShadowTrade
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
-from simulation import run_simulation_service, sim_sessions
 
 # Per-user shadow engine states (paper simulation)
 shadow_engines: dict = {}  # user_id -> {auto_id -> EngineState}
@@ -211,12 +210,6 @@ async def startup():
     init_db()
     asyncio.create_task(_market_data_service())
     asyncio.create_task(_auto_resume_engines())
-    asyncio.create_task(run_simulation_service(
-        get_user_cache_fn=_user_cache,
-        session_factory=SessionLocal,
-        get_fyers_conn_fn=_get_fyers,
-        save_tokens_fn=_save_tokens,
-    ))
     log.info("ALGO-DESK v5 started ✓")
 
 
@@ -1660,7 +1653,7 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
 
 # ── Simulation endpoints ─────────────────────────────────────
 
-@app.get("/api/simulation/trades")
+@app.get("/api/shadow/trades")
 def get_sim_trades(
     days: int = 7,
     user: User = Depends(get_current_user),
@@ -1669,10 +1662,10 @@ def get_sim_trades(
     """Get simulation trades for last N days."""
     from datetime import date, timedelta
     since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
-    trades = db.query(SimulationTrade).filter(
-        SimulationTrade.user_id == user.id,
-        SimulationTrade.trade_date >= since
-    ).order_by(SimulationTrade.created_at.desc()).all()
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since
+    ).order_by(ShadowTrade.created_at.desc()).all()
 
     return {"trades": [
         {
@@ -1698,7 +1691,7 @@ def get_sim_trades(
     ]}
 
 
-@app.get("/api/simulation/summary")
+@app.get("/api/shadow/performance")
 def sim_summary(
     days: int = 7,
     user: User = Depends(get_current_user),
@@ -1707,10 +1700,10 @@ def sim_summary(
     """Performance summary for last N days."""
     from datetime import date, timedelta
     since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
-    trades = db.query(SimulationTrade).filter(
-        SimulationTrade.user_id == user.id,
-        SimulationTrade.trade_date >= since,
-        SimulationTrade.is_open == False
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since,
+        ShadowTrade.is_open == False
     ).all()
 
     if not trades:
@@ -1765,7 +1758,7 @@ def sim_summary(
     }
 
 
-@app.get("/api/simulation/today")
+@app.get("/api/shadow/today")
 def sim_today(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1774,12 +1767,12 @@ def sim_today(
     from datetime import date
     today = date.today().strftime("%Y-%m-%d")
 
-    trades = db.query(SimulationTrade).filter(
-        SimulationTrade.user_id == user.id,
-        SimulationTrade.trade_date == today
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date == today
     ).all()
 
-    session = sim_sessions.get(user.id)
+    session = {}.get(user.id)
     session_log = session.log[-20:] if session else []
     day_pnl = session.day_pnl if session else sum(t.net_pnl or 0 for t in trades if not t.is_open)
     open_trade = next((t for t in trades if t.is_open), None)
