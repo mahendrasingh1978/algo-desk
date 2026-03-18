@@ -141,6 +141,29 @@ if opens != closes:
 else:
     ok(f"Balanced braces ({opens})")
 
+# HTML-aware quote scan — check script lines by their HTML line number
+html_content = (FRONTEND / "index.html").read_text()
+html_lines_all = html_content.split('\n')
+in_script_block = False
+html_broken = []
+for idx, hline in enumerate(html_lines_all, 1):
+    if '<script>' in hline: in_script_block = True
+    if '</script>' in hline: in_script_block = False
+    if not in_script_block: continue
+    if '`' in hline or hline.strip().startswith('//'): continue
+    cleaned = hline.replace("\\'","XX").replace('\\"',"XX")
+    indq = insq = False
+    for ch in cleaned:
+        if ch == '"' and not insq: indq = not indq
+        elif ch == "'" and not indq: insq = not insq
+    if insq:
+        html_broken.append(f"HTML line {idx}: {hline.strip()[:80]}")
+if html_broken:
+    for hb in html_broken[:5]:
+        err(f"Broken JS string — {hb}")
+else:
+    ok("No broken JS strings (HTML-aware scan)")
+
 # Check for unescaped onclick nav() calls inside single-quoted JS strings
 # e.g. + '<button onclick="nav('automate')"> — breaks the outer string
 import re as _re
