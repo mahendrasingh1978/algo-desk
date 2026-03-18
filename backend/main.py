@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
-from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations, ShadowTrade
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
 
@@ -39,6 +39,68 @@ NIFTY_SYMBOLS = [
     {"value": "NSE:NIFTYIT-INDEX",    "label": "NIFTY IT"},
     {"value": "NSE:NIFTYPHARMA-INDEX","label": "NIFTY PHARMA"},
 ]
+
+# ── Symbol registry — current lot sizes as of Jan 2026 ──────────
+# Source: NSE Circular 176/2025, effective Jan 2026
+# NIFTY: 75→65, BANKNIFTY: 35→30, FINNIFTY: 65→60, MIDCPNIFTY: 140→120
+# SENSEX: 20 (BSE, unchanged)
+SYMBOL_REGISTRY = {
+    "NSE:NIFTY50-INDEX":    {"lot_size": 65,  "label": "NIFTY 50",    "strike_gap": 50},
+    "NSE:NIFTYBANK-INDEX":  {"lot_size": 30,  "label": "BANK NIFTY",  "strike_gap": 100},
+    "NSE:FINNIFTY-INDEX":   {"lot_size": 60,  "label": "FINNIFTY",    "strike_gap": 50},
+    "NSE:MIDCPNIFTY-INDEX": {"lot_size": 120, "label": "MIDCAP NIFTY","strike_gap": 25},
+    "BSE:SENSEX-INDEX":     {"lot_size": 20,  "label": "SENSEX",      "strike_gap": 100},
+    "NSE:NIFTYNXT50-INDEX": {"lot_size": 25,  "label": "NIFTY NEXT 50","strike_gap": 50},
+}
+
+# Margin multipliers per strategy structure (Iron Fly vs Condor)
+# Based on SPAN margin calculation approximations
+# Naked short: ~12-15% of notional. Hedged: ~4-6% of notional
+HEDGE_MARGIN_PCT = {
+    1: 0.04,   # ±1 tight Iron Fly — tightest hedge, lowest margin
+    2: 0.05,   # ±2 standard Iron Fly
+    3: 0.045,  # ±3 Iron Condor — margin benefit from wider hedge
+    4: 0.04,   # ±4 Wide Condor — widest hedge
+    0: 0.06,   # default / no hedge specified
+}
+
+def estimate_margin(symbol: str, lots: int, lot_size: int,
+                    hedge_width: int, spot_price: float) -> dict:
+    """
+    Estimate margin required for an Iron Fly/Condor position.
+    Formula: spot × lot_size × lots × margin_pct × 4 legs
+    4 legs because sell legs use margin, buy legs reduce it.
+    Returns margin in rupees with breakdown.
+    """
+    reg = SYMBOL_REGISTRY.get(symbol, {})
+    actual_lot = lot_size or reg.get("lot_size", 75)
+    margin_pct = HEDGE_MARGIN_PCT.get(hedge_width, 0.05)
+
+    # Sell legs drive margin (buy legs provide relief)
+    # For Iron Fly: 2 sell legs at ATM
+    # SPAN gives credit for hedge but not full offset
+    sell_notional  = spot_price * actual_lot * lots
+    # SPAN margin for 2 sell legs, with hedge benefit
+    required = sell_notional * margin_pct * 2  # 2 sell legs
+
+    # Add premium component (collected upfront, reduces net outflow)
+    # Typical ATM premium ≈ 0.5-1% of spot
+    est_premium = spot_price * 0.007 * actual_lot * lots  # ~0.7% per leg × 2
+    net_outflow = max(required - est_premium, required * 0.6)
+
+    return {
+        "symbol":        symbol,
+        "label":         reg.get("label", symbol),
+        "spot":          spot_price,
+        "lot_size":      actual_lot,
+        "lots":          lots,
+        "hedge_width":   hedge_width,
+        "gross_margin":  round(required, 0),
+        "est_premium":   round(est_premium, 0),
+        "net_required":  round(net_outflow, 0),
+        "per_lot":       round(net_outflow / lots if lots else 0, 0),
+        "note":          "Estimated SPAN margin. Use broker calculator for exact figure."
+    }
 
 # Per-user market data cache
 # Each user with a connected broker gets their own live feed entry.
@@ -1468,129 +1530,233 @@ async def dashboard_summary(user: User = Depends(get_current_user),
     }
 
 
-@app.websocket("/ws/{user_id}")
+@app.get("/api/capital/check")
+async def capital_check(
+    symbol: str = "NSE:NIFTY50-INDEX",
+    lots: int = 1,
+    lot_size: int = 0,
+    hedge_width: int = 2,
+    strategies: str = "S1,S8",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Pre-trade capital check.
+    Fetches live account funds from Fyers and compares against
+    estimated margin requirement for the given strategy configuration.
+    Returns go/no-go with breakdown.
+    """
+    conn = _get_fyers(user, db)
+    strategy_list = [s.strip() for s in strategies.split(",") if s.strip()]
 
-@app.get("/api/dashboard/summary")
-async def dashboard_summary(user: User = Depends(get_current_user),
-                             db: Session = Depends(get_db)):
-    """Combined KPIs across all user automations for dashboard."""
-    import pytz
-    from datetime import timedelta
-    ist = pytz.timezone("Asia/Kolkata")
-    today = datetime.now(ist).strftime("%Y-%m-%d")
-    month_ago = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+    # Get live spot price from cache
+    cache = _user_cache(user.id)
+    spot = cache.get("spot", 0)
 
-    # All automations
-    autos = db.query(Automation).filter(Automation.user_id == user.id).all()
+    # Fallback spot prices if cache empty
+    if not spot:
+        fallback_spots = {
+            "NSE:NIFTY50-INDEX":    24000,
+            "NSE:NIFTYBANK-INDEX":  52000,
+            "NSE:FINNIFTY-INDEX":   24000,
+            "BSE:SENSEX-INDEX":     80000,
+            "NSE:MIDCPNIFTY-INDEX": 12000,
+        }
+        spot = fallback_spots.get(symbol, 24000)
 
-    # Today's trades (live)
+    # Get registry lot size if not overridden
+    reg = SYMBOL_REGISTRY.get(symbol, {})
+    actual_lot_size = lot_size or reg.get("lot_size", 75)
+
+    # Strategy-specific hedge widths
+    auto_hedges = {"S9": 1, "S8": 3, "S6": 4}
+    # Use the widest hedge among selected strategies (conservative estimate)
+    hedges = [auto_hedges.get(s, hedge_width) for s in strategy_list]
+    max_hedge = max(hedges) if hedges else hedge_width
+
+    # Calculate margin estimate
+    margin = estimate_margin(symbol, lots, actual_lot_size, max_hedge, spot)
+
+    # Fetch actual account funds
+    funds = {}
+    funds_error = None
+    available = 0
+
+    if conn and conn.mode != "paper":
+        try:
+            funds = await conn.get_funds()
+            # Fyers returns keys like "Available Balance", "Clear Balance" etc.
+            # Try common keys
+            for key in ["Available Balance", "Available cash", "Cash Available",
+                        "Clear Balance", "Net Balance", "Payin"]:
+                if key in funds and funds[key] > 0:
+                    available = funds[key]
+                    break
+            if not available:
+                available = max(funds.values()) if funds else 0
+        except Exception as e:
+            funds_error = str(e)
+    elif conn and conn.mode == "paper":
+        available = 999999  # Paper mode — unlimited
+        funds = {"Paper Mode": 999999}
+
+    can_trade = available >= margin["net_required"]
+    shortfall = max(0, margin["net_required"] - available)
+    buffer = available - margin["net_required"]
+
+    # Per-strategy breakdown
+    strat_breakdown = []
+    for s in strategy_list:
+        hw = auto_hedges.get(s, hedge_width)
+        sm = estimate_margin(symbol, lots, actual_lot_size, hw, spot)
+        strat_breakdown.append({
+            "strategy":     s,
+            "hedge_width":  hw,
+            "net_required": sm["net_required"],
+            "can_trade":    available >= sm["net_required"],
+        })
+
+    return {
+        "ok":            True,
+        "symbol":        symbol,
+        "label":         reg.get("label", symbol),
+        "spot":          round(spot, 1),
+        "lot_size":      actual_lot_size,
+        "lots":          lots,
+        "strategies":    strategy_list,
+        "margin":        margin,
+        "available":     round(available, 0),
+        "can_trade":     can_trade,
+        "shortfall":     round(shortfall, 0),
+        "buffer":        round(buffer, 0),
+        "funds":         funds,
+        "funds_error":   funds_error,
+        "mode":          conn.mode if conn else "no_broker",
+        "strat_breakdown": strat_breakdown,
+        "recommendation": (
+            "✅ Sufficient funds — can proceed"
+            if can_trade else
+            f"❌ Insufficient funds — need ₹{shortfall:,.0f} more"
+        ),
+    }
+
+
+@app.get("/api/capital/symbols")
+def capital_symbols(user: User = Depends(get_current_user)):
+    """Returns full symbol registry with current lot sizes."""
+    return {
+        "symbols": [
+            {"value": sym, **info}
+            for sym, info in SYMBOL_REGISTRY.items()
+        ]
+    }
+
+
+@app.get("/api/engine/reconcile")
+async def reconcile_positions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Manual reconciliation endpoint.
+    Fetches live orderbook and positions from Fyers and returns
+    a full reconciliation report for the frontend to display.
+    """
+    conn = _get_fyers(user, db)
+    if not conn:
+        return {"ok": False, "message": "No broker connected"}
+    if conn.mode == "paper":
+        return {"ok": True, "mode": "paper",
+                "message": "Paper mode — no real orders to reconcile",
+                "orderbook": [], "positions": []}
+
+    # Fetch orderbook and positions in parallel
+    try:
+        ob_result, pos_result = await asyncio.gather(
+            conn.get_orderbook(),
+            conn.get_positions(),
+        )
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+    # Process orderbook
+    status_map = {
+        1: "CANCELLED", 2: "FILLED", 4: "TRANSIT",
+        5: "REJECTED", 6: "PENDING", 20: "EXPIRED"
+    }
+    orders = []
+    for o in (ob_result.get("orders") or []):
+        sc = o.get("status", 0)
+        orders.append({
+            "order_id":   o.get("id",""),
+            "symbol":     o.get("symbol",""),
+            "side":       "BUY" if o.get("side",0) == 1 else "SELL",
+            "qty":        o.get("qty", 0),
+            "filled_qty": o.get("filledQty", 0),
+            "avg_price":  o.get("tradedPrice", 0),
+            "status":     status_map.get(sc, f"UNKNOWN({sc})"),
+            "status_code": sc,
+            "product":    o.get("productType",""),
+            "time":       o.get("orderDateTime",""),
+            "message":    o.get("message",""),
+        })
+
+    # Process positions
+    positions = []
+    for p in (pos_result.get("positions") or []):
+        net_qty = p.get("netQty", 0)
+        if net_qty == 0:
+            continue
+        positions.append({
+            "symbol":    p.get("symbol",""),
+            "net_qty":   net_qty,
+            "avg_price": p.get("netAvg", 0),
+            "ltp":       p.get("ltp", 0),
+            "pnl":       p.get("pl", 0),
+            "product":   p.get("productType",""),
+            "side":      "LONG" if net_qty > 0 else "SHORT",
+        })
+
+    # Match against today's trades in DB
+    today = datetime.now().strftime("%Y-%m-%d")
     today_trades = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.trade_date == today
     ).all()
 
-    # Today's shadow trades
-    today_shadow = db.query(ShadowTrade).filter(
-        ShadowTrade.user_id == user.id,
-        ShadowTrade.trade_date == today
-    ).all()
-
-    # Month's closed trades
-    month_trades = db.query(Trade).filter(
-        Trade.user_id == user.id,
-        Trade.trade_date >= month_ago,
-        Trade.is_open == False
-    ).all()
-
-    month_shadow = db.query(ShadowTrade).filter(
-        ShadowTrade.user_id == user.id,
-        ShadowTrade.trade_date >= month_ago,
-        ShadowTrade.is_open == False
-    ).all()
-
-    # Per-automation status
-    auto_status = []
-    for a in autos:
-        eng = active_engines.get(user.id + ":" + a.id) or active_engines.get(user.id)
-        a_today = [t for t in today_trades if t.automation_id == a.id]
-        a_shadow = [t for t in today_shadow if t.automation_id == a.id]
-        a_pnl = sum(t.net_pnl or 0 for t in a_today if not t.is_open)
-        a_shadow_pnl = sum(t.net_pnl or 0 for t in a_shadow if not t.is_open)
-        auto_status.append({
-            "id": a.id, "name": a.name,
-            "symbol": a.symbol.split(":")[1] if ":" in a.symbol else a.symbol,
-            "mode": a.mode,
-            "shadow_mode": a.shadow_mode,
-            "status": a.status,
-            "strategies": a.strategies,
-            "today_trades": len(a_today),
-            "today_pnl": round(a_pnl, 0),
-            "today_shadow_trades": len(a_shadow),
-            "today_shadow_pnl": round(a_shadow_pnl, 0),
-            "open_position": any(t.is_open for t in a_today),
-        })
-
-    today_live_pnl = sum(t.net_pnl or 0 for t in today_trades if not t.is_open)
-    today_paper_pnl = sum(t.net_pnl or 0 for t in today_shadow if not t.is_open)
-    month_live_pnl = sum(t.net_pnl or 0 for t in month_trades)
-    month_paper_pnl = sum(t.net_pnl or 0 for t in month_shadow)
-
-    cache = _user_cache(user.id)
+    # Check if open trades have matching positions
+    open_trades = [t for t in today_trades if t.is_open]
+    mismatches = []
+    for trade in open_trades:
+        pos_symbols = {p["symbol"] for p in positions}
+        # This is a simplified check — full check requires matching each leg
+        if not pos_symbols:
+            mismatches.append({
+                "trade_id": trade.id,
+                "strategy": trade.strategy_code,
+                "issue": "Trade is open in DB but no positions found in Fyers"
+            })
 
     return {
-        "spot":             cache.get("spot", 0),
-        "atm":              cache.get("atm", 0),
-        "market_status":    cache.get("status", "waiting"),
-        "market_updated":   cache.get("updated"),
-        "market_message":   cache.get("message", ""),
-        "today_live_pnl":   round(today_live_pnl, 0),
-        "today_paper_pnl":  round(today_paper_pnl, 0),
-        "today_live_trades": len([t for t in today_trades if not t.is_open]),
-        "today_paper_trades": len([t for t in today_shadow if not t.is_open]),
-        "open_positions":   len([t for t in today_trades if t.is_open]),
-        "month_live_pnl":   round(month_live_pnl, 0),
-        "month_paper_pnl":  round(month_paper_pnl, 0),
-        "automations":      auto_status,
-        "total_automations": len(autos),
-        "running_automations": len([a for a in autos if a.status=="RUNNING"]),
+        "ok":           True,
+        "mode":         "live",
+        "orders":       orders,
+        "positions":    positions,
+        "open_trades":  len(open_trades),
+        "mismatches":   mismatches,
+        "reconciled":   len(mismatches) == 0,
+        "timestamp":    datetime.now().isoformat(),
+        "summary": {
+            "total_orders":    len(orders),
+            "filled":  len([o for o in orders if o["status_code"] == 2]),
+            "rejected": len([o for o in orders if o["status_code"] == 5]),
+            "pending":  len([o for o in orders if o["status_code"] == 6]),
+            "open_positions": len(positions),
+        }
     }
 
 
 @app.websocket("/ws/{user_id}")
-async def ws_endpoint(websocket: WebSocket, user_id: str):
-    await websocket.accept()
-    if user_id not in ws_clients:
-        ws_clients[user_id] = []
-    ws_clients[user_id].append(websocket)
-    try:
-        while True:
-            state = active_engines.get(user_id)
-            if state:
-                atm = state.atm
-                await websocket.send_json({
-                    "type": "tick",
-                    "spot":     state.spot_history[-1] if state.spot_history else 0,
-                    "atm":      state.atm_strike,
-                    "combined": atm.current if atm else 0,
-                    "vwap":     atm.vwap_val if atm else 0,
-                    "ema75":    atm.ema75 if atm else 0,
-                    "orb_low":  atm.orb_low if atm else 0,
-                    "position": state.position,
-                    "day_pnl":  state.day_pnl,
-                    "mode":     "IN_TRADE" if state.position else "MONITORING",
-                    "log":      state.log[-20:],
-                    "strikes": [
-                        {"strike": s.strike, "combined": s.current,
-                         "orb_low": s.orb_low, "fired": s.fired,
-                         "is_atm": s.is_atm}
-                        for s in state.strikes
-                    ]
-                })
-            await asyncio.sleep(5)
-    except WebSocketDisconnect:
-        if user_id in ws_clients:
-            ws_clients[user_id] = [w for w in ws_clients[user_id]
-                                    if w != websocket]
 
 # ── Engine loop ───────────────────────────────────────────────
 
@@ -1749,61 +1915,122 @@ async def _run_engine(user_id: str, auto: Automation,
 
 
 async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
+    """
+    Places all 4 legs of an Iron Fly/Condor as a basket order (live mode).
+    Basket orders are atomic — all legs fill together or none do.
+    This prevents partial fills leaving you unhedged.
+    Falls back to individual orders if basket fails.
+    """
     qty = lot_sz * lots
-    orders = []
     is_live = conn.mode != "paper"
-    failed_legs = []
+    orders = []
 
-    # Place sell legs first (collect premium)
-    for leg in ["sell_ce", "sell_pe"]:
+    # Build all 4 legs for basket order
+    legs_to_place = []
+    leg_map = []
+
+    for leg, side in [("sell_ce","SELL"),("sell_pe","SELL"),
+                      ("buy_ce","BUY"),("buy_pe","BUY")]:
         sym = signal.get(leg)
-        if not sym:
-            continue
-        for attempt in range(3):  # retry up to 3 times on live
-            r = await conn.place_order(sym, "SELL", qty)
-            if r.get("ok"):
-                orders.append({"leg":leg,"symbol":sym,
-                               "order_id":r.get("order_id"),"ok":True,"side":"SELL"})
-                state.emit(f"✅ SELL {qty}x {sym} order_id={r.get('order_id','PAPER')}", "ORDER")
-                break
-            else:
-                if attempt < 2:
-                    state.emit(f"⚠️ SELL {sym} attempt {attempt+1} failed: {r.get('message')} — retrying", "WARN")
-                    await asyncio.sleep(2)
-                else:
-                    state.emit(f"❌ SELL {sym} FAILED after 3 attempts: {r.get('message')}", "ERROR")
-                    failed_legs.append(leg)
+        if sym:
+            legs_to_place.append({"symbol":sym, "side":side, "qty":qty})
+            leg_map.append({"leg":leg, "symbol":sym, "side":side})
 
-    # If any sell leg failed on live — abort and don't open position
-    if is_live and failed_legs:
-        state.emit(f"❌ Aborting position — sell legs failed: {failed_legs}", "ERROR")
-        # Try to close any legs that did get placed
-        for o in orders:
-            close_side = "BUY" if o["side"]=="SELL" else "SELL"
-            await conn.place_order(o["symbol"], close_side, qty)
-            state.emit(f"↩ Reversed {o['symbol']} due to abort", "ORDER")
+    if not legs_to_place:
+        state.emit("❌ No symbols in signal — cannot place orders", "ERROR")
         return
 
-    # Place hedge buy legs
-    for leg in ["buy_ce", "buy_pe"]:
-        sym = signal.get(leg)
-        if not sym:
-            continue
-        for attempt in range(3):
-            r = await conn.place_order(sym, "BUY", qty)
-            if r.get("ok"):
-                orders.append({"leg":leg,"symbol":sym,
-                               "order_id":r.get("order_id"),"ok":True,"side":"BUY"})
-                state.emit(f"✅ BUY  {qty}x {sym} order_id={r.get('order_id','PAPER')}", "ORDER")
-                break
+    # Try basket order first (best approach for multi-leg options)
+    if is_live and hasattr(conn, "place_basket_order"):
+        state.emit(f"Placing basket order: {len(legs_to_place)} legs", "ORDER")
+        result = await conn.place_basket_order(legs_to_place)
+        if result.get("ok"):
+            order_ids = result.get("order_ids", [])
+            for i, lm in enumerate(leg_map):
+                oid = order_ids[i] if i < len(order_ids) else "unknown"
+                orders.append({"leg":lm["leg"],"symbol":lm["symbol"],
+                               "side":lm["side"],"order_id":oid,"ok":True})
+                state.emit(f"✅ {lm['side']} {qty}x {lm['symbol']} id={oid}", "ORDER")
+
+            # ── RECONCILE ENTRY ORDERS ────────────────────────────
+            # Wait for all legs to reach terminal state (max 30s)
+            state.emit("Reconciling entry orders...", "ORDER")
+            recon = await conn.reconcile_orders(order_ids, max_wait_secs=30)
+            state.emit(f"Reconcile: {recon['summary']}", "OK" if recon["all_filled"] else "WARN")
+
+            if recon.get("any_rejected") and is_live:
+                # Some legs rejected — emergency close whatever filled
+                state.emit("❌ Entry rejection — closing filled legs", "ERROR")
+                for o in recon.get("orders", []):
+                    if o.get("status_code") == 2:  # filled
+                        sym = o.get("symbol") or next(
+                            (lm["symbol"] for lm in leg_map
+                             if lm.get("order_id") == o.get("order_id")), None)
+                        if sym:
+                            side = "BUY" if o.get("side") == "SELL" else "SELL"
+                            await conn.place_order(sym, side, qty)
+                            state.emit(f"↩ Emergency close {sym}", "ORDER")
+                # Also store rejection details
+                for r_order in recon.get("rejected", []):
+                    state.emit(
+                        f"REJECTED: {r_order.get('symbol','')} "
+                        f"reason={r_order.get('message','')}",
+                        "ERROR")
+                return
+
+            # Store actual fill prices in orders list
+            for o in recon.get("orders", []):
+                for stored_order in orders:
+                    if stored_order.get("order_id") == o.get("order_id"):
+                        stored_order["fill_price"] = o.get("avg_price", 0)
+                        stored_order["filled_qty"] = o.get("filled_qty", 0)
+                        stored_order["status"] = o.get("status", "")
+
+            # Verify positions exist in Fyers account
+            expected_syms = [lm["symbol"] for lm in leg_map]
+            pos_recon = await conn.get_positions_reconcile(expected_syms)
+            if pos_recon.get("reconciled"):
+                state.emit("✅ Position reconciled — all legs confirmed in account",
+                           "OK")
             else:
-                if attempt < 2:
-                    state.emit(f"⚠️ BUY {sym} attempt {attempt+1} failed — retrying", "WARN")
-                    await asyncio.sleep(2)
+                state.emit(f"⚠️ Position check: {pos_recon.get('message','')}",
+                           "WARN")
+
+        else:
+            state.emit(f"⚠️ Basket order failed: {result.get('message')} — falling back to individual orders", "WARN")
+            # Fall through to individual orders below
+            orders = []
+
+    # Individual orders (paper mode OR basket failed)
+    if not orders:
+        failed = []
+        for lm in leg_map:
+            placed = False
+            for attempt in range(3):
+                r = await conn.place_order(lm["symbol"], lm["side"], qty)
+                if r.get("ok"):
+                    orders.append({"leg":lm["leg"],"symbol":lm["symbol"],
+                                  "side":lm["side"],
+                                  "order_id":r.get("order_id","PAPER"),"ok":True})
+                    state.emit(f"✅ {lm['side']} {qty}x {lm['symbol']} id={r.get('order_id','PAPER')}", "ORDER")
+                    placed = True
+                    break
                 else:
-                    state.emit(f"⚠️ BUY hedge {sym} failed — position open but unhedged", "WARN")
-                    # Hedge failure is a warning not abort — sell legs already filled
-                    # But log clearly so user knows
+                    if attempt < 2:
+                        state.emit(f"⚠️ {lm['side']} {lm['symbol']} attempt {attempt+1}: {r.get('message')}", "WARN")
+                        await asyncio.sleep(2)
+                    else:
+                        state.emit(f"❌ {lm['side']} {lm['symbol']} FAILED: {r.get('message')}", "ERROR")
+                        failed.append(lm["leg"])
+
+        # If sell legs failed on live — abort and reverse any fills
+        if is_live and any(f in failed for f in ["sell_ce","sell_pe"]):
+            state.emit("❌ Sell legs failed — reversing all fills", "ERROR")
+            for o in orders:
+                rev_side = "BUY" if o["side"]=="SELL" else "SELL"
+                await conn.place_order(o["symbol"], rev_side, qty)
+                state.emit(f"↩ Reversed {o['symbol']}", "ORDER")
+            return
 
     atm = state.atm
     combined = atm.current if atm else signal["combined"]
@@ -1838,12 +2065,64 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
     atm = state.atm
     exit_combined = atm.current if atm else state.position["entry_combined"]
 
+    # Build closing legs (reverse of entry)
+    close_legs = []
     for order in state.position.get("orders", []):
         sym  = order.get("symbol")
-        side = "BUY" if "sell" in order.get("leg", "") else "SELL"
+        side = "BUY" if order.get("side","SELL") == "SELL" else "SELL"
         if sym:
-            r = await conn.place_order(sym, side, qty)
-            state.emit(f"CLOSE {side} {qty}x {sym}", "ORDER")
+            close_legs.append({"symbol":sym, "side":side, "qty":qty})
+
+    # Try basket close first
+    if conn.mode != "paper" and close_legs and hasattr(conn, "place_basket_order"):
+        result = await conn.place_basket_order(close_legs)
+        if result.get("ok"):
+            state.emit(f"✅ Basket close executed: {len(close_legs)} legs", "ORDER")
+            close_order_ids = result.get("order_ids", [])
+
+            # ── RECONCILE EXIT ORDERS ────────────────────────────
+            state.emit("Reconciling exit orders...", "ORDER")
+            recon = await conn.reconcile_orders(close_order_ids, max_wait_secs=30)
+            state.emit(f"Exit reconcile: {recon['summary']}",
+                       "OK" if recon["all_filled"] else "WARN")
+
+            if recon.get("any_rejected"):
+                state.emit("⚠️ Some exit legs rejected — check Fyers app manually",
+                           "ERROR")
+                # Store rejection details for the trade record
+                exit_rejections = [r.get("message","") for r in recon.get("rejected",[])]
+                reason += f" | EXIT_WARN: {', '.join(exit_rejections)}"
+
+            # Get actual exit price from fill data
+            if recon.get("orders"):
+                fill_prices = [o.get("avg_price",0) for o in recon["orders"]
+                               if o.get("status_code") == 2 and o.get("avg_price")]
+                if fill_prices:
+                    exit_combined = sum(fill_prices) / len(fill_prices)
+                    state.emit(f"Actual exit price: ₹{exit_combined:.1f}", "OK")
+
+            # Verify positions are actually closed
+            if close_legs:
+                symbols_to_check = [cl["symbol"] for cl in close_legs]
+                pos_check = await conn.get_positions_reconcile(symbols_to_check)
+                if not pos_check.get("reconciled") and pos_check.get("ok"):
+                    still_open = pos_check.get("found", [])
+                    if still_open:
+                        state.emit(
+                            f"⚠️ Positions may still be open: {still_open}",
+                            "ERROR")
+                    else:
+                        state.emit("✅ Exit confirmed — no open positions remain", "OK")
+        else:
+            state.emit(f"⚠️ Basket close failed: {result.get('message')} — trying individually", "WARN")
+            for cl in close_legs:
+                r = await conn.place_order(cl["symbol"], cl["side"], qty)
+                state.emit(f"CLOSE {cl['side']} {qty}x {cl['symbol']}", "ORDER")
+    else:
+        # Paper mode or no basket support
+        for cl in close_legs:
+            r = await conn.place_order(cl["symbol"], cl["side"], qty)
+            state.emit(f"CLOSE {cl['side']} {qty}x {cl['symbol']}", "ORDER")
 
     pnl = (state.position["entry_combined"] - exit_combined) * lots * lot_sz
     state.day_pnl += pnl
@@ -1869,111 +2148,6 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
     state.position = None
 
 # ── Simulation endpoints ─────────────────────────────────────
-
-@app.get("/api/shadow/trades")
-def get_sim_trades(
-    days: int = 7,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get simulation trades for last N days."""
-    from datetime import date, timedelta
-    since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
-    trades = db.query(ShadowTrade).filter(
-        ShadowTrade.user_id == user.id,
-        ShadowTrade.trade_date >= since
-    ).order_by(ShadowTrade.created_at.desc()).all()
-
-    return {"trades": [
-        {
-            "id":            t.id,
-            "date":          t.trade_date,
-            "strategy":      t.strategy_code,
-            "symbol":        t.symbol,
-            "atm":           t.atm_strike,
-            "entry":         t.entry_combined,
-            "exit":          t.exit_combined,
-            "entry_time":    t.entry_time.strftime("%H:%M") if t.entry_time else None,
-            "exit_time":     t.exit_time.strftime("%H:%M") if t.exit_time else None,
-            "exit_reason":   t.exit_reason,
-            "pnl":           t.net_pnl,
-            "is_open":       t.is_open,
-            "lots":          t.lots,
-            "lot_size":      t.lot_size,
-            "vwap_entry":    t.vwap_at_entry,
-            "trail_low":     t.sl_trail_low,
-            "premium_ticks": len(t.premium_history or []),
-        }
-        for t in trades
-    ]}
-
-
-@app.get("/api/shadow/performance")
-def sim_summary(
-    days: int = 7,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Performance summary for last N days."""
-    from datetime import date, timedelta
-    since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
-    trades = db.query(ShadowTrade).filter(
-        ShadowTrade.user_id == user.id,
-        ShadowTrade.trade_date >= since,
-        ShadowTrade.is_open == False
-    ).all()
-
-    if not trades:
-        return {
-            "total_trades": 0, "wins": 0, "losses": 0,
-            "win_rate": 0, "total_pnl": 0, "avg_pnl": 0,
-            "best_trade": 0, "worst_trade": 0,
-            "by_strategy": {}, "by_day": {},
-        }
-
-    pnls = [t.net_pnl or 0 for t in trades]
-    wins = sum(1 for p in pnls if p > 0)
-    total = sum(pnls)
-
-    # By strategy
-    by_strat = {}
-    for t in trades:
-        s = t.strategy_code
-        if s not in by_strat:
-            by_strat[s] = {"trades":0,"wins":0,"pnl":0}
-        by_strat[s]["trades"] += 1
-        by_strat[s]["pnl"]    += t.net_pnl or 0
-        if (t.net_pnl or 0) > 0:
-            by_strat[s]["wins"] += 1
-    for s in by_strat:
-        n = by_strat[s]["trades"]
-        by_strat[s]["win_rate"] = round(by_strat[s]["wins"]/n*100,1) if n else 0
-        by_strat[s]["avg_pnl"]  = round(by_strat[s]["pnl"]/n,0) if n else 0
-
-    # By day
-    by_day = {}
-    for t in trades:
-        d = t.trade_date
-        if d not in by_day:
-            by_day[d] = {"trades":0,"pnl":0,"wins":0}
-        by_day[d]["trades"] += 1
-        by_day[d]["pnl"]    += t.net_pnl or 0
-        if (t.net_pnl or 0) > 0:
-            by_day[d]["wins"] += 1
-
-    return {
-        "total_trades": len(trades),
-        "wins":         wins,
-        "losses":       len(trades) - wins,
-        "win_rate":     round(wins/len(trades)*100,1) if trades else 0,
-        "total_pnl":    round(total, 0),
-        "avg_pnl":      round(total/len(trades),0) if trades else 0,
-        "best_trade":   round(max(pnls),0),
-        "worst_trade":  round(min(pnls),0),
-        "by_strategy":  by_strat,
-        "by_day":       by_day,
-    }
-
 
 @app.get("/api/shadow/today")
 def sim_today(

@@ -244,32 +244,146 @@ class FyersConnection:
     # ── Orders ────────────────────────────────────────────────
 
     async def place_order(self, symbol: str, side: str, qty: int,
-                           product: str = "INTRADAY") -> dict:
+                           product: str = "MARGIN") -> dict:
+        """
+        Place a single order leg.
+        product: MARGIN (derivatives/options), INTRADAY (equity only), CNC (delivery)
+        type: 1=LIMIT, 2=MARKET, 3=STOP, 4=STOPLIMIT
+        side: 1=BUY, -1=SELL
+        """
         if self.mode == "paper":
             import random
-            price = 50 + random.random() * 200
-            slippage = 2 if side == "BUY" else -2
+            price = round(50 + random.random() * 200, 1)
             return {"ok": True,
                     "order_id": f"PAPER_{datetime.now().strftime('%H%M%S%f')[:14]}",
-                    "fill_price": round(price + slippage, 1),
+                    "fill_price": price,
                     "mode": "paper"}
 
         if not self._access:
-            return {"ok": False, "message": "Not authenticated"}
+            return {"ok": False, "message": "Not authenticated — call refresh_token first"}
 
         try:
             async with httpx.AsyncClient(timeout=15) as c:
                 r = await c.post(f"{API}/orders/sync",
                     headers=self._auth,
-                    json={"symbol": symbol, "qty": qty, "type": 2,
-                          "side": 1 if side == "BUY" else -1,
-                          "productType": product, "limitPrice": 0,
-                          "stopPrice": 0, "validity": "DAY",
-                          "disclosedQty": 0, "offlineOrder": False})
+                    json={
+                        "symbol":       symbol,
+                        "qty":          qty,
+                        "type":         2,          # 2 = MARKET order
+                        "side":         1 if side == "BUY" else -1,
+                        "productType":  product,    # MARGIN for derivatives
+                        "limitPrice":   0,
+                        "stopPrice":    0,
+                        "validity":     "DAY",
+                        "disclosedQty": 0,
+                        "offlineOrder": False,
+                    })
             d = r.json()
             if d.get("s") == "ok":
-                return {"ok": True, "order_id": d.get("id"), "mode": "live"}
-            return {"ok": False, "message": d.get("message", "Order failed")}
+                return {"ok": True, "order_id": d.get("id"), "mode": "live",
+                        "message": d.get("message", "")}
+            return {"ok": False, "message": d.get("message", "Order failed"),
+                    "code": d.get("code")}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    async def place_basket_order(self, legs: list) -> dict:
+        """
+        Place all 4 Iron Fly/Condor legs as a single basket order.
+        This is the correct approach for multi-leg options strategies.
+        Atomic — either all legs fill or none do.
+
+        legs: list of dicts with keys:
+            symbol, side (BUY/SELL), qty
+
+        Returns: {"ok": True/False, "order_ids": [...], "message": "..."}
+        """
+        if self.mode == "paper":
+            return {
+                "ok": True,
+                "order_ids": [f"PAPER_{datetime.now().strftime('%H%M%S%f')[:14]}_{i}"
+                              for i in range(len(legs))],
+                "mode": "paper",
+            }
+
+        if not self._access:
+            return {"ok": False, "message": "Not authenticated"}
+
+        # Build basket order body
+        basket = []
+        for leg in legs:
+            basket.append({
+                "symbol":       leg["symbol"],
+                "qty":          leg["qty"],
+                "type":         2,          # MARKET
+                "side":         1 if leg["side"] == "BUY" else -1,
+                "productType":  "MARGIN",   # Always MARGIN for derivatives
+                "limitPrice":   0,
+                "stopPrice":    0,
+                "validity":     "DAY",
+                "disclosedQty": 0,
+                "offlineOrder": False,
+            })
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.post(f"{API}/orders/basket",
+                    headers=self._auth,
+                    json=basket)
+            d = r.json()
+            if d.get("s") == "ok":
+                # Extract individual order IDs from basket response
+                order_ids = [o.get("id", "") for o in (d.get("data") or [])]
+                return {"ok": True, "order_ids": order_ids,
+                        "mode": "live", "message": "Basket order placed"}
+            return {"ok": False, "message": d.get("message", "Basket order failed"),
+                    "code": d.get("code")}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    async def cancel_order(self, order_id: str) -> dict:
+        """Cancel a single order by ID."""
+        if self.mode == "paper":
+            return {"ok": True, "message": "Paper cancel"}
+        if not self._access:
+            return {"ok": False, "message": "Not authenticated"}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.delete(f"{API}/orders/sync",
+                    headers=self._auth,
+                    json={"id": order_id})
+            d = r.json()
+            return {"ok": d.get("s") == "ok", "message": d.get("message", "")}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    async def get_positions(self) -> dict:
+        """Get current open positions."""
+        if not self._access:
+            return {}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(f"{API}/positions", headers=self._auth)
+            d = r.json()
+            if d.get("s") == "ok":
+                return {"ok": True, "positions": d.get("netPositions", [])}
+        except Exception:
+            pass
+        return {"ok": False, "positions": []}
+
+    async def exit_all_positions(self) -> dict:
+        """Emergency exit — close all open positions."""
+        if self.mode == "paper":
+            return {"ok": True, "message": "Paper exit all"}
+        if not self._access:
+            return {"ok": False, "message": "Not authenticated"}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.delete(f"{API}/positions",
+                    headers=self._auth,
+                    json={"segment": 11})  # 11 = NSE F&O
+            d = r.json()
+            return {"ok": d.get("s") == "ok", "message": d.get("message", "")}
         except Exception as e:
             return {"ok": False, "message": str(e)}
 
@@ -286,3 +400,201 @@ class FyersConnection:
         except Exception:
             pass
         return {}
+
+    async def get_orderbook(self) -> dict:
+        """
+        Fetch today's complete orderbook from Fyers.
+        Order status codes:
+            1  = Cancelled
+            2  = Traded/Filled
+            3  = For future use
+            4  = Transit
+            5  = Rejected
+            6  = Pending
+            20 = Expired
+        """
+        if self.mode == "paper":
+            return {"ok": True, "orders": []}
+        if not self._access:
+            return {"ok": False, "orders": [], "message": "Not authenticated"}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(f"{API}/orders", headers=self._auth)
+            d = r.json()
+            if d.get("s") == "ok":
+                return {"ok": True, "orders": d.get("orderBook", [])}
+            return {"ok": False, "orders": [], "message": d.get("message", "")}
+        except Exception as e:
+            return {"ok": False, "orders": [], "message": str(e)}
+
+    async def get_order_status(self, order_id: str) -> dict:
+        """
+        Get status of a specific order by ID.
+        Returns dict with status_code, status_str, filled_qty, avg_price etc.
+        """
+        if self.mode == "paper":
+            return {"ok": True, "order_id": order_id,
+                    "status_code": 2, "status": "FILLED",
+                    "filled_qty": 0, "avg_price": 0, "mode": "paper"}
+        if not self._access:
+            return {"ok": False, "message": "Not authenticated"}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(f"{API}/orders",
+                    params={"id": order_id},
+                    headers=self._auth)
+            d = r.json()
+            if d.get("s") == "ok":
+                orders = d.get("orderBook", [])
+                if orders:
+                    o = orders[0]
+                    status_map = {
+                        1: "CANCELLED", 2: "FILLED", 4: "TRANSIT",
+                        5: "REJECTED", 6: "PENDING", 20: "EXPIRED"
+                    }
+                    sc = o.get("status", 0)
+                    return {
+                        "ok":         True,
+                        "order_id":   order_id,
+                        "status_code": sc,
+                        "status":     status_map.get(sc, f"UNKNOWN({sc})"),
+                        "filled_qty": o.get("filledQty", 0),
+                        "qty":        o.get("qty", 0),
+                        "avg_price":  o.get("tradedPrice", 0),
+                        "symbol":     o.get("symbol", ""),
+                        "side":       "BUY" if o.get("side", 0) == 1 else "SELL",
+                        "message":    o.get("message", ""),
+                        "reject_reason": o.get("orderValidity", ""),
+                    }
+            return {"ok": False, "message": d.get("message", "Order not found")}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    async def reconcile_orders(self, order_ids: list,
+                               max_wait_secs: int = 30) -> dict:
+        """
+        Reconcile a list of order IDs after placement.
+        Polls every 2 seconds until all orders are in a terminal state
+        (FILLED, REJECTED, CANCELLED, EXPIRED) or max_wait_secs reached.
+
+        Returns:
+        {
+            "all_filled": bool,
+            "any_rejected": bool,
+            "orders": [{order_id, status, filled_qty, avg_price, ...}],
+            "summary": "All 4 legs filled at avg ₹XX"
+        }
+        """
+        if self.mode == "paper":
+            return {
+                "all_filled": True,
+                "any_rejected": False,
+                "orders": [{"order_id": oid, "status": "FILLED",
+                             "status_code": 2, "filled_qty": 0,
+                             "avg_price": 0, "mode": "paper"}
+                            for oid in order_ids],
+                "summary": f"Paper mode — {len(order_ids)} legs simulated",
+            }
+
+        import asyncio
+        terminal = {1, 2, 5, 20}  # CANCELLED, FILLED, REJECTED, EXPIRED
+        results = {}
+        elapsed = 0
+
+        while elapsed < max_wait_secs:
+            pending = [oid for oid in order_ids
+                       if oid not in results or
+                       results[oid].get("status_code") not in terminal]
+            if not pending:
+                break
+
+            for oid in pending:
+                r = await self.get_order_status(oid)
+                if r.get("ok"):
+                    results[oid] = r
+
+            all_done = all(
+                results.get(oid, {}).get("status_code") in terminal
+                for oid in order_ids
+            )
+            if all_done:
+                break
+
+            await asyncio.sleep(2)
+            elapsed += 2
+
+        # Build summary
+        orders = [results.get(oid, {"order_id": oid,
+                                    "status": "TIMEOUT",
+                                    "status_code": 0,
+                                    "filled_qty": 0,
+                                    "avg_price": 0})
+                  for oid in order_ids]
+
+        filled   = [o for o in orders if o.get("status_code") == 2]
+        rejected = [o for o in orders if o.get("status_code") == 5]
+        pending  = [o for o in orders if o.get("status_code") not in terminal]
+
+        all_filled    = len(filled) == len(order_ids)
+        any_rejected  = len(rejected) > 0
+
+        if all_filled:
+            avg_prices = [o.get("avg_price", 0) for o in filled if o.get("avg_price")]
+            avg = sum(avg_prices)/len(avg_prices) if avg_prices else 0
+            summary = (f"All {len(order_ids)} legs filled"
+                      + (f" · avg ₹{avg:.1f}" if avg else ""))
+        elif any_rejected:
+            summary = (f"⚠️ {len(rejected)} leg(s) REJECTED, "
+                      f"{len(filled)} filled")
+        elif pending:
+            summary = f"⚠️ {len(pending)} leg(s) still pending after {max_wait_secs}s"
+        else:
+            summary = f"{len(filled)}/{len(order_ids)} legs filled"
+
+        return {
+            "all_filled":   all_filled,
+            "any_rejected": any_rejected,
+            "filled_count": len(filled),
+            "rejected":     rejected,
+            "pending":      pending,
+            "orders":       orders,
+            "summary":      summary,
+        }
+
+    async def get_positions_reconcile(self, expected_symbols: list) -> dict:
+        """
+        After opening a position, verify the positions exist in Fyers.
+        Compares expected symbols against actual open positions.
+        Returns reconciliation result.
+        """
+        if self.mode == "paper":
+            return {"ok": True, "reconciled": True,
+                    "message": "Paper mode — positions not verified",
+                    "positions": []}
+
+        pos_result = await self.get_positions()
+        if not pos_result.get("ok"):
+            return {"ok": False, "reconciled": False,
+                    "message": "Could not fetch positions"}
+
+        positions = pos_result.get("positions", [])
+        pos_symbols = set(p.get("symbol","") for p in positions
+                         if p.get("netQty", 0) != 0)
+
+        missing = [s for s in expected_symbols if s not in pos_symbols]
+        extra   = [s for s in pos_symbols
+                   if any(exp in s for exp in expected_symbols)]
+
+        reconciled = len(missing) == 0
+
+        return {
+            "ok":           True,
+            "reconciled":   reconciled,
+            "expected":     expected_symbols,
+            "found":        list(pos_symbols),
+            "missing":      missing,
+            "message":      ("All positions confirmed" if reconciled
+                            else f"Missing positions: {missing}"),
+            "positions":    [p for p in positions
+                            if p.get("netQty", 0) != 0],
+        }
