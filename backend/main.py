@@ -21,9 +21,25 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
-from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ResetToken, InviteLink
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations, SimulationTrade
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
+from simulation import run_simulation_service, sim_sessions
+
+# Per-user shadow engine states (paper simulation)
+shadow_engines: dict = {}  # user_id -> {auto_id -> EngineState}
+
+# Available symbols per broker (fetched from broker on connect)
+# Populated with defaults + any fetched from broker API
+NIFTY_SYMBOLS = [
+    {"value": "NSE:NIFTY50-INDEX",    "label": "NIFTY 50"},
+    {"value": "NSE:NIFTYBANK-INDEX",  "label": "BANK NIFTY"},
+    {"value": "NSE:FINNIFTY-INDEX",   "label": "FINNIFTY"},
+    {"value": "NSE:MIDCPNIFTY-INDEX", "label": "MIDCAP NIFTY"},
+    {"value": "BSE:SENSEX-INDEX",     "label": "SENSEX"},
+    {"value": "NSE:NIFTYIT-INDEX",    "label": "NIFTY IT"},
+    {"value": "NSE:NIFTYPHARMA-INDEX","label": "NIFTY PHARMA"},
+]
 
 # Per-user market data cache
 # Each user with a connected broker gets their own live feed entry.
@@ -58,22 +74,10 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine_db)
+    run_migrations(engine_db)
     db = SessionLocal()
     try:
-        # Run migrations for any missing columns
-        with engine_db.connect() as conn:
-            migrations = [
-                "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS refresh_token_enc TEXT",
-                "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS access_token_enc TEXT",
-                "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS last_token_refresh TIMESTAMP",
-                "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMP",
-            ]
-            for m in migrations:
-                try:
-                    conn.execute(text(m))
-                    conn.commit()
-                except Exception:
-                    pass
+        pass
 
         # Seed admin
         email = os.environ.get("SUPER_ADMIN_EMAIL", "")
@@ -87,30 +91,38 @@ def init_db():
             log.info(f"Admin created: {email}")
 
         # Seed Fyers definition
-        if not db.query(BrokerDefinition).filter(BrokerDefinition.broker_id == "fyers").first():
+        existing_fyers = db.query(BrokerDefinition).filter(
+            BrokerDefinition.broker_id == "fyers").first()
+        if not existing_fyers:
             db.add(BrokerDefinition(
                 broker_id="fyers", name="Fyers", flag="🇮🇳",
                 market="INDIA", test_method="oauth",
-                refresh_desc="Connect once — token refreshes automatically on every use. Never expires.",
+                refresh_desc="Connect once — auto-refreshes on every use.",
                 api_base_url="https://api-t1.fyers.in/api/v3",
                 sort_order=1,
+                symbols=NIFTY_SYMBOLS,
                 fields_config=[
-                    {"key": "client_id",    "label": "Client ID",
-                     "hint": "myapi.fyers.in → your app → Client ID (e.g. FYXXXXX-100)",
-                     "secret": False},
-                    {"key": "secret_key",   "label": "Secret Key",
-                     "hint": "myapi.fyers.in → your app → Secret Key",
-                     "secret": True},
-                    {"key": "pin",          "label": "4-digit PIN",
-                     "hint": "Your Fyers trading PIN — used for automatic token refresh",
-                     "secret": True},
-                    {"key": "redirect_uri", "label": "Redirect URI",
-                     "hint": "Must exactly match your Fyers app setting",
-                     "default": "https://trade.fyers.in/api-login/redirect-uri/index.html",
-                     "secret": False},
+                    {"key":"client_id","label":"Client ID",
+                     "hint":"myapi.fyers.in → your app → Client ID (e.g. FYXXXXX-100)",
+                     "secret":False},
+                    {"key":"secret_key","label":"Secret Key",
+                     "hint":"myapi.fyers.in → your app → Secret Key",
+                     "secret":True},
+                    {"key":"pin","label":"4-digit PIN",
+                     "hint":"Your Fyers trading PIN — used for automatic token refresh",
+                     "secret":True},
+                    {"key":"redirect_uri","label":"Redirect URI",
+                     "hint":"Must exactly match your Fyers app setting",
+                     "default":"https://trade.fyers.in/api-login/redirect-uri/index.html",
+                     "secret":False},
                 ]
             ))
             log.info("Fyers broker definition seeded")
+        else:
+            # Update symbols if empty
+            if not existing_fyers.symbols:
+                existing_fyers.symbols = NIFTY_SYMBOLS
+                log.info("Updated Fyers symbols")
 
         db.commit()
     except Exception as e:
@@ -199,6 +211,12 @@ async def startup():
     init_db()
     asyncio.create_task(_market_data_service())
     asyncio.create_task(_auto_resume_engines())
+    asyncio.create_task(run_simulation_service(
+        get_user_cache_fn=_user_cache,
+        session_factory=SessionLocal,
+        get_fyers_conn_fn=_get_fyers,
+        save_tokens_fn=_save_tokens,
+    ))
     log.info("ALGO-DESK v5 started ✓")
 
 
@@ -696,6 +714,21 @@ def market_status(user: User = Depends(get_current_user)):
         "updated": cache.get("updated"),
     }
 
+
+@app.get("/api/market/symbols")
+def get_symbols(user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """Returns available symbols from user's connected broker."""
+    bc = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.is_connected == True).first()
+    if bc:
+        bd = db.query(BrokerDefinition).filter(
+            BrokerDefinition.broker_id == bc.broker_id).first()
+        if bd and bd.symbols:
+            return {"symbols": bd.symbols}
+    return {"symbols": NIFTY_SYMBOLS}
+
 @app.get("/api/market/profile")
 async def market_profile(user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
@@ -846,20 +879,36 @@ def engine_status(user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     state = active_engines.get(user.id)
     if not state:
-        return {"running": False, "mode": "IDLE",
+        return {"running": False, "mode": "IDLE", "engine_mode": None,
                 "position": None, "day_pnl": 0}
     atm = state.atm
+    # Also load today's paper/shadow trades for live monitor history
+    today = datetime.now().strftime("%Y-%m-%d")
+    shadow_today = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date == today
+    ).order_by(ShadowTrade.created_at.desc()).limit(10).all()
+    shadow_history = [
+        {"strategy": t.strategy_code, "entry": t.entry_combined,
+         "exit": t.exit_combined, "pnl": t.net_pnl,
+         "exit_reason": t.exit_reason, "is_open": t.is_open,
+         "entry_time": t.entry_time.strftime("%H:%M") if t.entry_time else None,
+         "exit_time": t.exit_time.strftime("%H:%M") if t.exit_time else None}
+        for t in shadow_today
+    ]
     return {
-        "running":    True,
-        "mode":       "IN_TRADE" if state.position else "MONITORING",
-        "spot":       state.spot_history[-1] if state.spot_history else 0,
-        "atm":        state.atm_strike,
-        "combined":   atm.current if atm else 0,
-        "vwap":       atm.vwap_val if atm else 0,
-        "ema75":      atm.ema75 if atm else 0,
-        "position":   state.position,
-        "day_pnl":    state.day_pnl,
-        "log":        state.log[-10:],
+        "running":      True,
+        "mode":         "IN_TRADE" if state.position else "MONITORING",
+        "engine_mode":  state.config.get("mode", "paper"),
+        "spot":         state.spot_history[-1] if state.spot_history else 0,
+        "atm":          state.atm_strike,
+        "combined":     atm.current if atm else 0,
+        "vwap":         atm.vwap_val if atm else 0,
+        "ema75":        atm.ema75 if atm else 0,
+        "position":     state.position,
+        "day_pnl":      state.day_pnl,
+        "log":          state.log[-10:],
+        "today_trades": shadow_history,
     }
 
 # ── Trades ────────────────────────────────────────────────────
@@ -992,7 +1041,84 @@ async def _send_telegram(bot_token: str, chat_id: str, msg: str):
     except Exception as e:
         log.error(f"Telegram: {e}")
 
+async def _send_telegram_all(user: User, msg: str):
+    """Send to all active Telegram accounts configured by this user."""
+    sent = 0
+    # New multi-account list
+    for acct in (user.telegram_accounts or []):
+        if acct.get("active") and acct.get("token") and acct.get("chat"):
+            await _send_telegram(acct["token"], acct["chat"], msg)
+            sent += 1
+    # Legacy single account fallback
+    if sent == 0 and user.telegram_token and user.telegram_chat:
+        await _send_telegram(user.telegram_token, user.telegram_chat, msg)
+
 import httpx
+
+@app.get("/api/telegram/accounts")
+def get_telegram_accounts(user: User = Depends(get_current_user)):
+    accounts = user.telegram_accounts or []
+    # Include legacy as first account if exists and not already in list
+    if user.telegram_token and user.telegram_chat and not accounts:
+        accounts = [{"id":"legacy","name":"Default",
+                     "token":user.telegram_token,
+                     "chat":user.telegram_chat,"active":True}]
+    return {"accounts": accounts}
+
+class TelegramAccountReq(BaseModel):
+    name: str
+    token: str
+    chat: str
+    active: bool = True
+
+@app.post("/api/telegram/accounts")
+def add_telegram_account(req: TelegramAccountReq,
+                         user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    accounts = list(user.telegram_accounts or [])
+    accounts.append({"id": _uuid()[:8], "name": req.name,
+                     "token": req.token, "chat": req.chat,
+                     "active": req.active})
+    user.telegram_accounts = accounts
+    db.commit()
+    return {"ok": True, "accounts": accounts}
+
+@app.delete("/api/telegram/accounts/{acct_id}")
+def delete_telegram_account(acct_id: str,
+                             user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    user.telegram_accounts = [a for a in (user.telegram_accounts or [])
+                               if a.get("id") != acct_id]
+    db.commit()
+    return {"ok": True}
+
+@app.put("/api/telegram/accounts/{acct_id}")
+def toggle_telegram_account(acct_id: str, req: dict,
+                             user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    accounts = list(user.telegram_accounts or [])
+    for a in accounts:
+        if a.get("id") == acct_id:
+            a["active"] = req.get("active", True)
+    user.telegram_accounts = accounts
+    db.commit()
+    return {"ok": True}
+
+@app.post("/api/telegram/test/{acct_id}")
+async def test_telegram_account(acct_id: str,
+                                user: User = Depends(get_current_user)):
+    accounts = user.telegram_accounts or []
+    acct = next((a for a in accounts if a.get("id") == acct_id), None)
+    if not acct:
+        # Try legacy
+        if acct_id == "legacy" and user.telegram_token:
+            await _send_telegram(user.telegram_token, user.telegram_chat,
+                f"✅ Test\nHello {user.name}! This account is working.")
+            return {"ok": True}
+        raise HTTPException(404, "Account not found")
+    await _send_telegram(acct["token"], acct["chat"],
+        f"✅ Test from ALGO-DESK\nHello {user.name}!\nAccount [{acct['name']}] is working.")
+    return {"ok": True}
 
 @app.post("/api/telegram/test")
 async def test_telegram(user: User = Depends(get_current_user)):
@@ -1003,6 +1129,267 @@ async def test_telegram(user: User = Depends(get_current_user)):
     return {"ok": True}
 
 # ── WebSocket ─────────────────────────────────────────────────
+
+# ── Shadow trades (paper simulation) ─────────────────────────────
+
+@app.get("/api/shadow/trades")
+def get_shadow_trades(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns shadow (paper) trade history for performance analysis."""
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since
+    ).order_by(ShadowTrade.created_at.desc()).all()
+
+    return {"trades": [
+        {"id": t.id, "date": t.trade_date, "symbol": t.symbol,
+         "strategy": t.strategy_code, "atm": t.atm_strike,
+         "entry": t.entry_combined, "exit": t.exit_combined,
+         "entry_time": t.entry_time.isoformat() if t.entry_time else None,
+         "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+         "exit_reason": t.exit_reason,
+         "pnl": t.net_pnl, "lots": t.lots,
+         "is_open": t.is_open,
+         "entry_spot": t.entry_spot,
+         "sl_tracking": t.sl_tracking or {}}
+        for t in trades
+    ]}
+
+
+@app.get("/api/shadow/performance")
+def shadow_performance(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Performance summary for shadow trades."""
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since,
+        ShadowTrade.is_open == False
+    ).all()
+
+    if not trades:
+        return {"total_trades":0,"total_pnl":0,"win_rate":0,
+                "avg_pnl":0,"best_day":None,"worst_day":None,
+                "by_strategy":{},"by_day":[],"days":days}
+
+    total_pnl = sum(t.net_pnl or 0 for t in trades)
+    wins   = [t for t in trades if (t.net_pnl or 0) > 0]
+    losses = [t for t in trades if (t.net_pnl or 0) <= 0]
+
+    # By strategy
+    by_strat = {}
+    for t in trades:
+        s = t.strategy_code
+        if s not in by_strat:
+            by_strat[s] = {"trades":0,"wins":0,"total_pnl":0,"avg_pnl":0}
+        by_strat[s]["trades"] += 1
+        by_strat[s]["total_pnl"] += t.net_pnl or 0
+        if (t.net_pnl or 0) > 0:
+            by_strat[s]["wins"] += 1
+    for s in by_strat:
+        n = by_strat[s]["trades"]
+        by_strat[s]["win_rate"] = round(by_strat[s]["wins"]/n*100,1) if n else 0
+        by_strat[s]["avg_pnl"]  = round(by_strat[s]["total_pnl"]/n,0) if n else 0
+        by_strat[s]["total_pnl"]= round(by_strat[s]["total_pnl"],0)
+
+    # By day
+    day_map = {}
+    for t in trades:
+        d = t.trade_date
+        if d not in day_map:
+            day_map[d] = {"date":d,"trades":0,"pnl":0,"wins":0}
+        day_map[d]["trades"] += 1
+        day_map[d]["pnl"]    += t.net_pnl or 0
+        if (t.net_pnl or 0) > 0:
+            day_map[d]["wins"] += 1
+    by_day = sorted(day_map.values(), key=lambda x: x["date"])
+    for d in by_day:
+        d["pnl"] = round(d["pnl"], 0)
+
+    # Exit reasons
+    exit_reasons = {}
+    for t in trades:
+        r = t.exit_reason or "UNKNOWN"
+        exit_reasons[r] = exit_reasons.get(r, 0) + 1
+
+    # Running equity
+    equity = 0
+    equity_curve = []
+    for d in by_day:
+        equity += d["pnl"]
+        equity_curve.append({"date":d["date"],"equity":round(equity,0)})
+
+    best_day  = max(by_day, key=lambda x: x["pnl"]) if by_day else None
+    worst_day = min(by_day, key=lambda x: x["pnl"]) if by_day else None
+
+    return {
+        "total_trades":  len(trades),
+        "total_pnl":     round(total_pnl, 0),
+        "wins":          len(wins),
+        "losses":        len(losses),
+        "win_rate":      round(len(wins)/len(trades)*100,1),
+        "avg_pnl":       round(total_pnl/len(trades),0),
+        "best_day":      best_day,
+        "worst_day":     worst_day,
+        "by_strategy":   by_strat,
+        "by_day":        by_day,
+        "equity_curve":  equity_curve,
+        "exit_reasons":  exit_reasons,
+        "days":          days,
+    }
+
+
+# ── Shadow engine helper ──────────────────────────────────────────
+
+async def _run_shadow_trade(user_id: str, auto: Automation,
+                             signal: dict, entry_combined: float,
+                             entry_spot: float, db_factory):
+    """
+    Runs a shadow (paper) trade from entry to exit.
+    Monitors combined premium every 60s using market data cache.
+    Stores complete result in shadow_trades table.
+    Sends Telegram alert if configured.
+    """
+    import pytz
+    from datetime import time as dtime
+    ist = pytz.timezone("Asia/Kolkata")
+
+    config = {**auto.config, "strategies": auto.strategies}
+    lot_sz = int(config.get("lot_size", 25))
+    lots   = int(config.get("lots", 1))
+
+    # Create shadow trade record
+    db = SessionLocal()
+    try:
+        st = ShadowTrade(
+            user_id=user_id, automation_id=auto.id,
+            trade_date=datetime.now(ist).strftime("%Y-%m-%d"),
+            symbol=auto.symbol, strategy_code=signal["code"],
+            atm_strike=signal.get("strike", 0),
+            entry_combined=entry_combined, entry_spot=entry_spot,
+            entry_time=datetime.utcnow(),
+            lots=lots, lot_size=lot_sz,
+            is_open=True, signal_data=signal,
+        )
+        db.add(st); db.commit(); db.refresh(st)
+        trade_id = st.id
+
+        # Send paper mode entry alert
+        if auto.telegram_alerts:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                await _send_telegram_all(user,
+                    f"📋 [PAPER MODE] {signal['code']}: {signal['name']}\n"
+                    f"Symbol: {auto.symbol}\n"
+                    f"Strike: {signal.get('strike')}\n"
+                    f"Combined: ₹{entry_combined:.1f}\n"
+                    f"Time: {datetime.now(ist).strftime('%H:%M')} IST\n"
+                    f"⚠️ This is a simulation — no real orders placed.")
+    finally:
+        db.close()
+
+    # Monitor position using market data cache
+    from engine import SLState, nearest_strike
+    sl = SLState()
+    sl.activate(entry_combined, config)
+    sl_tracking = {}
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            now = datetime.now(ist)
+            t   = now.time()
+
+            # Auto-exit at configured time
+            exit_time = config.get("auto_exit_time", "14:00")
+            eh, em = map(int, exit_time.split(":"))
+            if t >= dtime(eh, em):
+                await _close_shadow_trade(trade_id, user_id, "AUTO_EXIT",
+                    entry_combined, auto, lots, lot_sz, sl_tracking)
+                return
+
+            # Market closed
+            if t > dtime(15, 30):
+                await _close_shadow_trade(trade_id, user_id, "MARKET_CLOSE",
+                    entry_combined, auto, lots, lot_sz, sl_tracking)
+                return
+
+            # Get current combined from cache
+            cache = _user_cache(user_id)
+            if not cache.get("chain"):
+                continue
+
+            atm = signal.get("strike", nearest_strike(cache.get("spot", 0)))
+            chain_entry = cache["chain"].get(atm)
+            if not chain_entry:
+                continue
+
+            current = chain_entry.get("combined", entry_combined)
+            vwap    = 0.0  # simplified — full VWAP needs history
+            ema75   = 0.0
+
+            sl_tracking = {
+                "current": current,
+                "trailing_low": sl.trailing_low,
+                "trailing_sl": sl.trailing_sl,
+                "candles": sl.candles,
+            }
+
+            should_exit, reason = sl.update(current, vwap, ema75, 0, config)
+            if should_exit:
+                await _close_shadow_trade(trade_id, user_id, reason,
+                    current, auto, lots, lot_sz, sl_tracking)
+                return
+
+        except Exception as e:
+            log.error(f"Shadow trade monitor: {e}")
+
+
+async def _close_shadow_trade(trade_id, user_id, reason,
+                               exit_combined, auto, lots, lot_sz, sl_tracking):
+    """Close a shadow trade and send Telegram summary."""
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    db = SessionLocal()
+    try:
+        t = db.query(ShadowTrade).filter(ShadowTrade.id == trade_id).first()
+        if not t or not t.is_open:
+            return
+        pnl = (t.entry_combined - exit_combined) * lots * lot_sz
+        t.exit_combined = exit_combined
+        t.exit_time     = datetime.utcnow()
+        t.exit_reason   = reason
+        t.gross_pnl     = round(pnl, 2)
+        t.net_pnl       = round(pnl - 40, 2)
+        t.is_open       = False
+        t.sl_tracking   = sl_tracking
+        db.commit()
+
+        if auto.telegram_alerts:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                emoji = "✅" if pnl > 0 else "🔴"
+                await _send_telegram_all(user,
+                    f"{emoji} [PAPER MODE] Trade Closed\n"
+                    f"Strategy: {t.strategy_code}\n"
+                    f"Entry: ₹{t.entry_combined:.1f} → Exit: ₹{exit_combined:.1f}\n"
+                    f"P&L: ₹{pnl:+.0f}\n"
+                    f"Reason: {reason}\n"
+                    f"⚠️ Simulation only — no real money")
+    finally:
+        db.close()
+
+
+@app.websocket("/ws/{user_id}")
 
 @app.websocket("/ws/{user_id}")
 async def ws_endpoint(websocket: WebSocket, user_id: str):
@@ -1270,6 +1657,156 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
             db.close()
 
     state.position = None
+
+# ── Simulation endpoints ─────────────────────────────────────
+
+@app.get("/api/simulation/trades")
+def get_sim_trades(
+    days: int = 7,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get simulation trades for last N days."""
+    from datetime import date, timedelta
+    since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    trades = db.query(SimulationTrade).filter(
+        SimulationTrade.user_id == user.id,
+        SimulationTrade.trade_date >= since
+    ).order_by(SimulationTrade.created_at.desc()).all()
+
+    return {"trades": [
+        {
+            "id":            t.id,
+            "date":          t.trade_date,
+            "strategy":      t.strategy_code,
+            "symbol":        t.symbol,
+            "atm":           t.atm_strike,
+            "entry":         t.entry_combined,
+            "exit":          t.exit_combined,
+            "entry_time":    t.entry_time.strftime("%H:%M") if t.entry_time else None,
+            "exit_time":     t.exit_time.strftime("%H:%M") if t.exit_time else None,
+            "exit_reason":   t.exit_reason,
+            "pnl":           t.net_pnl,
+            "is_open":       t.is_open,
+            "lots":          t.lots,
+            "lot_size":      t.lot_size,
+            "vwap_entry":    t.vwap_at_entry,
+            "trail_low":     t.sl_trail_low,
+            "premium_ticks": len(t.premium_history or []),
+        }
+        for t in trades
+    ]}
+
+
+@app.get("/api/simulation/summary")
+def sim_summary(
+    days: int = 7,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Performance summary for last N days."""
+    from datetime import date, timedelta
+    since = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    trades = db.query(SimulationTrade).filter(
+        SimulationTrade.user_id == user.id,
+        SimulationTrade.trade_date >= since,
+        SimulationTrade.is_open == False
+    ).all()
+
+    if not trades:
+        return {
+            "total_trades": 0, "wins": 0, "losses": 0,
+            "win_rate": 0, "total_pnl": 0, "avg_pnl": 0,
+            "best_trade": 0, "worst_trade": 0,
+            "by_strategy": {}, "by_day": {},
+        }
+
+    pnls = [t.net_pnl or 0 for t in trades]
+    wins = sum(1 for p in pnls if p > 0)
+    total = sum(pnls)
+
+    # By strategy
+    by_strat = {}
+    for t in trades:
+        s = t.strategy_code
+        if s not in by_strat:
+            by_strat[s] = {"trades":0,"wins":0,"pnl":0}
+        by_strat[s]["trades"] += 1
+        by_strat[s]["pnl"]    += t.net_pnl or 0
+        if (t.net_pnl or 0) > 0:
+            by_strat[s]["wins"] += 1
+    for s in by_strat:
+        n = by_strat[s]["trades"]
+        by_strat[s]["win_rate"] = round(by_strat[s]["wins"]/n*100,1) if n else 0
+        by_strat[s]["avg_pnl"]  = round(by_strat[s]["pnl"]/n,0) if n else 0
+
+    # By day
+    by_day = {}
+    for t in trades:
+        d = t.trade_date
+        if d not in by_day:
+            by_day[d] = {"trades":0,"pnl":0,"wins":0}
+        by_day[d]["trades"] += 1
+        by_day[d]["pnl"]    += t.net_pnl or 0
+        if (t.net_pnl or 0) > 0:
+            by_day[d]["wins"] += 1
+
+    return {
+        "total_trades": len(trades),
+        "wins":         wins,
+        "losses":       len(trades) - wins,
+        "win_rate":     round(wins/len(trades)*100,1) if trades else 0,
+        "total_pnl":    round(total, 0),
+        "avg_pnl":      round(total/len(trades),0) if trades else 0,
+        "best_trade":   round(max(pnls),0),
+        "worst_trade":  round(min(pnls),0),
+        "by_strategy":  by_strat,
+        "by_day":       by_day,
+    }
+
+
+@app.get("/api/simulation/today")
+def sim_today(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Today's simulation status — current session + today's trades."""
+    from datetime import date
+    today = date.today().strftime("%Y-%m-%d")
+
+    trades = db.query(SimulationTrade).filter(
+        SimulationTrade.user_id == user.id,
+        SimulationTrade.trade_date == today
+    ).all()
+
+    session = sim_sessions.get(user.id)
+    session_log = session.log[-20:] if session else []
+    day_pnl = session.day_pnl if session else sum(t.net_pnl or 0 for t in trades if not t.is_open)
+    open_trade = next((t for t in trades if t.is_open), None)
+
+    return {
+        "running":   bool(session),
+        "day_pnl":   round(day_pnl, 0),
+        "trades":    len(trades),
+        "open_position": {
+            "strategy":   open_trade.strategy_code,
+            "entry":      open_trade.entry_combined,
+            "entry_time": open_trade.entry_time.strftime("%H:%M") if open_trade.entry_time else None,
+        } if open_trade else None,
+        "log": session_log,
+        "today_trades": [
+            {
+                "strategy": t.strategy_code,
+                "entry":    t.entry_combined,
+                "exit":     t.exit_combined,
+                "pnl":      round(t.net_pnl or 0, 0),
+                "reason":   t.exit_reason,
+                "is_open":  t.is_open,
+            }
+            for t in trades
+        ]
+    }
+
 
 # ── Frontend ──────────────────────────────────────────────────
 
