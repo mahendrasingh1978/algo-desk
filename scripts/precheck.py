@@ -141,6 +141,21 @@ if opens != closes:
 else:
     ok(f"Balanced braces ({opens})")
 
+# Check for unescaped onclick nav() calls inside single-quoted JS strings
+# e.g. + '<button onclick="nav('automate')"> — breaks the outer string
+import re as _re
+nav_in_str = []
+for i, line in enumerate(js.split('\n'), 1):
+    stripped = line.strip()
+    if (stripped.startswith("+ '") or stripped.startswith("'<")):
+        if _re.search(r"nav\('[^'\\\\]+'\)", line):
+            nav_in_str.append(f"Line {i}: {stripped[:80]}")
+if nav_in_str:
+    for n in nav_in_str:
+        err(f"Unescaped nav() in JS string — {n}")
+else:
+    ok("No unescaped nav() calls in JS strings")
+
 # Quote errors
 js_lines = js.split('\n')
 quote_errors = []
