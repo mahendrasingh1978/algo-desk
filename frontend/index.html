@@ -374,6 +374,10 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Profile
       </div>
+      <div class="sidenav-item" onclick="nav('simulate')" id="sn-simulate">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px;stroke-width:2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Performance
+      </div>
       <div class="sidenav-item" onclick="nav('admin')" id="sn-admin" style="display:none">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Admin
@@ -426,10 +430,11 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
               <div class="tile-value" id="dash-combined">—</div>
               <div class="tile-sub" id="dash-atm-sub">CE + PE</div>
             </div>
-            <div class="tile">
+            <div class="tile" id="dash-engine-tile">
               <div class="tile-label">Engine</div>
+              <div id="dash-mode-badge" style="display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--g100);color:var(--g500);margin-bottom:4px">IDLE</div>
               <div class="tile-value" id="dash-engine" style="font-size:13px;font-weight:600">IDLE</div>
-              <div class="tile-sub" id="dash-mode">Paper mode</div>
+              <div class="tile-sub" id="dash-mode">Not running</div>
             </div>
             <div class="tile">
               <div class="tile-label">Today's Trades</div>
@@ -583,9 +588,8 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
                 <label>Symbol</label>
                 <select id="auto-sym">
                   <option value="NSE:NIFTY50-INDEX">NIFTY 50</option>
-                  <option value="NSE:NIFTYBANK-INDEX">BANK NIFTY</option>
-                  <option value="NSE:FINNIFTY-INDEX">FINNIFTY</option>
                 </select>
+                <div class="field-hint">Symbols loaded from your connected broker</div>
               </div>
               <div class="field">
                 <label>Broker</label>
@@ -593,13 +597,45 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
                   <option value="">Select broker...</option>
                 </select>
               </div>
-              <div class="field">
-                <label>Max Daily Loss (₹)</label>
-                <input type="number" id="auto-maxloss" value="5000">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="field">
+                  <label>Lots</label>
+                  <input type="number" id="auto-lots" value="1" min="1" max="10">
+                  <div class="field-hint">Number of lots to trade</div>
+                </div>
+                <div class="field">
+                  <label>Lot Size</label>
+                  <input type="number" id="auto-lotsize" value="75" min="1">
+                  <div class="field-hint">NIFTY: 75 (post Nov 2024)</div>
+                </div>
               </div>
-              <div class="field">
-                <label>Auto Exit Time</label>
-                <input type="time" id="auto-exit" value="14:00">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="field">
+                  <label>Max Loss %</label>
+                  <input type="number" id="auto-maxloss" value="30" min="10" max="50">
+                  <div class="field-hint">% of combined premium</div>
+                </div>
+                <div class="field">
+                  <label>Profit Target %</label>
+                  <input type="number" id="auto-profit" value="50" min="20" max="80">
+                  <div class="field-hint">Industry std: 50%</div>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="field">
+                  <label>Hedge Width</label>
+                  <select id="auto-hedge">
+                    <option value="1">±1 (Iron Fly tight)</option>
+                    <option value="2" selected>±2 (Iron Fly standard)</option>
+                    <option value="3">±3 (Iron Condor)</option>
+                    <option value="4">±4 (Wide Condor)</option>
+                  </select>
+                  <div class="field-hint">Wider = more premium, more risk</div>
+                </div>
+                <div class="field">
+                  <label>Auto Exit Time</label>
+                  <input type="time" id="auto-exit" value="14:00">
+                </div>
               </div>
 
               <div style="margin-bottom:12px">
@@ -607,9 +643,25 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
                 <div id="autoStratPicker"></div>
               </div>
 
+              <div style="margin-bottom:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--g100)">
+                  <div>
+                    <div style="font-size:13px;font-weight:600">Shadow Mode</div>
+                    <div style="font-size:11px;color:var(--g500)">Run automatically in paper mode, store results for analysis</div>
+                  </div>
+                  <label class="toggle"><input type="checkbox" id="auto-shadow" checked><div class="toggle-track"></div></label>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
+                  <div>
+                    <div style="font-size:13px;font-weight:600">Telegram Alerts</div>
+                    <div style="font-size:11px;color:var(--g500)">Send paper mode signals to Telegram (labelled as simulation)</div>
+                  </div>
+                  <label class="toggle"><input type="checkbox" id="auto-tg" checked><div class="toggle-track"></div></label>
+                </div>
+              </div>
               <div class="alert alert-warn" style="margin-bottom:12px">
                 <span class="alert-icon">⚠</span>
-                <span>Start in <strong>Paper mode</strong> first. Switch to Live after validating results.</span>
+                <span>Start in <strong>Paper mode</strong>. Review Results page after 1 week before going live.</span>
               </div>
               <div class="btn-row">
                 <button class="btn btn-ghost" style="flex:1" onclick="saveAuto('paper')">Save as Paper</button>
@@ -668,10 +720,26 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
           </div>
         </div>
 
+        <!-- Mode indicator in live monitor -->
+        <div class="section" style="padding-top:0">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div id="live-mode-badge" style="padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;background:var(--g100);color:var(--g500)">IDLE</div>
+            <div id="live-mode-desc" style="font-size:12px;color:var(--g500)">Start an automation to begin trading</div>
+          </div>
+        </div>
+
         <!-- Open position -->
-        <div class="section" style="padding-top:0" id="positionSection" style="display:none">
+        <div class="section" style="padding-top:0" id="positionSection">
           <div class="section-title">Open Position</div>
           <div id="positionCard"></div>
+        </div>
+
+        <!-- Trade history for today -->
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Today's Entries & Exits</div>
+          <div id="liveTradeHistory">
+            <div style="color:var(--g400);font-size:12px">No trades yet today</div>
+          </div>
         </div>
 
         <!-- Option chain -->
@@ -759,18 +827,19 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
 
         <div class="section" style="padding-top:0">
           <div class="section-title">Telegram Alerts</div>
-          <div class="card">
+          <div class="alert alert-info" style="margin:0 16px 12px">
+            <span class="alert-icon">📱</span>
+            <span>Add multiple Telegram accounts. All active accounts receive alerts. Paper mode alerts are clearly marked as simulation.</span>
+          </div>
+          <div id="tg-accounts-list"></div>
+          <div class="card" style="margin:0 0 0 0">
+            <div class="card-header"><div class="card-title">Add Telegram Account</div></div>
             <div class="card-body">
-              <div class="alert alert-info" style="margin-bottom:14px">
-                <span class="alert-icon">📱</span>
-                <span>Get instant alerts for every signal, trade entry and exit on your phone.</span>
-              </div>
-              <div class="field"><label>Bot Token</label><input id="prof-tg" type="password" placeholder="From @BotFather"></div>
-              <div class="field"><label>Chat ID</label><input id="prof-tgchat" placeholder="From @userinfobot"></div>
-              <div class="btn-row">
-                <button class="btn btn-black" onclick="saveTelegram()">Save</button>
-                <button class="btn btn-ghost" onclick="testTelegram()">Send Test</button>
-              </div>
+              <div class="field"><label>Account Name</label><input id="tg-name" placeholder="e.g. My Phone, Work Phone"></div>
+              <div class="field"><label>Bot Token</label><input id="tg-token" type="password" placeholder="From @BotFather on Telegram"></div>
+              <div class="field"><label>Chat ID</label><input id="tg-chat" placeholder="From @userinfobot on Telegram"></div>
+              <div class="field-hint" style="margin-bottom:10px">1. Create bot with @BotFather → copy token<br>2. Message @userinfobot → copy your chat ID</div>
+              <button class="btn btn-black" onclick="addTelegramAccount()">Add Account</button>
             </div>
           </div>
         </div>
@@ -870,6 +939,14 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
       <button class="nav-item" id="bn-trades" onclick="nav('trades')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Trades
+      </button>
+      <button class="nav-item" id="bn-simulate" onclick="nav('simulate')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="12" r="0"/></svg>
+        Perf
+      </button>
+      <button class="nav-item" id="bn-performance" onclick="nav('performance')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Results
       </button>
       <button class="nav-item" id="bn-profile" onclick="nav('profile')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -1086,7 +1163,7 @@ async function loadApp() {
 
 // ── NAV ───────────────────────────────────────────────
 function nav(id) {
-  var ids = ['dashboard','brokers','automate','live','trades','profile','admin'];
+  var ids = ['dashboard','brokers','automate','live','trades','simulate','profile','admin'];
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
   // bottom nav
   ids.forEach(n => {
@@ -1100,6 +1177,7 @@ function nav(id) {
   if (id==='automate')  loadAutomate();
   if (id==='live')      refreshLive();
   if (id==='trades')    loadTrades();
+  if (id==='simulate')  loadSimulation();
   if (id==='profile')   loadProfile();
   if (id==='admin')     loadAdmin();
 }
@@ -1136,8 +1214,26 @@ async function refreshDashboard() {
     var pnlEl = document.getElementById('dash-pnl');
     pnlEl.textContent = (pnl>=0?'+':'') + '₹' + Math.abs(pnl).toLocaleString('en-IN',{minimumFractionDigits:0});
     pnlEl.className = 'big-num ' + (pnl>0?'pos':pnl<0?'neg':'');
-    document.getElementById('dash-engine').textContent = eng.running ? eng.mode : 'IDLE';
-    document.getElementById('dash-engine').style.color = eng.running ? 'var(--green)' : 'var(--black)';
+    var engEl   = document.getElementById('dash-engine');
+    var badgeEl = document.getElementById('dash-mode-badge');
+    var modeEl  = document.getElementById('dash-mode');
+    if (eng.running) {
+      engEl.textContent = eng.mode || 'RUNNING';
+      engEl.style.color = 'var(--green-dark)';
+      // Show live/paper badge
+      var isLive = eng.mode === 'live';
+      if (badgeEl) {
+        badgeEl.textContent = isLive ? '🔴 LIVE' : '📋 PAPER';
+        badgeEl.style.background = isLive ? 'var(--red)' : 'var(--amber-lt)';
+        badgeEl.style.color = isLive ? '#fff' : 'var(--amber)';
+      }
+      if (modeEl) modeEl.textContent = isLive ? 'Real money trading' : 'Paper simulation';
+    } else {
+      engEl.textContent = 'IDLE';
+      engEl.style.color = 'var(--g400)';
+      if (badgeEl) { badgeEl.textContent = 'IDLE'; badgeEl.style.background='var(--g100)'; badgeEl.style.color='var(--g500)'; }
+      if (modeEl) modeEl.textContent = 'Not running';
+    }
 
     if (eng.spot) {
       document.getElementById('dash-spot').textContent = '₹'+Number(eng.spot).toLocaleString('en-IN');
@@ -1465,22 +1561,35 @@ async function loadAutomate() {
     var autos = d.automations||[];
     var el = document.getElementById('automationsList');
     el.innerHTML = autos.length ? autos.map(a=>`
-      <div class="card" style="margin-bottom:8px">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${a.name}</div>
-            <div style="font-size:11px;color:var(--g400);margin-top:2px">${a.symbol?.split(':')[1]||a.symbol} · ${a.strategies?.join(', ')}</div>
+      <div class="card" style="margin-bottom:10px;border:${a.mode==='live'?'2px solid var(--red)':'1.5px solid var(--g200)'}">
+        <div style="padding:12px 16px">
+          <!-- Mode banner -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="padding:4px 10px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.5px;background:${a.mode==='live'?'var(--red)':'var(--amber-lt)'};color:${a.mode==='live'?'#fff':'var(--amber)'};border:${a.mode==='live'?'none':'1px solid var(--amber)'}">
+                ${a.mode==='live'?'🔴 LIVE':'📋 PAPER'}
+              </div>
+              ${a.shadow_mode?`<div style="padding:3px 8px;border-radius:99px;font-size:10px;background:var(--blue-lt);color:var(--blue);border:1px solid #bfdbfe">Shadow ON</div>`:''}
+              ${a.is_running?`<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--green-dark);font-weight:600"><div style="width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite"></div>Running</div>`:`<div style="font-size:11px;color:var(--g400)">Idle</div>`}
+            </div>
+            <div style="display:flex;gap:4px">
+              ${!a.is_running?`<button class="btn btn-black btn-sm" onclick="quickStart('${a.id}')">▶ Start</button>`:`<button class="btn btn-red btn-sm" onclick="stopEngine()">■ Stop</button>`}
+              <button class="btn btn-ghost btn-sm" onclick="deleteAuto('${a.id}')">✕</button>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span class="badge ${a.mode==='live'?'badge-green':'badge-amber'}">${(a.mode||'paper').toUpperCase()}</span>
-            <span class="badge ${a.is_running?'badge-green':'badge-gray'}">${a.is_running?'Running':'Idle'}</span>
+          <!-- Name and symbol -->
+          <div style="font-size:14px;font-weight:600;margin-bottom:3px">${a.name}</div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:8px">${a.symbol?.split(':')[1]||a.symbol}</div>
+          <!-- Strategies -->
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+            ${(a.strategies||[]).map(s=>`<span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:600;background:var(--g100);color:var(--g600)">${s}</span>`).join('')}
           </div>
-        </div>
-        <div class="card-body" style="padding:10px 16px">
-          <div class="btn-row">
-            ${!a.is_running?`<button class="btn btn-black btn-sm" onclick="quickStart('${a.id}')">▶ Start</button>`:''}
-            ${a.is_running?`<button class="btn btn-red btn-sm" onclick="stopEngine()">■ Stop</button>`:''}
-            <button class="btn btn-ghost btn-sm" onclick="deleteAuto('${a.id}')">Delete</button>
+          <!-- Config row -->
+          <div style="display:flex;gap:12px;font-size:11px;color:var(--g400)">
+            <span>Lots: ${a.config?.lots||1}</span>
+            <span>Lot size: ${a.config?.lot_size||75}</span>
+            <span>Exit: ${a.config?.auto_exit_time||'14:00'}</span>
+            <span>Max loss: ${a.config?.max_loss_pct||30}%</span>
           </div>
         </div>
       </div>`).join('')
@@ -1900,6 +2009,476 @@ async function updateMarketTicker() {
   } catch(e) {}
 }
 
+// ═══════════════════════════════════════════════════════
+// SIMULATION / PERFORMANCE
+// ═══════════════════════════════════════════════════════
+async function loadSimulation() {
+  if (!session.token) return;
+  try {
+    var days = document.getElementById('simDaysSelect')?.value || 7;
+    var [today, summary, trades] = await Promise.all([
+      api('GET','/api/simulation/today'),
+      api('GET',`/api/simulation/summary?days=${days}`),
+      api('GET',`/api/simulation/trades?days=${days}`),
+    ]);
+
+    // Today card
+    var dot = document.getElementById('simDot');
+    var statusTxt = document.getElementById('simStatusText');
+    if (today.running) {
+      dot.style.background = 'var(--green)';
+      dot.style.boxShadow = '0 0 6px var(--green)';
+      statusTxt.textContent = 'Simulation running · ' + (today.trades||0) + ' signal(s) today';
+    } else {
+      dot.style.background = 'var(--g300)';
+      dot.style.boxShadow = 'none';
+      statusTxt.textContent = today.trades > 0
+        ? 'Market closed · ' + today.trades + ' trade(s) recorded'
+        : 'Waiting for market open (9:15 AM IST)';
+    }
+
+    var dayPnl = today.day_pnl || 0;
+    var pnlEl = document.getElementById('sim-today-pnl');
+    pnlEl.textContent = (dayPnl>=0?'+':'')+'₹'+Math.abs(dayPnl).toFixed(0);
+    pnlEl.style.color = dayPnl>0?'var(--green-dark)':dayPnl<0?'var(--red)':'inherit';
+    document.getElementById('sim-today-trades').textContent = today.trades || 0;
+
+    // Open position
+    if (today.open_position) {
+      document.getElementById('simOpenPos').style.display = 'flex';
+      document.getElementById('simOpenPosText').innerHTML =
+        `<strong>${today.open_position.strategy}</strong> open since ${today.open_position.entry_time} · Entry combined: ${today.open_position.entry}`;
+    }
+
+    // Today's trade list
+    if (today.today_trades && today.today_trades.length) {
+      document.getElementById('simTodayList').innerHTML = today.today_trades.map(t=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--g100);font-size:12px">
+          <div style="width:28px;height:28px;border-radius:50%;background:${t.pnl>0?'var(--green-lt)':t.is_open?'var(--amber-lt)':'var(--red-lt)'};display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">
+            ${t.is_open?'⏳':t.pnl>0?'↑':'↓'}
+          </div>
+          <div style="flex:1">
+            <div style="font-weight:600">${t.strategy}</div>
+            <div style="color:var(--g400);font-size:11px">Entry ${t.entry?.toFixed(1)||'—'} → ${t.exit?t.exit.toFixed(1):'open'} · ${t.reason||'open'}</div>
+          </div>
+          <div style="font-weight:600;font-family:var(--mono);color:${t.pnl>0?'var(--green-dark)':t.is_open?'var(--amber)':'var(--red)'}">
+            ${t.is_open?'OPEN':(t.pnl>=0?'+':'')+'₹'+Math.abs(t.pnl||0).toFixed(0)}
+          </div>
+        </div>`).join('');
+    }
+
+    // Summary
+    var totalPnl = summary.total_pnl || 0;
+    var tpEl = document.getElementById('sim-total-pnl');
+    tpEl.textContent = (totalPnl>=0?'+':'')+'₹'+Math.abs(totalPnl).toFixed(0);
+    tpEl.style.color = totalPnl>0?'var(--green-dark)':totalPnl<0?'var(--red)':'inherit';
+    document.getElementById('sim-wr').textContent = (summary.win_rate||0)+'%';
+    document.getElementById('sim-count').textContent = summary.total_trades||0;
+
+    // Best day
+    var byDay = summary.by_day || {};
+    var dayPnls = Object.values(byDay).map(d=>d.pnl||0);
+    var bestDay = dayPnls.length ? Math.max(...dayPnls) : 0;
+    var bestEl = document.getElementById('sim-best');
+    bestEl.textContent = (bestDay>=0?'+':'')+'₹'+Math.abs(bestDay).toFixed(0);
+    bestEl.style.color = bestDay>0?'var(--green-dark)':'inherit';
+
+    // Chart
+    renderSimChart(byDay);
+
+    // Strategy breakdown
+    var byStrat = summary.by_strategy || {};
+    var stratKeys = Object.keys(byStrat);
+    if (stratKeys.length) {
+      document.getElementById('simStratBreakdown').innerHTML = stratKeys.map(code => {
+        var s = byStrat[code];
+        var pnlColor = s.pnl>0?'var(--green-dark)':s.pnl<0?'var(--red)':'inherit';
+        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${code}</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${code}</div>
+            <div style="font-size:11px;color:var(--g400)">${s.trades} trades · ${s.win_rate}% win rate · avg ₹${s.avg_pnl}</div>
+          </div>
+          <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${pnlColor}">
+            ${s.pnl>=0?'+':''}₹${Math.abs(s.pnl||0).toFixed(0)}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // Trade list
+    var tradeList = trades.trades || [];
+    if (tradeList.length) {
+      document.getElementById('simTradeList').innerHTML = tradeList.map(t => {
+        var pnl = t.pnl || 0;
+        var pnlColor = t.is_open?'var(--amber)':pnl>0?'var(--green-dark)':'var(--red)';
+        return `<div style="padding:12px 0;border-bottom:1px solid var(--g100)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <div style="font-size:13px;font-weight:600">${t.strategy} · ${t.symbol} · ATM ${t.atm}</div>
+            <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${pnlColor}">
+              ${t.is_open?'OPEN':(pnl>=0?'+':'')+'₹'+Math.abs(pnl).toFixed(0)}
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--g400)">
+            ${t.date} · ${t.entry_time||'—'} → ${t.exit_time||'open'} · 
+            Entry ${t.entry?.toFixed(1)||'—'} → Exit ${t.exit?.toFixed(1)||'open'} ·
+            ${t.exit_reason||'open'} · ${t.premium_ticks} ticks recorded
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      document.getElementById('simTradeList').innerHTML =
+        '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No simulation trades yet</div><div class="empty-sub">Simulation runs automatically every trading day once your broker is connected and you have an automation created.</div></div>';
+    }
+
+  } catch(e) {
+    console.error('Simulation load error:', e);
+  }
+}
+
+function renderSimChart(byDay) {
+  var canvas = document.getElementById('simChart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var days = Object.keys(byDay).sort();
+  if (!days.length) {
+    ctx.fillStyle = getComputedStyle(document.documentElement)
+      .getPropertyValue('--g300') || '#ccc';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No data yet', canvas.width/2, canvas.height/2);
+    return;
+  }
+  var pnls = days.map(d => byDay[d].pnl || 0);
+  var maxAbs = Math.max(Math.abs(Math.max(...pnls)), Math.abs(Math.min(...pnls)), 1);
+  var w = canvas.width = canvas.offsetWidth;
+  var h = canvas.height = 140;
+  var pad = 32;
+  var barW = Math.min(40, (w - pad*2) / days.length - 4);
+  ctx.clearRect(0,0,w,h);
+
+  // Zero line
+  var zero = h/2;
+  ctx.strokeStyle = '#e5e7eb';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad,zero); ctx.lineTo(w-pad,zero); ctx.stroke();
+
+  days.forEach((day, i) => {
+    var pnl = pnls[i];
+    var x = pad + i * ((w-pad*2)/days.length) + barW/2;
+    var barH = (Math.abs(pnl) / maxAbs) * (h/2 - 20);
+    var y = pnl >= 0 ? zero - barH : zero;
+    ctx.fillStyle = pnl >= 0 ? '#00c805' : '#ff5000';
+    ctx.beginPath();
+    ctx.roundRect(x - barW/2, y, barW, barH, 3);
+    ctx.fill();
+    // Date label
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    var label = day.slice(5); // MM-DD
+    ctx.fillText(label, x, h-2);
+    // PnL label
+    ctx.fillStyle = pnl>=0?'#00a304':'#cc4000';
+    ctx.font = '9px sans-serif';
+    ctx.fillText((pnl>=0?'+':'')+Math.round(pnl), x, pnl>=0?y-3:y+barH+10);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// PERFORMANCE (Shadow Trades)
+// ═══════════════════════════════════════════════════════
+var equityChartInst = null;
+
+async function loadPerformance() {
+  var days = document.getElementById('perf-days')?.value || 30;
+  try {
+    var [perf, trades] = await Promise.all([
+      api('GET', '/api/shadow/performance?days='+days),
+      api('GET', '/api/shadow/trades?days='+days)
+    ]);
+
+    // Summary tiles
+    var pnl = perf.total_pnl || 0;
+    var pnlEl = document.getElementById('pt-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = (pnl>=0?'+':'')+'₹'+Math.abs(pnl).toLocaleString('en-IN');
+      pnlEl.style.color = pnl>0?'var(--green-dark)':pnl<0?'var(--red)':'inherit';
+    }
+    setText('pt-wr', (perf.win_rate||0)+'%');
+    setText('pt-count', perf.total_trades||0);
+    setText('pt-avg', (perf.avg_pnl>=0?'+':'')+'₹'+(Math.abs(perf.avg_pnl||0)).toFixed(0));
+
+    // Best/worst day
+    if (perf.best_day) {
+      setText('pt-best', '+₹'+Math.abs(perf.best_day.pnl||0).toFixed(0));
+      setText('pt-best-date', perf.best_day.date);
+    }
+    if (perf.worst_day) {
+      setText('pt-worst', '−₹'+Math.abs(perf.worst_day.pnl||0).toFixed(0));
+      setText('pt-worst-date', perf.worst_day.date);
+    }
+
+    // Equity curve chart
+    var curve = perf.equity_curve || [];
+    if (curve.length > 0 && window.Chart) {
+      var ctx = document.getElementById('equityChart')?.getContext('2d');
+      if (ctx) {
+        if (equityChartInst) equityChartInst.destroy();
+        equityChartInst = new Chart(ctx, {
+          type:'line',
+          data:{
+            labels: curve.map(c=>c.date.slice(5)),
+            datasets:[{
+              data: curve.map(c=>c.equity),
+              borderColor: curve[curve.length-1]?.equity >= 0 ? '#00c805' : '#ff5000',
+              backgroundColor: curve[curve.length-1]?.equity >= 0 ? 'rgba(0,200,5,.08)' : 'rgba(255,80,0,.08)',
+              fill:true, tension:.3, pointRadius:2, borderWidth:2
+            }]
+          },
+          options:{
+            plugins:{legend:{display:false}},
+            scales:{
+              x:{grid:{display:false},ticks:{font:{size:10},maxTicksLimit:8}},
+              y:{grid:{color:'rgba(0,0,0,.04)'},ticks:{font:{size:10},
+                callback:v=>'₹'+v.toLocaleString('en-IN')}}
+            },
+            responsive:true, maintainAspectRatio:false
+          }
+        });
+      }
+    } else if (curve.length === 0) {
+      var chartEl = document.getElementById('equityChart');
+      if (chartEl && chartEl.parentElement) {
+        chartEl.parentElement.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">📈</div><div class="empty-title">No data yet</div><div class="empty-sub">Shadow trades will appear here once your automation runs during market hours</div></div>';
+      }
+    }
+
+    // By strategy
+    var stratEl = document.getElementById('perf-by-strategy');
+    if (stratEl) {
+      var strats = perf.by_strategy || {};
+      if (Object.keys(strats).length === 0) {
+        stratEl.innerHTML = '<div style="color:var(--g400);font-size:13px">No trades yet</div>';
+      } else {
+        stratEl.innerHTML = Object.entries(strats).map(([code,s])=>`
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
+            <div style="width:36px;height:36px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${code}</div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600">${code}</div>
+              <div style="font-size:11px;color:var(--g500)">${s.trades} trades · ${s.win_rate}% win rate</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${s.total_pnl>=0?'var(--green-dark)':'var(--red)'}">${s.total_pnl>=0?'+':''}₹${Math.abs(s.total_pnl).toLocaleString('en-IN')}</div>
+              <div style="font-size:11px;color:var(--g400)">avg ₹${s.avg_pnl>=0?'+':''}${s.avg_pnl}</div>
+            </div>
+          </div>`).join('');
+      }
+    }
+
+    // Exit reasons
+    var exitEl = document.getElementById('perf-exit-reasons');
+    if (exitEl) {
+      var reasons = perf.exit_reasons || {};
+      exitEl.innerHTML = Object.entries(reasons).map(([r,n])=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--g100)">
+          <span style="font-size:13px">${r.replace(/_/g,' ')}</span>
+          <span class="badge badge-gray">${n}</span>
+        </div>`).join('') || '<div style="color:var(--g400);font-size:13px">No exits yet</div>';
+    }
+
+    // Daily breakdown
+    var dailyEl = document.getElementById('perf-daily');
+    if (dailyEl) {
+      var days_data = (perf.by_day || []).slice(-14).reverse();
+      dailyEl.innerHTML = days_data.length ? days_data.map(d=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--g100)">
+          <div>
+            <div style="font-size:13px;font-weight:500">${d.date}</div>
+            <div style="font-size:11px;color:var(--g400)">${d.trades} trade${d.trades!==1?'s':''} · ${d.wins} win${d.wins!==1?'s':''}</div>
+          </div>
+          <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${d.pnl>=0?'var(--green-dark)':'var(--red)'}">${d.pnl>=0?'+':''}₹${Math.abs(d.pnl).toLocaleString('en-IN')}</div>
+        </div>`).join('')
+      : '<div style="color:var(--g400);font-size:13px">No daily data yet</div>';
+    }
+
+    // Trade list
+    var tradeList = document.getElementById('perf-trades-list');
+    if (tradeList) {
+      var t = trades.trades || [];
+      tradeList.innerHTML = t.length ? t.slice(0,20).map(tr=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:50%;background:${tr.is_open?'var(--amber-lt)':tr.pnl>0?'var(--green-lt)':'var(--red-lt)'};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${tr.is_open?'⏳':tr.pnl>0?'↑':'↓'}</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${tr.strategy} · ATM ${tr.atm}</div>
+            <div style="font-size:11px;color:var(--g400)">${tr.date} · ${tr.exit_reason||'Open'}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${tr.is_open?'var(--amber)':tr.pnl>0?'var(--green-dark)':'var(--red)'}">${tr.is_open?'OPEN':(tr.pnl>=0?'+':'')+'₹'+Math.abs(tr.pnl||0).toFixed(0)}</div>
+            <div style="font-size:10px;color:var(--g400)">Entry ₹${(tr.entry||0).toFixed(1)}</div>
+          </div>
+        </div>`).join('')
+      : '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No shadow trades yet</div><div class="empty-sub">Enable Shadow Mode on an automation and run it during market hours</div></div>';
+    }
+
+  } catch(e) {
+    console.error('Performance load error:', e);
+  }
+}
+
+function setText(id, val) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+// Load Chart.js for equity curve
+function loadChartJs(cb) {
+  if (window.Chart) { cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
+  s.onload = cb;
+  document.head.appendChild(s);
+}
+
+// ═══════════════════════════════════════════════════════
+// TELEGRAM ACCOUNTS
+// ═══════════════════════════════════════════════════════
+async function loadTelegramAccounts() {
+  try {
+    var d = await api('GET', '/api/telegram/accounts');
+    var accounts = d.accounts || [];
+    var el = document.getElementById('tg-accounts-list');
+    if (!el) return;
+    if (!accounts.length) {
+      el.innerHTML = '<div style="color:var(--g400);font-size:13px;padding:0 0 12px">No accounts configured yet. Add one below.</div>';
+      return;
+    }
+    el.innerHTML = accounts.map(a=>`
+      <div class="card" style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 16px">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📱</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${a.name}</div>
+            <div style="font-size:11px;color:var(--g400)">Chat ID: ${a.chat}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <label class="toggle" style="margin:0">
+              <input type="checkbox" ${a.active?'checked':''} onchange="toggleTgAccount('${a.id}',this.checked)">
+              <div class="toggle-track"></div>
+            </label>
+            <button class="btn btn-ghost btn-sm" onclick="testTgAccount('${a.id}')">Test</button>
+            <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deleteTgAccount('${a.id}')">✕</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function addTelegramAccount() {
+  var name  = document.getElementById('tg-name')?.value.trim();
+  var token = document.getElementById('tg-token')?.value.trim();
+  var chat  = document.getElementById('tg-chat')?.value.trim();
+  if (!name||!token||!chat) { toast('Fill all fields','error'); return; }
+  try {
+    await api('POST','/api/telegram/accounts',{name,token,chat,active:true});
+    document.getElementById('tg-name').value='';
+    document.getElementById('tg-token').value='';
+    document.getElementById('tg-chat').value='';
+    toast('Account added ✓','success');
+    loadTelegramAccounts();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteTgAccount(id) {
+  if (!confirm('Remove this Telegram account?')) return;
+  await api('DELETE','/api/telegram/accounts/'+id);
+  toast('Removed','success'); loadTelegramAccounts();
+}
+
+async function toggleTgAccount(id, active) {
+  await api('PUT','/api/telegram/accounts/'+id,{active});
+}
+
+async function testTgAccount(id) {
+  try {
+    await api('POST','/api/telegram/test/'+id);
+    toast('Test sent ✓','success');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// Load Telegram accounts when profile page opens
+var _origLoadProfile = loadProfile;
+async function loadProfile() {
+  await _origLoadProfile();
+  loadTelegramAccounts();
+}
+
+// ═══════════════════════════════════════════════════════
+// SYMBOLS FROM BROKER
+// ═══════════════════════════════════════════════════════
+async function loadSymbols() {
+  try {
+    var d = await api('GET','/api/market/symbols');
+    var symbols = d.symbols || [];
+    var sel = document.getElementById('auto-sym');
+    if (sel && symbols.length) {
+      sel.innerHTML = symbols.map(s=>
+        `<option value="${s.value}">${s.label}</option>`).join('');
+    }
+  } catch(e) {}
+}
+
+// Override showNewAutoForm to also load symbols
+var _origShowNewAutoForm = showNewAutoForm;
+function showNewAutoForm() {
+  _origShowNewAutoForm();
+  loadSymbols();
+}
+
+// ═══════════════════════════════════════════════════════
+// SAVE AUTO — updated to include shadow mode
+// ═══════════════════════════════════════════════════════
+var _origSaveAuto = saveAuto;
+async function saveAuto(mode) {
+  var sym    = document.getElementById('auto-sym').value;
+  var brok   = document.getElementById('auto-broker').value;
+  var shadow = document.getElementById('auto-shadow')?.checked ?? true;
+  var tgAlert= document.getElementById('auto-tg')?.checked ?? true;
+  if (!brok) { toast('Connect a broker first','error'); return; }
+  if (mode==='live' && !confirm('Switch to LIVE?\n\nReal money orders will be placed.\nOnly do this after reviewing Results page.')) return;
+  try {
+    await api('POST','/api/automations',{
+      name: (document.getElementById('auto-sym').options[document.getElementById('auto-sym').selectedIndex]?.text || sym) + ' — ' + [...selectedStrategies].join('+'),
+      symbol:sym, broker_id:brok,
+      strategies:[...selectedStrategies], mode,
+      shadow_mode: shadow,
+      telegram_alerts: tgAlert,
+      config:{
+        lots:           +document.getElementById('auto-lots').value || 1,
+        lot_size:       +document.getElementById('auto-lotsize').value || 75,
+        max_loss_pct:   +document.getElementById('auto-maxloss').value || 30,
+        profit_target_pct: +document.getElementById('auto-profit').value || 50,
+        hedge_width:    +document.getElementById('auto-hedge').value || 2,
+        auto_exit_time: document.getElementById('auto-exit').value || '14:00',
+      }
+    });
+    document.getElementById('newAutoForm').style.display='none';
+    toast('Automation saved ✓','success');
+    loadAutomate();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// Override nav to load performance data with Chart.js
+var _origNav = nav;
+function nav(id) {
+  _origNav(id);
+  if (id === 'performance') {
+    loadChartJs(loadPerformance);
+  }
+}
+
+// Auto-refresh dashboard every 60 seconds
+setInterval(()=>{
 // Auto-refresh dashboard every 60 seconds
 setInterval(()=>{
   var dashPage = document.getElementById('pg-dashboard');
