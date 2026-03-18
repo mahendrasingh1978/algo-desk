@@ -708,7 +708,7 @@ async function renderDashboard() {
         + '<div style="font-size:11px;color:var(--text2)">NIFTY 1 lot margin est.</div>'
         + '<div style="font-size:14px;font-weight:600">&#8377;'+Number((funds.margin||{}).net_required||0).toLocaleString('en-IN')+'</div>'
         + '</div>'
-        + '<button class="btn btn-ghost btn-sm" onclick="nav('automate')" style="color:var(--green)">+ New Automation</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')" style="color:var(--green)">+ New Automation</button>'
         + '</div></div>';
     }).catch(function(){});
 
