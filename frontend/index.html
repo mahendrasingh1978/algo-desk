@@ -430,11 +430,10 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
               <div class="tile-value" id="dash-combined">—</div>
               <div class="tile-sub" id="dash-atm-sub">CE + PE</div>
             </div>
-            <div class="tile" id="dash-engine-tile">
-              <div class="tile-label">Engine</div>
-              <div id="dash-mode-badge" style="display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:var(--g100);color:var(--g500);margin-bottom:4px">IDLE</div>
-              <div class="tile-value" id="dash-engine" style="font-size:13px;font-weight:600">IDLE</div>
-              <div class="tile-sub" id="dash-mode">Not running</div>
+            <div class="tile" id="dash-engine-tile" onclick="nav('automate')" style="cursor:pointer">
+              <div class="tile-label">Automations</div>
+              <div class="tile-value" id="dash-engine" style="font-size:20px;font-weight:700">0</div>
+              <div class="tile-sub" id="dash-mode">Tap to manage</div>
             </div>
             <div class="tile">
               <div class="tile-label">Today's Trades</div>
@@ -609,33 +608,66 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
                   <div class="field-hint">NIFTY: 75 (post Nov 2024)</div>
                 </div>
               </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div class="field">
-                  <label>Max Loss %</label>
-                  <input type="number" id="auto-maxloss" value="30" min="10" max="50">
-                  <div class="field-hint">% of combined premium</div>
-                </div>
-                <div class="field">
-                  <label>Profit Target %</label>
-                  <input type="number" id="auto-profit" value="50" min="20" max="80">
-                  <div class="field-hint">Industry std: 50%</div>
-                </div>
+              <div class="field">
+                <label>Auto Exit Time</label>
+                <input type="time" id="auto-exit" value="14:00">
+                <div class="field-hint">Force close all positions at this time regardless of P&L</div>
               </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div class="field">
-                  <label>Hedge Width</label>
-                  <select id="auto-hedge">
-                    <option value="1">±1 (Iron Fly tight)</option>
-                    <option value="2" selected>±2 (Iron Fly standard)</option>
-                    <option value="3">±3 (Iron Condor)</option>
-                    <option value="4">±4 (Wide Condor)</option>
-                  </select>
-                  <div class="field-hint">Wider = more premium, more risk</div>
+              <input type="hidden" id="auto-maxloss" value="30">
+              <input type="hidden" id="auto-profit" value="50">
+              <input type="hidden" id="auto-hedge" value="2">
+
+              <!-- Advanced settings toggle -->
+              <details style="margin-bottom:10px">
+                <summary style="font-size:12px;color:var(--g500);cursor:pointer;padding:6px 0;user-select:none">⚙ Advanced settings (optional)</summary>
+                <div style="padding:12px 0 0;display:flex;flex-direction:column;gap:10px">
+                  <div style="background:var(--g50);border-radius:10px;padding:12px">
+                    <div style="font-size:12px;font-weight:600;margin-bottom:8px">Stop Loss Thresholds</div>
+                    <div style="font-size:11px;color:var(--g500);margin-bottom:10px">The engine monitors combined premium dynamically and exits automatically. These thresholds tune when it exits.</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                      <div class="field" style="margin:0">
+                        <label style="font-size:11px">Max loss limit</label>
+                        <select onchange="document.getElementById('auto-maxloss').value=this.value" style="font-size:12px">
+                          <option value="20">20% — tight</option>
+                          <option value="25">25% — conservative</option>
+                          <option value="30" selected>30% — standard</option>
+                          <option value="40">40% — relaxed</option>
+                        </select>
+                        <div class="field-hint" style="font-size:10px">% rise in combined premium before hard exit</div>
+                      </div>
+                      <div class="field" style="margin:0">
+                        <label style="font-size:11px">Profit target</label>
+                        <select onchange="document.getElementById('auto-profit').value=this.value" style="font-size:12px">
+                          <option value="30">30% decay — quick exit</option>
+                          <option value="40">40% decay</option>
+                          <option value="50" selected>50% decay — standard</option>
+                          <option value="60">60% decay — hold longer</option>
+                        </select>
+                        <div class="field-hint" style="font-size:10px">Exit when combined has decayed this much from entry</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="background:var(--g50);border-radius:10px;padding:12px">
+                    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Default Hedge Width</div>
+                    <div style="font-size:11px;color:var(--g500);margin-bottom:8px">Each strategy uses its own optimal hedge automatically (S9=±1, S8=±3, S6=±4, others=±2). Override here only if needed.</div>
+                    <select onchange="document.getElementById('auto-hedge').value=this.value" style="font-size:12px">
+                      <option value="0">Auto per strategy (recommended)</option>
+                      <option value="1">±1 — tight Iron Fly</option>
+                      <option value="2">±2 — standard Iron Fly</option>
+                      <option value="3">±3 — Iron Condor</option>
+                      <option value="4">±4 — Wide Condor</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field">
-                  <label>Auto Exit Time</label>
-                  <input type="time" id="auto-exit" value="14:00">
+              </details>
+
+              <!-- Telegram account selector -->
+              <div class="field">
+                <label>Telegram Alerts</label>
+                <div id="auto-tg-selector" style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+                  <div style="font-size:11px;color:var(--g400)">Loading Telegram accounts...</div>
                 </div>
+                <div class="field-hint">Select which accounts receive alerts for this automation</div>
               </div>
 
               <div style="margin-bottom:12px">
@@ -863,6 +895,71 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         </div>
       </div>
 
+      <!-- ── PERFORMANCE ──────────────────────────────────── -->
+      <div class="page" id="pg-performance">
+        <div class="section">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div><div class="page-title">Results</div><div class="page-sub">Paper &amp; live performance</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="perf-auto-filter" onchange="loadPerformance()" style="padding:6px 10px;border:1.5px solid var(--g200);border-radius:10px;font-size:12px;background:var(--white)">
+                <option value="all">All automations</option>
+              </select>
+              <select id="perf-days" onchange="loadPerformance()" style="padding:6px 10px;border:1.5px solid var(--g200);border-radius:10px;font-size:12px;background:var(--white)">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">All time</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="tiles">
+            <div class="tile"><div class="tile-label">Total P&amp;L</div><div class="tile-value" id="pt-pnl" style="font-size:18px">—</div><div class="tile-sub" id="pt-pnl-sub">paper + live</div></div>
+            <div class="tile"><div class="tile-label">Win Rate</div><div class="tile-value" id="pt-wr">—</div><div class="tile-sub" id="pt-wr-sub">of closed trades</div></div>
+            <div class="tile"><div class="tile-label">Trades</div><div class="tile-value" id="pt-count">—</div><div class="tile-sub">total fired</div></div>
+            <div class="tile"><div class="tile-label">Avg P&amp;L</div><div class="tile-value" id="pt-avg">—</div><div class="tile-sub">per trade</div></div>
+          </div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Equity Curve</div>
+          <div class="card"><div class="card-body" style="padding:8px"><canvas id="equityChart" height="130"></canvas></div></div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="g2">
+            <div class="tile green"><div class="tile-label">Best Day</div><div class="tile-value" id="pt-best">—</div><div class="tile-sub" id="pt-best-date">—</div></div>
+            <div class="tile red"><div class="tile-label">Worst Day</div><div class="tile-value" id="pt-worst">—</div><div class="tile-sub" id="pt-worst-date">—</div></div>
+          </div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="section-title">By Strategy</div>
+          <div id="perf-by-strategy"><div style="color:var(--g400);font-size:13px">No data yet</div></div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Exit Reasons</div>
+          <div id="perf-exit-reasons"><div style="color:var(--g400);font-size:13px">No data yet</div></div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="section-title">Daily Breakdown</div>
+          <div id="perf-daily"><div style="color:var(--g400);font-size:13px">No data yet</div></div>
+        </div>
+        <div class="section" style="padding-top:0">
+          <div class="section-title">All Trades</div>
+          <div id="perf-trades-list"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No trades yet</div><div class="empty-sub">Enable Shadow Mode on an automation and run during market hours</div></div></div>
+        </div>
+      </div>
+
+      <!-- ── HELP ──────────────────────────────────────────── -->
+      <div class="page" id="pg-help">
+        <div class="section">
+          <div class="page-title">Help &amp; Strategies</div>
+          <div class="page-sub">How each strategy works and when to use it</div>
+        </div>
+        <div class="section" style="padding-top:0" id="help-content">
+          <div style="color:var(--g400);font-size:13px">Loading...</div>
+        </div>
+      </div>
+
       <!-- ── ADMIN ──────────────────────────────────────── -->
       <div class="page" id="pg-admin">
         <div class="section">
@@ -944,9 +1041,10 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="12" r="0"/></svg>
         Perf
       </button>
-      <button class="nav-item" id="bn-performance" onclick="nav('performance')">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-        Results
+      
+      <button class="nav-item" id="bn-help" onclick="nav('help')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Help
       </button>
       <button class="nav-item" id="bn-profile" onclick="nav('profile')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -1183,7 +1281,7 @@ async function loadApp() {
 
 // ── NAV ───────────────────────────────────────────────
 function nav(id) {
-  var ids = ['dashboard','brokers','automate','live','trades','performance','profile','admin'];
+  var ids = ['dashboard','brokers','automate','live','trades','performance','help','profile','admin'];
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
   // bottom nav
   ids.forEach(n => {
@@ -1198,7 +1296,9 @@ function nav(id) {
   if (id==='live')        refreshLive();
   if (id==='trades')      loadTrades();
   if (id==='performance') loadChartJs(loadPerformance);
+  if (id==='help')        loadHelp();
   if (id==='profile')     loadProfile();
+  if (id==='help')        loadHelp();
   if (id==='admin')       loadAdmin();
 }
 
@@ -1209,23 +1309,87 @@ async function refreshDashboard() {
   var hour = new Date().getHours();
   var greeting = hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   document.getElementById('dashGreeting').textContent = greeting + ', ' + (session.user?.name?.split(' ')[0]||'');
-  // Show live data status
+  // Automation count
   try {
-    var ms = await api('GET','/api/market/status');
-    if (ms.spot > 0) {
-      document.getElementById('dash-spot').textContent = '₹'+Number(ms.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
-      document.getElementById('dash-spot-sub').textContent = ms.status==='live'?'Live · '+ms.updated:ms.message||ms.status;
-      document.getElementById('topNifty').textContent = Number(ms.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
-      if (ms.chain) {
-        var atm = ms.atm || 0;
-        var combined = ms.chain[atm]?.combined || 0;
-        if (combined > 0) document.getElementById('dash-combined').textContent = combined.toFixed(1);
-        document.getElementById('dash-atm-sub').textContent = 'ATM '+atm;
+    var ac = await api('GET','/api/automations');
+    var al = ac.automations||[];
+    var rl = al.filter(a=>a.is_running).length;
+    var de = document.getElementById('dash-engine');
+    var dm = document.getElementById('dash-mode');
+    if (de) de.textContent = al.length;
+    if (dm) dm.textContent = rl>0?rl+' running':al.length>0?al.length+' configured':'Tap to create';
+  } catch(e) {}
+  try {
+    var s = await api('GET','/api/dashboard/summary');
+
+    // Market
+    if (s.spot > 0) {
+      var fmtSpot = '₹'+Number(s.spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+      document.getElementById('dash-spot').textContent = fmtSpot;
+      document.getElementById('topNifty').textContent = fmtSpot.replace('₹','');
+      document.getElementById('dash-spot-sub').textContent = s.market_status==='live'?'Live · '+s.market_updated : s.market_message||'Waiting...';
+      document.getElementById('topNifty').style.color = s.market_status==='live'?'var(--green-dark)':s.market_status==='closed'?'var(--g400)':'var(--amber)';
+      if (s.atm && s.atm > 0) {
+        document.getElementById('dash-atm-sub').textContent = 'ATM '+s.atm.toLocaleString('en-IN');
       }
     } else {
-      document.getElementById('dash-spot-sub').textContent = ms.message || 'Connect broker to see live data';
+      document.getElementById('dash-spot-sub').textContent = s.market_message || 'Connect broker to see live data';
     }
-  } catch(e) {}
+
+    // Automation counts
+    document.getElementById('dash-auto-count').textContent = s.total_automations || 0;
+    document.getElementById('dash-auto-sub').textContent = (s.running_automations||0)+' running';
+    document.getElementById('dash-open-pos').textContent = s.open_positions || 0;
+    document.getElementById('dash-open-sub').textContent = s.open_positions > 0 ? 'In market now' : 'No open trades';
+
+    // P&L tiles
+    function pnlFmt(v) {
+      return (v>=0?'+':'')+' ₹'+Math.abs(v).toLocaleString('en-IN');
+    }
+    function pnlColor(v) { return v>0?'var(--green-dark)':v<0?'var(--red)':'inherit'; }
+
+    var lp = s.today_live_pnl||0, pp = s.today_paper_pnl||0;
+    var ml = s.month_live_pnl||0, mp = s.month_paper_pnl||0;
+    document.getElementById('dash-live-pnl').textContent = pnlFmt(lp);
+    document.getElementById('dash-live-pnl').style.color = pnlColor(lp);
+    document.getElementById('dash-live-trades').textContent = (s.today_live_trades||0)+' closed';
+    document.getElementById('dash-paper-pnl').textContent = pnlFmt(pp);
+    document.getElementById('dash-paper-pnl').style.color = pnlColor(pp);
+    document.getElementById('dash-paper-trades').textContent = (s.today_paper_trades||0)+' simulated';
+    document.getElementById('dash-month-pnl').textContent = pnlFmt(ml);
+    document.getElementById('dash-month-pnl').style.color = pnlColor(ml);
+    document.getElementById('dash-month-paper').textContent = pnlFmt(mp);
+    document.getElementById('dash-month-paper').style.color = pnlColor(mp);
+
+    // Also update big P&L header
+    var bigPnl = lp + pp;
+    document.getElementById('dash-pnl').textContent = pnlFmt(bigPnl).trim();
+    document.getElementById('dash-pnl').className = 'big-num';
+    document.getElementById('dash-pnl').style.color = '#fff';
+    document.getElementById('dash-pnl-sub').textContent = (s.today_live_trades+s.today_paper_trades||0)+' trades today';
+
+    // Per-automation cards
+    var cards = document.getElementById('dash-auto-cards');
+    if (cards && s.automations && s.automations.length > 0) {
+      cards.innerHTML = s.automations.map(a => {
+        var pnl = a.mode==='live' ? a.today_pnl : a.today_shadow_pnl;
+        var trades = a.mode==='live' ? a.today_trades : a.today_shadow_trades;
+        var isLive = a.mode==='live';
+        return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--g100)">
+          <div style="width:8px;height:8px;border-radius:50%;background:${a.status==='RUNNING'?'var(--green)':isLive?'var(--red)':'var(--g300)'};flex-shrink:0"></div>
+          <div style="flex:1">
+            <div style="font-size:12px;font-weight:600">${a.name}</div>
+            <div style="font-size:10px;color:var(--g400)">${a.symbol} · ${(a.strategies||[]).join('+')} · <span style="color:${isLive?'var(--red)':'var(--amber)'}">${isLive?'LIVE':'PAPER'}</span></div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:12px;font-weight:600;font-family:var(--mono);color:${pnl>0?'var(--green-dark)':pnl<0?'var(--red)':'var(--g400)'}">${pnl>=0?'+':''}₹${Math.abs(pnl).toLocaleString('en-IN')}</div>
+            <div style="font-size:10px;color:var(--g400)">${trades} trade${trades!==1?'s':''} · ${a.open_position?'<span style="color:var(--amber)">open</span>':'closed'}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+  } catch(e) { console.error('Dashboard error:', e); }
 
   try {
     // Engine status
@@ -1605,15 +1769,30 @@ async function loadAutomate() {
             ${(a.strategies||[]).map(s=>`<span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:600;background:var(--g100);color:var(--g600)">${s}</span>`).join('')}
           </div>
           <!-- Config row -->
-          <div style="display:flex;gap:12px;font-size:11px;color:var(--g400)">
-            <span>Lots: ${a.config?.lots||1}</span>
-            <span>Lot size: ${a.config?.lot_size||75}</span>
-            <span>Exit: ${a.config?.auto_exit_time||'14:00'}</span>
-            <span>Max loss: ${a.config?.max_loss_pct||30}%</span>
+          <div style="display:flex;gap:10px;font-size:11px;color:var(--g400);flex-wrap:wrap">
+            <span>${a.config?.lots||1} lots × ${a.config?.lot_size||75}</span>
+            <span>Exit ${a.config?.auto_exit_time||'14:00'}</span>
+            <span>Hedge ±${a.config?.hedge_width||2}</span>
+          </div>
+          <!-- KPI row -->
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <div style="flex:1;background:var(--g50);border-radius:8px;padding:6px 8px;text-align:center">
+              <div style="font-size:10px;color:var(--g400)">Today P&L</div>
+              <div style="font-size:13px;font-weight:600" id="kpi-pnl-${a.id}">—</div>
+            </div>
+            <div style="flex:1;background:var(--g50);border-radius:8px;padding:6px 8px;text-align:center">
+              <div style="font-size:10px;color:var(--g400)">Trades</div>
+              <div style="font-size:13px;font-weight:600" id="kpi-trades-${a.id}">—</div>
+            </div>
+            <div style="flex:1;background:var(--g50);border-radius:8px;padding:6px 8px;text-align:center">
+              <div style="font-size:10px;color:var(--g400)">Status</div>
+              <div style="font-size:11px;font-weight:600;color:${a.is_running?'var(--green-dark)':'var(--g400)'}">${a.is_running?'Running':'Idle'}</div>
+            </div>
           </div>
         </div>
       </div>`).join('')
     : '<div class="empty"><div class="empty-icon">⚙️</div><div class="empty-title">No automations</div><div class="empty-sub">Create one to start trading</div></div>';
+  if (autos.length) setTimeout(()=>loadAutomationKPIs(autos), 500);
 
     // Build strategy picker
     document.getElementById('autoStratPicker').innerHTML = (strd.strategies||[]).map(s=>`
@@ -1641,6 +1820,7 @@ function showNewAutoForm() {
   document.getElementById('newAutoForm').style.display='block';
   document.getElementById('newAutoForm').scrollIntoView({behavior:'smooth'});
   loadSymbols();
+  loadAutoTgSelector();
 }
 
 function toggleStrategy(code, checked) {
@@ -1651,14 +1831,24 @@ async function saveAuto(mode) {
   var sym  = document.getElementById('auto-sym').value;
   var brok = document.getElementById('auto-broker').value;
   if (!brok) { toast('Connect a broker first','error'); return; }
-  if (mode==='live' && !confirm('Switch to LIVE?\n\nReal money orders will be placed.\nOnly do this after successful paper testing.')) return;
+  if (!selectedStrategies.size) { toast('Select at least one strategy','error'); return; }
+  if (mode==='live' && !confirm('Switch to LIVE mode?\n\nReal money orders will be placed.\nOnly do this after reviewing Results page for at least 1 week of paper trading.')) return;
+  // Collect selected Telegram accounts
+  var tgAccts = [...document.querySelectorAll('.tg-acct-check:checked')].map(c=>c.value);
   try {
     await api('POST','/api/automations',{
       name: sym.split(':')[1]+' — '+[...selectedStrategies].join('+'),
       symbol:sym, broker_id:brok,
       strategies:[...selectedStrategies], mode,
+      shadow_mode: document.getElementById('auto-shadow')?.checked ?? true,
+      telegram_alerts: tgAccts.length > 0,
       config:{
-        max_loss: +document.getElementById('auto-maxloss').value,
+        lots:           +document.getElementById('auto-lots').value || 1,
+        lot_size:       +document.getElementById('auto-lotsize').value || 75,
+        max_loss_pct:   +document.getElementById('auto-maxloss').value || 30,
+        profit_target_pct: +document.getElementById('auto-profit').value || 50,
+        hedge_width:    +document.getElementById('auto-hedge').value || 0,
+        telegram_accounts: tgAccts,
         auto_exit_time: document.getElementById('auto-exit').value,
       }
     });
@@ -1666,6 +1856,23 @@ async function saveAuto(mode) {
     toast('Automation saved ✓','success');
     loadAutomate();
   } catch(e) { toast(e.message,'error'); }
+}
+
+async function loadAutomationKPIs(automations) {
+  for (var auto of automations) {
+    try {
+      var d = await api('GET','/api/shadow/trades?days=1');
+      var trades = (d.trades||[]).filter(t=>t.automation_id===auto.id);
+      var pnl = trades.reduce((s,t)=>s+(t.pnl||0),0);
+      var pnlEl = document.getElementById('kpi-pnl-'+auto.id);
+      var tradesEl = document.getElementById('kpi-trades-'+auto.id);
+      if (pnlEl) {
+        pnlEl.textContent = trades.length ? (pnl>=0?'+':'')+'₹'+Math.abs(pnl).toFixed(0) : '—';
+        pnlEl.style.color = pnl>0?'var(--green-dark)':pnl<0?'var(--red)':'var(--g600)';
+      }
+      if (tradesEl) tradesEl.textContent = trades.length || '0';
+    } catch(e) {}
+  }
 }
 
 async function deleteAuto(id) {
@@ -2034,130 +2241,6 @@ async function updateMarketTicker() {
 // ═══════════════════════════════════════════════════════
 // SIMULATION / PERFORMANCE
 // ═══════════════════════════════════════════════════════
-async function loadPerformance() { return loadPerformance(); }
-async function loadPerformance() {
-  if (!session.token) return;
-  try {
-    var days = document.getElementById('simDaysSelect')?.value || 7;
-    var [today, summary, trades] = await Promise.all([
-      api('GET','/api/simulation/today'),
-      api('GET',`/api/simulation/summary?days=${days}`),
-      api('GET',`/api/simulation/trades?days=${days}`),
-    ]);
-
-    // Today card
-    var dot = document.getElementById('simDot');
-    var statusTxt = document.getElementById('simStatusText');
-    if (today.running) {
-      dot.style.background = 'var(--green)';
-      dot.style.boxShadow = '0 0 6px var(--green)';
-      statusTxt.textContent = 'Simulation running · ' + (today.trades||0) + ' signal(s) today';
-    } else {
-      dot.style.background = 'var(--g300)';
-      dot.style.boxShadow = 'none';
-      statusTxt.textContent = today.trades > 0
-        ? 'Market closed · ' + today.trades + ' trade(s) recorded'
-        : 'Waiting for market open (9:15 AM IST)';
-    }
-
-    var dayPnl = today.day_pnl || 0;
-    var pnlEl = document.getElementById('sim-today-pnl');
-    pnlEl.textContent = (dayPnl>=0?'+':'')+'₹'+Math.abs(dayPnl).toFixed(0);
-    pnlEl.style.color = dayPnl>0?'var(--green-dark)':dayPnl<0?'var(--red)':'inherit';
-    document.getElementById('sim-today-trades').textContent = today.trades || 0;
-
-    // Open position
-    if (today.open_position) {
-      document.getElementById('simOpenPos').style.display = 'flex';
-      document.getElementById('simOpenPosText').innerHTML =
-        `<strong>${today.open_position.strategy}</strong> open since ${today.open_position.entry_time} · Entry combined: ${today.open_position.entry}`;
-    }
-
-    // Today's trade list
-    if (today.today_trades && today.today_trades.length) {
-      document.getElementById('simTodayList').innerHTML = today.today_trades.map(t=>`
-        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--g100);font-size:12px">
-          <div style="width:28px;height:28px;border-radius:50%;background:${t.pnl>0?'var(--green-lt)':t.is_open?'var(--amber-lt)':'var(--red-lt)'};display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">
-            ${t.is_open?'⏳':t.pnl>0?'↑':'↓'}
-          </div>
-          <div style="flex:1">
-            <div style="font-weight:600">${t.strategy}</div>
-            <div style="color:var(--g400);font-size:11px">Entry ${t.entry?.toFixed(1)||'—'} → ${t.exit?t.exit.toFixed(1):'open'} · ${t.reason||'open'}</div>
-          </div>
-          <div style="font-weight:600;font-family:var(--mono);color:${t.pnl>0?'var(--green-dark)':t.is_open?'var(--amber)':'var(--red)'}">
-            ${t.is_open?'OPEN':(t.pnl>=0?'+':'')+'₹'+Math.abs(t.pnl||0).toFixed(0)}
-          </div>
-        </div>`).join('');
-    }
-
-    // Summary
-    var totalPnl = summary.total_pnl || 0;
-    var tpEl = document.getElementById('sim-total-pnl');
-    tpEl.textContent = (totalPnl>=0?'+':'')+'₹'+Math.abs(totalPnl).toFixed(0);
-    tpEl.style.color = totalPnl>0?'var(--green-dark)':totalPnl<0?'var(--red)':'inherit';
-    document.getElementById('sim-wr').textContent = (summary.win_rate||0)+'%';
-    document.getElementById('sim-count').textContent = summary.total_trades||0;
-
-    // Best day
-    var byDay = summary.by_day || {};
-    var dayPnls = Object.values(byDay).map(d=>d.pnl||0);
-    var bestDay = dayPnls.length ? Math.max(...dayPnls) : 0;
-    var bestEl = document.getElementById('sim-best');
-    bestEl.textContent = (bestDay>=0?'+':'')+'₹'+Math.abs(bestDay).toFixed(0);
-    bestEl.style.color = bestDay>0?'var(--green-dark)':'inherit';
-
-    // Chart
-    renderSimChart(byDay);
-
-    // Strategy breakdown
-    var byStrat = summary.by_strategy || {};
-    var stratKeys = Object.keys(byStrat);
-    if (stratKeys.length) {
-      document.getElementById('simStratBreakdown').innerHTML = stratKeys.map(code => {
-        var s = byStrat[code];
-        var pnlColor = s.pnl>0?'var(--green-dark)':s.pnl<0?'var(--red)':'inherit';
-        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
-          <div style="width:36px;height:36px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${code}</div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${code}</div>
-            <div style="font-size:11px;color:var(--g400)">${s.trades} trades · ${s.win_rate}% win rate · avg ₹${s.avg_pnl}</div>
-          </div>
-          <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${pnlColor}">
-            ${s.pnl>=0?'+':''}₹${Math.abs(s.pnl||0).toFixed(0)}
-          </div>
-        </div>`;
-      }).join('');
-    }
-
-    // Trade list
-    var tradeList = trades.trades || [];
-    if (tradeList.length) {
-      document.getElementById('simTradeList').innerHTML = tradeList.map(t => {
-        var pnl = t.pnl || 0;
-        var pnlColor = t.is_open?'var(--amber)':pnl>0?'var(--green-dark)':'var(--red)';
-        return `<div style="padding:12px 0;border-bottom:1px solid var(--g100)">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-            <div style="font-size:13px;font-weight:600">${t.strategy} · ${t.symbol} · ATM ${t.atm}</div>
-            <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${pnlColor}">
-              ${t.is_open?'OPEN':(pnl>=0?'+':'')+'₹'+Math.abs(pnl).toFixed(0)}
-            </div>
-          </div>
-          <div style="font-size:11px;color:var(--g400)">
-            ${t.date} · ${t.entry_time||'—'} → ${t.exit_time||'open'} · 
-            Entry ${t.entry?.toFixed(1)||'—'} → Exit ${t.exit?.toFixed(1)||'open'} ·
-            ${t.exit_reason||'open'} · ${t.premium_ticks} ticks recorded
-          </div>
-        </div>`;
-      }).join('');
-    } else {
-      document.getElementById('simTradeList').innerHTML =
-        '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No simulation trades yet</div><div class="empty-sub">Simulation runs automatically every trading day once your broker is connected and you have an automation created.</div></div>';
-    }
-
-  } catch(e) {
-    console.error('Simulation load error:', e);
-  }
-}
 
 function renderSimChart(byDay) {
   var canvas = document.getElementById('simChart');
@@ -2213,142 +2296,6 @@ function renderSimChart(byDay) {
 // ═══════════════════════════════════════════════════════
 var equityChartInst = null;
 
-async function loadPerformance() { return loadPerformance(); }
-async function loadPerformance() {
-  var days = document.getElementById('perf-days')?.value || 30;
-  try {
-    var [perf, trades] = await Promise.all([
-      api('GET', '/api/shadow/performance?days='+days),
-      api('GET', '/api/shadow/trades?days='+days)
-    ]);
-
-    // Summary tiles
-    var pnl = perf.total_pnl || 0;
-    var pnlEl = document.getElementById('pt-pnl');
-    if (pnlEl) {
-      pnlEl.textContent = (pnl>=0?'+':'')+'₹'+Math.abs(pnl).toLocaleString('en-IN');
-      pnlEl.style.color = pnl>0?'var(--green-dark)':pnl<0?'var(--red)':'inherit';
-    }
-    setText('pt-wr', (perf.win_rate||0)+'%');
-    setText('pt-count', perf.total_trades||0);
-    setText('pt-avg', (perf.avg_pnl>=0?'+':'')+'₹'+(Math.abs(perf.avg_pnl||0)).toFixed(0));
-
-    // Best/worst day
-    if (perf.best_day) {
-      setText('pt-best', '+₹'+Math.abs(perf.best_day.pnl||0).toFixed(0));
-      setText('pt-best-date', perf.best_day.date);
-    }
-    if (perf.worst_day) {
-      setText('pt-worst', '−₹'+Math.abs(perf.worst_day.pnl||0).toFixed(0));
-      setText('pt-worst-date', perf.worst_day.date);
-    }
-
-    // Equity curve chart
-    var curve = perf.equity_curve || [];
-    if (curve.length > 0 && window.Chart) {
-      var ctx = document.getElementById('equityChart')?.getContext('2d');
-      if (ctx) {
-        if (equityChartInst) equityChartInst.destroy();
-        equityChartInst = new Chart(ctx, {
-          type:'line',
-          data:{
-            labels: curve.map(c=>c.date.slice(5)),
-            datasets:[{
-              data: curve.map(c=>c.equity),
-              borderColor: curve[curve.length-1]?.equity >= 0 ? '#00c805' : '#ff5000',
-              backgroundColor: curve[curve.length-1]?.equity >= 0 ? 'rgba(0,200,5,.08)' : 'rgba(255,80,0,.08)',
-              fill:true, tension:.3, pointRadius:2, borderWidth:2
-            }]
-          },
-          options:{
-            plugins:{legend:{display:false}},
-            scales:{
-              x:{grid:{display:false},ticks:{font:{size:10},maxTicksLimit:8}},
-              y:{grid:{color:'rgba(0,0,0,.04)'},ticks:{font:{size:10},
-                callback:v=>'₹'+v.toLocaleString('en-IN')}}
-            },
-            responsive:true, maintainAspectRatio:false
-          }
-        });
-      }
-    } else if (curve.length === 0) {
-      var chartEl = document.getElementById('equityChart');
-      if (chartEl && chartEl.parentElement) {
-        chartEl.parentElement.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">📈</div><div class="empty-title">No data yet</div><div class="empty-sub">Shadow trades will appear here once your automation runs during market hours</div></div>';
-      }
-    }
-
-    // By strategy
-    var stratEl = document.getElementById('perf-by-strategy');
-    if (stratEl) {
-      var strats = perf.by_strategy || {};
-      if (Object.keys(strats).length === 0) {
-        stratEl.innerHTML = '<div style="color:var(--g400);font-size:13px">No trades yet</div>';
-      } else {
-        stratEl.innerHTML = Object.entries(strats).map(([code,s])=>`
-          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
-            <div style="width:36px;height:36px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${code}</div>
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600">${code}</div>
-              <div style="font-size:11px;color:var(--g500)">${s.trades} trades · ${s.win_rate}% win rate</div>
-            </div>
-            <div style="text-align:right">
-              <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${s.total_pnl>=0?'var(--green-dark)':'var(--red)'}">${s.total_pnl>=0?'+':''}₹${Math.abs(s.total_pnl).toLocaleString('en-IN')}</div>
-              <div style="font-size:11px;color:var(--g400)">avg ₹${s.avg_pnl>=0?'+':''}${s.avg_pnl}</div>
-            </div>
-          </div>`).join('');
-      }
-    }
-
-    // Exit reasons
-    var exitEl = document.getElementById('perf-exit-reasons');
-    if (exitEl) {
-      var reasons = perf.exit_reasons || {};
-      exitEl.innerHTML = Object.entries(reasons).map(([r,n])=>`
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--g100)">
-          <span style="font-size:13px">${r.replace(/_/g,' ')}</span>
-          <span class="badge badge-gray">${n}</span>
-        </div>`).join('') || '<div style="color:var(--g400);font-size:13px">No exits yet</div>';
-    }
-
-    // Daily breakdown
-    var dailyEl = document.getElementById('perf-daily');
-    if (dailyEl) {
-      var days_data = (perf.by_day || []).slice(-14).reverse();
-      dailyEl.innerHTML = days_data.length ? days_data.map(d=>`
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--g100)">
-          <div>
-            <div style="font-size:13px;font-weight:500">${d.date}</div>
-            <div style="font-size:11px;color:var(--g400)">${d.trades} trade${d.trades!==1?'s':''} · ${d.wins} win${d.wins!==1?'s':''}</div>
-          </div>
-          <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${d.pnl>=0?'var(--green-dark)':'var(--red)'}">${d.pnl>=0?'+':''}₹${Math.abs(d.pnl).toLocaleString('en-IN')}</div>
-        </div>`).join('')
-      : '<div style="color:var(--g400);font-size:13px">No daily data yet</div>';
-    }
-
-    // Trade list
-    var tradeList = document.getElementById('perf-trades-list');
-    if (tradeList) {
-      var t = trades.trades || [];
-      tradeList.innerHTML = t.length ? t.slice(0,20).map(tr=>`
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--g100)">
-          <div style="width:36px;height:36px;border-radius:50%;background:${tr.is_open?'var(--amber-lt)':tr.pnl>0?'var(--green-lt)':'var(--red-lt)'};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${tr.is_open?'⏳':tr.pnl>0?'↑':'↓'}</div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600">${tr.strategy} · ATM ${tr.atm}</div>
-            <div style="font-size:11px;color:var(--g400)">${tr.date} · ${tr.exit_reason||'Open'}</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${tr.is_open?'var(--amber)':tr.pnl>0?'var(--green-dark)':'var(--red)'}">${tr.is_open?'OPEN':(tr.pnl>=0?'+':'')+'₹'+Math.abs(tr.pnl||0).toFixed(0)}</div>
-            <div style="font-size:10px;color:var(--g400)">Entry ₹${(tr.entry||0).toFixed(1)}</div>
-          </div>
-        </div>`).join('')
-      : '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No shadow trades yet</div><div class="empty-sub">Enable Shadow Mode on an automation and run it during market hours</div></div>';
-    }
-
-  } catch(e) {
-    console.error('Performance load error:', e);
-  }
-}
 
 function setText(id, val) {
   var el = document.getElementById(id);
@@ -2449,45 +2396,577 @@ async function loadSymbols() {
 
 
 
+
+
+
 // ═══════════════════════════════════════════════════════
-// SAVE AUTO — updated to include shadow mode
+// HELP PAGE
 // ═══════════════════════════════════════════════════════
-var _origSaveAuto = saveAuto;
-async function saveAuto(mode) {
-  var sym    = document.getElementById('auto-sym').value;
-  var brok   = document.getElementById('auto-broker').value;
-  var shadow = document.getElementById('auto-shadow')?.checked ?? true;
-  var tgAlert= document.getElementById('auto-tg')?.checked ?? true;
-  if (!brok) { toast('Connect a broker first','error'); return; }
-  if (mode==='live' && !confirm('Switch to LIVE?\n\nReal money orders will be placed.\nOnly do this after reviewing Results page.')) return;
-  try {
-    await api('POST','/api/automations',{
-      name: (document.getElementById('auto-sym').options[document.getElementById('auto-sym').selectedIndex]?.text || sym) + ' — ' + [...selectedStrategies].join('+'),
-      symbol:sym, broker_id:brok,
-      strategies:[...selectedStrategies], mode,
-      shadow_mode: shadow,
-      telegram_alerts: tgAlert,
-      config:{
-        lots:           +document.getElementById('auto-lots').value || 1,
-        lot_size:       +document.getElementById('auto-lotsize').value || 75,
-        max_loss_pct:   +document.getElementById('auto-maxloss').value || 30,
-        profit_target_pct: +document.getElementById('auto-profit').value || 50,
-        hedge_width:    +document.getElementById('auto-hedge').value || 2,
-        auto_exit_time: document.getElementById('auto-exit').value || '14:00',
-      }
-    });
-    document.getElementById('newAutoForm').style.display='none';
-    toast('Automation saved ✓','success');
-    loadAutomate();
-  } catch(e) { toast(e.message,'error'); }
+var _helpLoaded = false;
+
+function buildHelpHTML() {
+  var strategies = [
+    {code:'S1',name:'ORB Breakdown Iron Fly',when:'9:22 AM – 2:00 PM',market:'Any trending day',hedge:'±2 (auto)',condition:'A strike's combined premium drops below its ORB low (built 9:15–9:21 AM). ATM strike preferred.',fires:'Most trading days — most reliable signal.',orders:'Sell ATM CE + PE. Buy CE 2 strikes up, PE 2 strikes down.'},
+    {code:'S7',name:'All-Strike Butterfly',when:'9:22 – 10:00 AM',market:'Strong bearish open',hedge:'±2 (auto)',condition:'ALL monitored strikes break their ORB low simultaneously. Rare but very high conviction.',fires:'1–2 times per week on strong gap-down opens.',orders:'Same as S1 but fires only when all strikes confirm together.'},
+    {code:'S8',name:'Gap Fade Iron Condor',when:'9:22 – 9:45 AM',market:'Gap day (>0.4% open)',hedge:'±3 (auto)',condition:'Market opens with significant gap. Premium is elevated. Fade the gap.',fires:'On clear gap-up or gap-down days.',orders:'Sell ATM CE + PE. Buy CE 3 strikes up, PE 3 strikes down (wider for gap buffer).'},
+    {code:'S2',name:'VWAP Squeeze Iron Fly',when:'9:22 – 10:30 AM',market:'Bearish with VWAP confirmation',hedge:'±2 (auto)',condition:'Combined premium below VWAP AND EMA75 also below VWAP. Both must confirm.',fires:'When S1 doesn't fire — good fallback for slow bearish days.',orders:'Sell ATM CE + PE. Buy ±2 strike hedge.'},
+    {code:'S3',name:'Breakout Reversal',when:'9:22 AM – 2:00 PM',market:'Failed breakout day',hedge:'±2 (auto)',condition:'Premium spikes above VWAP×1.05 then falls back below VWAP. Sell the reversal.',fires:'Opportunistic — when a false breakout reverses.',orders:'Sell ATM CE + PE. Buy ±2 hedge.'},
+    {code:'S4',name:'Iron Condor',when:'9:30 – 10:00 AM',market:'Range-bound, low VIX',hedge:'sell±1/buy±3 (auto)',condition:'Combined premium range in last 15 candles is less than 8%. Market is stable.',fires:'On flat consolidation days. VIX below 13 ideal.',orders:'Sell 1-strike OTM CE + PE. Buy ±3 wings.'},
+    {code:'S6',name:'Theta Decay Wide Condor',when:'9:45 – 10:30 AM',market:'High IV, elevated premium',hedge:'sell±1/buy±4 (auto)',condition:'Premium is near or above ORB high. Sell elevated IV and let it crush.',fires:'High-IV days when premium stays elevated past 9:45 AM.',orders:'Sell 1-strike OTM CE + PE. Buy ±4 wings.'},
+    {code:'S9',name:'Pre-Expiry Theta Crush',when:'11:00 AM – 12:00 PM',market:'Thursday (expiry day) only',hedge:'±1 tight (auto)',condition:'Thursday only. ATM options lose 50–70% of value in last 2 hours.',fires:'Every Thursday 11–12 AM.',orders:'Sell ATM CE + PE. Buy ±1 tight hedge (movement minimal near expiry).'},
+    {code:'S5',name:'Ratio Spread (Advanced)',when:'9:30 – 11:00 AM',market:'Strong confirmed downtrend',hedge:'±3 partial (auto)',condition:'Combined premium well below EMA75. Strong downtrend confirmed.',fires:'Rarely — only in strong sustained downtrends.',orders:'Sell 2× ATM CE + PE (double lots). Buy 1× ±3 hedge each side.'},
+  ];
+
+  var slHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">How the stop loss works</div></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--g600);margin-bottom:10px">The engine monitors <strong>combined premium (CE + PE)</strong> every 60 seconds. All exits are based on this combined value — never on spot price or individual legs.</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:3px">Layer 1 — Trailing SL</div>
+            <div style="font-size:11px;color:var(--g500)">Once combined decays 15% (you are making profit), a trailing stop activates. It tracks the lowest combined seen. If combined then bounces back 20% from that low → exit. This locks in gains automatically.</div>
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:3px">Layer 2 — VWAP SL</div>
+            <div style="font-size:11px;color:var(--g500)">If combined premium closes above VWAP → exit. VWAP is calculated from combined premium values, not spot price. After 75 candles, if EMA75 is below VWAP, it switches to EMA75 as a tighter exit.</div>
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:3px">Layer 3 — Max Loss Backstop</div>
+            <div style="font-size:11px;color:var(--g500)">If combined rises 30% above your entry combined → exit. If you collected ₹200 combined, backstop triggers at ₹260. Fully relative to what was collected. This is the last resort safety net.</div>
+          </div>
+          <div style="background:var(--green-lt);border-radius:8px;padding:10px 12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:3px;color:var(--green-dark)">Profit Target</div>
+            <div style="font-size:11px;color:var(--green-dark)">Exit when combined has decayed 50% from entry (industry standard). If you collected ₹200, exit when combined reaches ₹100.</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  var hedgeHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">Hedging — why it's automatic</div></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--g600);margin-bottom:10px">Every strategy uses hedge legs (buy OTM options) to define your maximum risk and reduce margin by ~50%. The hedge width is chosen automatically per strategy based on industry best practice.</p>
+        <div style="overflow-x:auto">
+          <table style="width:100%;font-size:11px;border-collapse:collapse">
+            <tr style="background:var(--g50)">
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--g200)">Strategy</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--g200)">Hedge</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--g200)">Why</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--g200)">Margin</th>
+            </tr>
+            ${[
+              {s:'S9 Expiry',h:'±1',why:'Tiny movement near expiry',m:'~₹30K'},
+              {s:'S1,S2,S3,S7',h:'±2',why:'Standard iron fly balance',m:'~₹50K'},
+              {s:'S8 Gap Fade',h:'±3',why:'Buffer for volatile gap days',m:'~₹40K'},
+              {s:'S4 Condor',h:'sell±1/buy±3',why:'Wider profit zone',m:'~₹40K'},
+              {s:'S6 Wide',h:'sell±1/buy±4',why:'Maximum premium in high IV',m:'~₹35K'},
+            ].map(r=>`<tr><td style="padding:5px 8px;border-bottom:0.5px solid var(--g100)">${r.s}</td><td style="padding:5px 8px;border-bottom:0.5px solid var(--g100);font-weight:600">${r.h}</td><td style="padding:5px 8px;border-bottom:0.5px solid var(--g100);color:var(--g500)">${r.why}</td><td style="padding:5px 8px;border-bottom:0.5px solid var(--g100);text-align:right">${r.m}</td></tr>`).join('')}
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--g400);margin-top:8px">If you select multiple strategies with different hedge widths, each trade uses the hedge appropriate for the strategy that fired. The Advanced settings allow overriding the default if needed.</p>
+      </div>
+    </div>`;
+
+  var stratCards = strategies.map(s=>`
+    <div class="card" style="margin-bottom:8px">
+      <div style="padding:10px 14px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="background:var(--g100);color:var(--g700);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700">${s.code}</span>
+          <span style="font-size:13px;font-weight:600">${s.name}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;margin-bottom:6px">
+          <div><span style="color:var(--g400)">Time: </span>${s.when}</div>
+          <div><span style="color:var(--g400)">Market: </span>${s.market}</div>
+          <div><span style="color:var(--g400)">Hedge: </span>${s.hedge}</div>
+          <div><span style="color:var(--g400)">Fires: </span>${s.fires}</div>
+        </div>
+        <div style="font-size:11px;color:var(--g600);background:var(--g50);border-radius:6px;padding:7px 10px;margin-bottom:4px"><strong>Entry condition:</strong> ${s.condition}</div>
+        <div style="font-size:11px;color:var(--g500)"><strong>Orders placed:</strong> ${s.orders}</div>
+      </div>
+    </div>`).join('');
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">Multiple strategies — how they combine</div></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--g600);margin-bottom:8px">When you select multiple strategies, they run in priority order every 60 seconds. The <strong>first one whose condition is met fires</strong> — then no more trades that day. Only one trade per automation per day.</p>
+        <div style="font-size:11px;background:var(--blue-lt);border-radius:8px;padding:10px 12px;color:var(--blue)">
+          <strong>Example:</strong> S1 + S8 + S2 selected.<br>
+          Gap day → S8 fires at 9:22 AM (S1 and S2 skipped).<br>
+          Normal day, ORB breaks → S1 fires (S2 skipped).<br>
+          No gap, no ORB → S2 checks VWAP at 9:30 AM.<br>
+          None fire → No trade today. This is normal and healthy.
+        </div>
+      </div>
+    </div>
+    ${slHTML}
+    ${hedgeHTML}
+    <div class="section-title" style="margin-bottom:8px">All 9 Strategies</div>
+    ${stratCards}`;
 }
 
+// ═══════════════════════════════════════════════════════
+// TELEGRAM SELECTOR IN AUTOMATION FORM
+// ═══════════════════════════════════════════════════════
+var _tgAccounts = [];
+
+async function loadAutoTgSelector() {
+  try {
+    var d = await api('GET','/api/telegram/accounts');
+    _tgAccounts = d.accounts || [];
+    var el = document.getElementById('auto-tg-selector');
+    if (!el) return;
+    if (!_tgAccounts.length) {
+      el.innerHTML = '<div style="font-size:11px;color:var(--g400)">No Telegram accounts configured. Add them in <a onclick="nav('profile')" style="color:var(--blue)">Profile → Telegram</a>.</div>';
+      return;
+    }
+    el.innerHTML = _tgAccounts.map(a=>`
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:4px 0">
+        <input type="checkbox" name="auto-tg-acct" value="${a.id}" checked style="width:14px;height:14px">
+        <span>${a.name}</span>
+        <span style="font-size:10px;color:var(--g400)">${a.chat}</span>
+      </label>`).join('');
+  } catch(e) {}
+}
+
+
+
+
+
+// ═══════════════════════════════════════════════════════
+// HELP PAGE — Strategy guide, always up to date
+// ═══════════════════════════════════════════════════════
+
+var STRATEGIES = {
+  S1:{name:'ORB Breakdown Iron Fly',badge:'Primary',badgeColor:'#185FA5',time:'9:22 AM – 2:00 PM',market:'Any day',
+    condition:'Any monitored strike drops below its ORB low (built 9:15–9:21 AM). ATM preferred.',
+    fires:'Most trading days — most reliable signal.',
+    structure:'Iron Fly at breaking strike',hedge:'±2 (auto)',
+    tip:'Best strategy to start with. Fires most days.'},
+  S7:{name:'All-Strike Iron Butterfly',badge:'High conviction',badgeColor:'#534AB7',time:'9:22 – 10:00 AM',market:'Strong bearish open',
+    condition:'ALL monitored strikes break their ORB low simultaneously.',
+    fires:'1–2 times per week on strong bearish opens.',
+    structure:'Iron Fly at ATM',hedge:'±2 (auto)',
+    tip:'Rare but powerful. Highest conviction signal.'},
+  S8:{name:'Gap Fade Iron Condor',badge:'Gap day',badgeColor:'#185FA5',time:'9:22 – 9:45 AM',market:'Gap >0.4% from prev close',
+    condition:'Market opens with significant gap. Sell elevated premium, fade the gap.',
+    fires:'On gap-up or gap-down days. ~2–3x per week.',
+    structure:'Iron Condor with wider hedge',hedge:'±3 (auto, wider for gap buffer)',
+    tip:'Gaps fade 80% of the time. Wider hedge gives room for initial volatility.'},
+  S2:{name:'VWAP Squeeze Iron Fly',badge:'Fallback',badgeColor:'#5F5E5A',time:'9:22 – 10:30 AM',market:'Bearish, VWAP confirmed',
+    condition:'Combined premium below VWAP AND EMA confirms bearish. Both must agree.',
+    fires:'When S1 does not fire — slow bearish days.',
+    structure:'Iron Fly at ATM',hedge:'±2 (auto)',
+    tip:'Good fallback. Pair with S1 for better daily coverage.'},
+  S3:{name:'Breakout Reversal',badge:'Opportunistic',badgeColor:'#5F5E5A',time:'9:22 AM – 2:00 PM',market:'Failed breakout day',
+    condition:'Premium spikes above VWAP×1.05 in last 5 candles then falls back below VWAP.',
+    fires:'Opportunistic — fires on false breakout days.',
+    structure:'Iron Fly at ATM',hedge:'±2 (auto)',
+    tip:'Do not run alone. Add alongside S1+S2 for extra coverage.'},
+  S4:{name:'Iron Condor',badge:'Range-bound',badgeColor:'#5F5E5A',time:'9:30 – 10:00 AM',market:'Flat consolidation',
+    condition:'Premium range in last 15 candles is under 8% of current. Market is tight.',
+    fires:'Flat consolidation days. VIX below 13 ideal.',
+    structure:'Iron Condor: sell ±1, buy ±3',hedge:'±3 (auto)',
+    tip:'Run as separate automation on low-VIX days.'},
+  S6:{name:'Theta Decay Wide Condor',badge:'High IV',badgeColor:'#854F0B',time:'9:45 – 10:30 AM',market:'Elevated premium day',
+    condition:'Premium near or above ORB high at 9:45 AM. Sell high IV, wait for crush.',
+    fires:'High IV days when premium stays elevated past 9:45.',
+    structure:'Wide Iron Condor: sell ±1, buy ±4',hedge:'±4 (auto, widest)',
+    tip:'Run as separate automation. Only when VIX is elevated.'},
+  S9:{name:'Pre-Expiry Theta Crush',badge:'Thursday only',badgeColor:'#854F0B',time:'11:00 AM – 12:00 PM',market:'Expiry day (Thursday)',
+    condition:'Expiry day only. ATM options lose 50–70% in final hours. Pure theta.',
+    fires:'Every Thursday during 11 AM–12 PM.',
+    structure:'Tight Iron Fly at ATM',hedge:'±1 (auto, tightest)',
+    tip:'Always run as a separate automation. Different hedge and timing.'},
+  S5:{name:'Ratio Spread (Advanced)',badge:'Advanced',badgeColor:'#A32D2D',time:'9:30 – 11:00 AM',market:'Strong downtrend confirmed',
+    condition:'Combined premium well below EMA75. Strong sustained downtrend confirmed.',
+    fires:'Rarely. Only in strong downtrends.',
+    structure:'Sell 2× ATM, buy 1× hedge per side',hedge:'±3 (partial)',
+    tip:'⚠ Advanced. Only add once other strategies are validated.'},
+};
+
+var HEDGE_INFO = {
+  1:{label:'±1 Tight Iron Fly',margin:'~₹30–40K',maxloss:'1 strike width',premium:'Lower',best:'Expiry day (S9)'},
+  2:{label:'±2 Standard Iron Fly',margin:'~₹45–55K',maxloss:'2 strike widths',premium:'Good balance',best:'S1, S2, S7, S3'},
+  3:{label:'±3 Iron Condor',margin:'~₹35–45K',maxloss:'3 strike widths',premium:'Moderate',best:'S4, S8'},
+  4:{label:'±4 Wide Condor',margin:'~₹30–40K',maxloss:'4 strike widths',premium:'Maximum',best:'S6 (high IV)'},
+};
+
+
+function toggleHelp(id) {
+  var el = document.getElementById(id);
+  var arrow = document.getElementById(id+'-arrow');
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.style.transform = open ? '' : 'rotate(180deg)';
+}
 
 // Auto-refresh dashboard every 60 seconds
 setInterval(()=>{
   var dashPage = document.getElementById('pg-dashboard');
   if (dashPage&&dashPage.classList.contains('on')) refreshDashboard();
 }, 60000);
+// ═══════════════════════════════════════════════════════
+// PERFORMANCE — multi-automation aware
+// ═══════════════════════════════════════════════════════
+var equityChartInst = null;
+
+async function loadPerformance() {
+  var days   = document.getElementById('perf-days')?.value || 30;
+  var autoId = document.getElementById('perf-auto-filter')?.value || 'all';
+
+  // Populate automation filter dropdown
+  try {
+    var autos = await api('GET','/api/automations');
+    var sel = document.getElementById('perf-auto-filter');
+    if (sel && sel.options.length <= 1) {
+      (autos.automations||[]).forEach(a => {
+        var opt = document.createElement('option');
+        opt.value = a.id; opt.textContent = a.name;
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {}
+
+  try {
+    var url = '/api/shadow/performance?days='+days+(autoId!=='all'?'&automation_id='+autoId:'');
+    var turl = '/api/shadow/trades?days='+days+(autoId!=='all'?'&automation_id='+autoId:'');
+    var [perf, trades] = await Promise.all([api('GET',url), api('GET',turl)]);
+
+    // Tiles
+    var pnl = perf.total_pnl||0;
+    var pnlEl = document.getElementById('pt-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = (pnl>=0?'+':'')+'₹'+Math.abs(pnl).toLocaleString('en-IN');
+      pnlEl.style.color = pnl>0?'var(--green-dark)':pnl<0?'var(--red)':'inherit';
+    }
+    var setT = (id,v,sub) => { var e=document.getElementById(id); if(e) e.textContent=v; if(sub) { var s=document.getElementById(id+'-sub'); if(s) s.textContent=sub; } };
+    setT('pt-wr',(perf.win_rate||0)+'%',(perf.wins||0)+' wins / '+(perf.losses||0)+' losses');
+    setT('pt-count',perf.total_trades||0,'total fired');
+    var avg=perf.avg_pnl||0;
+    setT('pt-avg',(avg>=0?'+':'')+'₹'+Math.abs(avg).toFixed(0),'per trade');
+
+    // Best/worst day
+    if (perf.best_day) { setT('pt-best','+₹'+Math.abs(perf.best_day.pnl||0).toFixed(0)); setT('pt-best-date',perf.best_day.date); }
+    if (perf.worst_day) { setT('pt-worst','−₹'+Math.abs(perf.worst_day.pnl||0).toFixed(0)); setT('pt-worst-date',perf.worst_day.date); }
+
+    // Equity curve
+    var curve = perf.equity_curve||[];
+    if (curve.length>0 && window.Chart) {
+      var ctx = document.getElementById('equityChart')?.getContext('2d');
+      if (ctx) {
+        if (equityChartInst) equityChartInst.destroy();
+        var finalVal = curve[curve.length-1]?.equity||0;
+        equityChartInst = new Chart(ctx, {
+          type:'line',
+          data:{labels:curve.map(c=>c.date.slice(5)),datasets:[{
+            data:curve.map(c=>c.equity),
+            borderColor:finalVal>=0?'#00c805':'#ff5000',
+            backgroundColor:finalVal>=0?'rgba(0,200,5,.08)':'rgba(255,80,0,.08)',
+            fill:true,tension:.3,pointRadius:2,borderWidth:2}]},
+          options:{plugins:{legend:{display:false}},
+            scales:{x:{grid:{display:false},ticks:{font:{size:10},maxTicksLimit:8}},
+              y:{grid:{color:'rgba(0,0,0,.04)'},ticks:{font:{size:10},callback:v=>'₹'+v.toLocaleString('en-IN')}}},
+            responsive:true,maintainAspectRatio:false}
+        });
+      }
+    } else if (curve.length===0) {
+      var ce=document.getElementById('equityChart');
+      if (ce&&ce.parentElement) ce.parentElement.innerHTML='<div class="empty" style="padding:24px"><div class="empty-icon">📈</div><div class="empty-title">No data yet</div><div class="empty-sub">Shadow trades appear here after market hours</div></div>';
+    }
+
+    // By strategy
+    var stratEl=document.getElementById('perf-by-strategy');
+    if (stratEl) {
+      var strats=perf.by_strategy||{};
+      stratEl.innerHTML=Object.keys(strats).length?Object.entries(strats).map(([code,s])=>`
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${code}</div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:600">${code}</div><div style="font-size:11px;color:var(--g500)">${s.trades} trades · ${s.win_rate}% win</div></div>
+          <div style="text-align:right">
+            <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${(s.total_pnl||0)>=0?'var(--green-dark)':'var(--red)'}">${(s.total_pnl||0)>=0?'+':''}₹${Math.abs(s.total_pnl||0).toLocaleString('en-IN')}</div>
+            <div style="font-size:11px;color:var(--g400)">avg ₹${s.avg_pnl>=0?'+':''}${s.avg_pnl}</div>
+          </div>
+        </div>`).join(''):'<div style="color:var(--g400);font-size:13px">No trades yet</div>';
+    }
+
+    // Exit reasons
+    var exitEl=document.getElementById('perf-exit-reasons');
+    if (exitEl) {
+      var reasons=perf.exit_reasons||{};
+      exitEl.innerHTML=Object.keys(reasons).length?Object.entries(reasons).map(([r,n])=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--g100)">
+          <span style="font-size:12px">${r.replace(/_/g,' ')}</span>
+          <span class="badge badge-gray">${n}</span>
+        </div>`).join(''):'<div style="color:var(--g400);font-size:13px">No exits yet</div>';
+    }
+
+    // Daily
+    var dailyEl=document.getElementById('perf-daily');
+    if (dailyEl) {
+      var days_data=(perf.by_day||[]).slice(-14).reverse();
+      dailyEl.innerHTML=days_data.length?days_data.map(d=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--g100)">
+          <div><div style="font-size:13px;font-weight:500">${d.date}</div><div style="font-size:11px;color:var(--g400)">${d.trades} trade${d.trades!==1?'s':''} · ${d.wins} win${d.wins!==1?'s':''}</div></div>
+          <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${(d.pnl||0)>=0?'var(--green-dark)':'var(--red)'}">${(d.pnl||0)>=0?'+':''}₹${Math.abs(d.pnl||0).toLocaleString('en-IN')}</div>
+        </div>`).join(''):'<div style="color:var(--g400);font-size:13px">No daily data yet</div>';
+    }
+
+    // Trade list
+    var tl=document.getElementById('perf-trades-list');
+    if (tl) {
+      var ts=trades.trades||[];
+      tl.innerHTML=ts.length?ts.slice(0,20).map(tr=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:50%;background:${tr.is_open?'var(--amber-lt)':((tr.pnl||0)>0?'var(--green-lt)':'var(--red-lt)')};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${tr.is_open?'⏳':((tr.pnl||0)>0?'↑':'↓')}</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${tr.strategy} · ATM ${tr.atm}</div>
+            <div style="font-size:11px;color:var(--g400)">${tr.date} · ${tr.exit_reason||'Open'} · ${tr.entry_time||''}${tr.exit_time?' → '+tr.exit_time:''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:${tr.is_open?'var(--amber)':((tr.pnl||0)>0?'var(--green-dark)':'var(--red)')}">
+              ${tr.is_open?'OPEN':((tr.pnl||0)>=0?'+':'')+'₹'+Math.abs(tr.pnl||0).toFixed(0)}
+            </div>
+            <div style="font-size:10px;color:var(--g400)">Entry ₹${(tr.entry||0).toFixed(1)}</div>
+          </div>
+        </div>`).join(''):'<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No trades yet</div><div class="empty-sub">Enable Shadow Mode on an automation to start</div></div>';
+    }
+  } catch(e) { console.error('Performance error:',e); }
+}
+
+function loadChartJs(cb) {
+  if (window.Chart) { cb(); return; }
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
+  s.onload=cb; document.head.appendChild(s);
+}
+
+// ═══════════════════════════════════════════════════════
+// HELP PAGE — strategy guide, always up to date
+// ═══════════════════════════════════════════════════════
+var STRATEGIES_HELP = [
+  {code:'S1',name:'ORB Breakdown Iron Fly',time:'9:22 AM – 2:00 PM',market:'Any trending day',
+   condition:'A strike's combined premium drops below its Opening Range Low (built 9:15–9:21 AM). ATM strike preferred.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy OTM CE hedge + Buy OTM PE hedge',
+   hedge:'±2 standard (override in Advanced settings)',
+   when:'Fires most trading days. Most reliable primary signal.',
+   tip:'Best used as your primary strategy. Enable this in every automation.',color:'blue'},
+  {code:'S2',name:'VWAP Squeeze Iron Fly',time:'9:22 – 10:30 AM',market:'Bearish confirmation day',
+   condition:'Combined premium is below VWAP AND EMA75 is also below VWAP. Both must confirm simultaneously.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy ±2 hedge both sides',
+   hedge:'±2 standard',
+   when:'Fires when S1 doesn't. Good fallback for slow days.',
+   tip:'Add alongside S1 so if S1 doesn't fire by 10:30, S2 gives a second chance.',color:'gray'},
+  {code:'S3',name:'Breakout Reversal Iron Fly',time:'9:22 AM – 2:00 PM',market:'Failed breakout day',
+   condition:'Combined premium spikes 5%+ above VWAP in last 5 candles, then falls back below VWAP. Sell the reversal.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy ±2 hedge',
+   hedge:'±2 standard',
+   when:'Opportunistic. Fires after false breakouts.',
+   tip:'Good addition to catch high-IV spike reversals. Works well with S1.',color:'gray'},
+  {code:'S4',name:'Iron Condor',time:'9:30 – 10:00 AM',market:'Range-bound, low volatility',
+   condition:'Combined premium range in last 15 candles is less than 8% of current price. Market is in tight consolidation.',
+   orders:'Sell ±1 strike CE + Sell ±1 strike PE + Buy ±3 hedge each side',
+   hedge:'±3 (wider profit zone for range-bound days)',
+   when:'Fires on flat consolidation days. VIX below 13 ideal.',
+   tip:'Run as a separate automation from S1. Different market condition entirely.',color:'gray'},
+  {code:'S5',name:'Ratio Spread (Advanced)',time:'9:30 – 11:00 AM',market:'Strong confirmed downtrend',
+   condition:'Combined premium is well below EMA75 showing strong downtrend. Sells 2x lots with partial hedge.',
+   orders:'Sell 2x ATM CE + Sell 2x ATM PE + Buy 1x ±3 hedge each side',
+   hedge:'±3 partial (higher risk — not fully defined)',
+   when:'Rarely fires. Only strong sustained downtrends.',
+   tip:'Advanced only. Do not include until you have 2+ weeks of paper results.',color:'red'},
+  {code:'S6',name:'Theta Decay Wide Condor',time:'9:45 – 10:30 AM',market:'High IV, elevated premium',
+   condition:'Current combined premium is still near or above Opening Range High at 9:45 AM. IV is elevated.',
+   orders:'Sell ±1 strike CE + Sell ±1 strike PE + Buy ±4 wide hedge each side',
+   hedge:'±4 wide (maximum premium collection on high-IV days)',
+   when:'High India VIX days when premium stays elevated past 9:45 AM.',
+   tip:'Add alongside S1 and S8 for high-IV day coverage.',color:'gray'},
+  {code:'S7',name:'All-Strike Iron Butterfly',time:'9:22 – 10:00 AM',market:'Strong bearish open',
+   condition:'ALL 7 monitored strikes break their Opening Range Low simultaneously. Rare but highest conviction.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy ±2 hedge',
+   hedge:'±2 standard',
+   when:'1–2 times per week on strong gap-down or bearish opens.',
+   tip:'Highest priority strategy. Fires before S1. Always include if including S1.',color:'purple'},
+  {code:'S8',name:'Gap Fade Iron Condor',time:'9:22 – 9:45 AM',market:'Gap day only (>0.4% gap)',
+   condition:'Market opens with a >0.4% gap from previous close. Premium is elevated from gap uncertainty.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy ±3 hedge (wider for gap buffer)',
+   hedge:'±3 wider hedge (gap days need more room)',
+   when:'Gap-up or gap-down days. 80% of gaps fade within first hour.',
+   tip:'Always pair with S1. S8 fires in gap days, S1 fires in non-gap days.',color:'blue'},
+  {code:'S9',name:'Pre-Expiry Theta Crush',time:'11:00 AM – 12:00 PM Thursday',market:'Expiry day (Thursday) only',
+   condition:'Expiry day only. ATM options lose 50–70% of remaining value in final hours. Pure time decay play.',
+   orders:'Sell ATM CE + Sell ATM PE + Buy ±1 tight hedge (minimal movement near expiry)',
+   hedge:'±1 tight (least movement expected on expiry day)',
+   when:'Every Thursday between 11 AM and 12 PM.',
+   tip:'Run as a SEPARATE automation. Different day, different logic, different hedge width.',color:'amber'},
+];
+
+var HEDGE_HELP = {
+  1:{name:'±1 Tight Iron Fly',premium:'₹80–120 approx',margin:'~₹30–40K/lot',maxloss:'50 pts × lots × lot-size',best:'Expiry day (S9) — minimal movement expected',
+     orders:['Sell ATM CE','Sell ATM PE','Buy ATM+50 CE (1 strike up)','Buy ATM-50 PE (1 strike down)']},
+  2:{name:'±2 Standard Iron Fly',premium:'₹120–180 approx',margin:'~₹45–55K/lot',maxloss:'100 pts × lots × lot-size',best:'Most strategies: S1, S2, S3, S7',
+     orders:['Sell ATM CE','Sell ATM PE','Buy ATM+100 CE (2 strikes up)','Buy ATM-100 PE (2 strikes down)']},
+  3:{name:'±3 Iron Condor',premium:'₹60–100 approx',margin:'~₹35–45K/lot',maxloss:'200 pts × lots × lot-size',best:'Gap days (S8), range-bound (S4)',
+     orders:['Sell ATM+50 CE (1 OTM)','Sell ATM-50 PE (1 OTM)','Buy ATM+150 CE (3 OTM)','Buy ATM-150 PE (3 OTM)']},
+  4:{name:'±4 Wide Iron Condor',premium:'₹80–130 approx',margin:'~₹30–40K/lot',maxloss:'300 pts × lots × lot-size',best:'High IV days (S6)',
+     orders:['Sell ATM+50 CE (1 OTM)','Sell ATM-50 PE (1 OTM)','Buy ATM+200 CE (4 OTM)','Buy ATM-200 PE (4 OTM)']},
+};
+
+function loadHelp() {
+  var el = document.getElementById('help-content');
+  if (!el) return;
+
+  var html = `
+    <!-- SL explanation -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">How the Stop Loss works</div></div>
+      <div class="card-body">
+        <div style="font-size:13px;line-height:1.7;margin-bottom:10px">
+          The engine monitors <strong>combined premium</strong> (CE price + PE price) every 60 seconds.
+          All exit decisions are based on this number only — never on spot price or individual legs.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-weight:600;margin-bottom:3px">Layer 1 — Trailing SL (primary)</div>
+            Once combined decays 15% from entry (you're making money), a trailing stop activates.
+            If combined then bounces back 20% from its lowest point → exit and keep gains.
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-weight:600;margin-bottom:3px">Layer 2 — VWAP SL (dynamic)</div>
+            If combined premium rises above VWAP → exit. After 75 data points, switches to EMA75 SL when EMA75 &lt; VWAP (tighter exit).
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-weight:600;margin-bottom:3px">Layer 3 — Max loss backstop (safety net)</div>
+            If combined rises 30% above entry combined → exit. This is set in Advanced settings. Percentage of entry combined, never a fixed amount.
+          </div>
+          <div style="background:#d1fae5;border-radius:8px;padding:10px 12px;border:1px solid #6ee7b7">
+            <div style="font-weight:600;margin-bottom:3px;color:var(--green-dark)">Profit target</div>
+            Exit when combined decays 50% from entry (industry standard). Set in Advanced settings. The trailing SL usually fires before this.
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--g500)">
+          The profit % and loss % in Advanced settings tune when these layers activate — they are not simple fixed stops.
+          The engine always uses all three layers simultaneously.
+        </div>
+      </div>
+    </div>
+
+    <!-- Hedge explanation -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">How hedge width works</div></div>
+      <div class="card-body">
+        <div style="font-size:13px;line-height:1.7;margin-bottom:10px">
+          Every order places 4 legs: 2 sell legs (collect premium) and 2 buy legs (hedge to define maximum risk and reduce margin).
+          The hedge width determines how far OTM the buy legs are placed.
+        </div>
+        ${Object.entries(HEDGE_HELP).map(([w,h])=>`
+          <div style="border:1px solid var(--g200);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:13px;font-weight:600">${h.name}</div>
+              <span class="badge badge-gray">±${w}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;margin-bottom:8px">
+              <div><span style="color:var(--g400)">Net premium: </span>${h.premium}</div>
+              <div><span style="color:var(--g400)">Margin: </span>${h.margin}</div>
+              <div><span style="color:var(--g400)">Max loss: </span>${h.maxloss}</div>
+              <div><span style="color:var(--g400)">Best for: </span>${h.best}</div>
+            </div>
+            <div style="font-size:11px;color:var(--g500)">${h.orders.map((o,i)=>`<span style="display:inline-block;margin:2px 6px 2px 0;padding:1px 6px;border-radius:4px;background:${i<2?'var(--red-lt)':'var(--green-lt)'};color:${i<2?'var(--red)':'var(--green-dark)'}">${o}</span>`).join('')}</div>
+          </div>`).join('')}
+        <div style="font-size:12px;color:var(--g500);background:var(--g50);border-radius:8px;padding:10px 12px">
+          Each strategy auto-selects its optimal hedge: S9=±1, S8=±3, S6=±4, all others=±2.
+          You can override in Advanced settings when creating an automation.
+        </div>
+      </div>
+    </div>
+
+    <!-- Strategy cards -->
+    <div class="section-title" style="margin-bottom:10px">All 9 strategies</div>
+    ${STRATEGIES_HELP.map(s=>`
+      <div class="card" style="margin-bottom:10px">
+        <div style="padding:12px 16px;cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="badge badge-${s.color==='blue'?'blue':s.color==='purple'?'blue':s.color==='amber'?'amber':s.color==='red'?'red':'gray'}">${s.code}</span>
+              <div>
+                <div style="font-size:13px;font-weight:600">${s.name}</div>
+                <div style="font-size:11px;color:var(--g400)">${s.time} · ${s.market}</div>
+              </div>
+            </div>
+            <span style="color:var(--g400);font-size:16px">›</span>
+          </div>
+        </div>
+        <div style="display:none;padding:0 16px 14px;border-top:1px solid var(--g100)">
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;font-size:12px">
+            <div><span style="color:var(--g500);display:block;margin-bottom:2px">Entry condition</span>${s.condition}</div>
+            <div><span style="color:var(--g500);display:block;margin-bottom:2px">Orders placed</span>${s.orders}</div>
+            <div><span style="color:var(--g500);display:block;margin-bottom:2px">Default hedge</span>${s.hedge}</div>
+            <div><span style="color:var(--g500);display:block;margin-bottom:2px">When to expect it</span>${s.when}</div>
+            <div style="background:#eff6ff;border-radius:6px;padding:8px 10px;border-left:3px solid var(--blue)">
+              <span style="font-weight:600;color:var(--blue)">Tip: </span>${s.tip}
+            </div>
+          </div>
+        </div>
+      </div>`).join('')}
+
+    <!-- Recommended combos -->
+    <div class="section-title" style="margin-bottom:10px">Recommended combinations</div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:12px;font-size:12px">
+          <div style="border-bottom:1px solid var(--g100);padding-bottom:10px">
+            <div style="font-weight:600;margin-bottom:4px">Beginner — first week</div>
+            <div style="display:flex;gap:4px;margin-bottom:4px"><span class="badge badge-blue">S1</span><span class="badge badge-blue">S8</span><span class="badge badge-gray">Hedge ±2</span><span class="badge badge-gray">1 lot</span></div>
+            <div style="color:var(--g500)">S1 fires most days. S8 covers gap days. Simple to understand and validate in Results page.</div>
+          </div>
+          <div style="border-bottom:1px solid var(--g100);padding-bottom:10px">
+            <div style="font-weight:600;margin-bottom:4px">Intermediate — after 1 week paper</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px"><span class="badge badge-blue">S7</span><span class="badge badge-blue">S1</span><span class="badge badge-blue">S8</span><span class="badge badge-gray">S2</span><span class="badge badge-gray">Hedge ±2</span></div>
+            <div style="color:var(--g500)">Adds S7 for high-conviction days, S2 as fallback when S1 doesn't fire. More days covered.</div>
+          </div>
+          <div style="border-bottom:1px solid var(--g100);padding-bottom:10px">
+            <div style="font-weight:600;margin-bottom:4px">Expiry day — separate automation</div>
+            <div style="display:flex;gap:4px;margin-bottom:4px"><span class="badge badge-amber">S9</span><span class="badge badge-gray">Hedge ±1</span><span class="badge badge-gray">1 lot</span></div>
+            <div style="color:var(--g500)">Thursday only. Tight hedge, rapid theta decay. Keep separate from your main automation.</div>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:4px">All 9 selected — paper mode only</div>
+            <div style="color:var(--g500)">Safe to select all 9 in paper mode. Best way to discover which strategies fire and perform. First one whose condition is met fires each day — others skip.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  el.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════
+// TELEGRAM accounts per automation
+// ═══════════════════════════════════════════════════════
+async function loadTgSelectorForAuto() {
+  var el = document.getElementById('auto-tg-selector');
+  if (!el) return;
+  try {
+    var d = await api('GET','/api/telegram/accounts');
+    var accounts = d.accounts||[];
+    if (!accounts.length) {
+      el.innerHTML = '<div style="font-size:11px;color:var(--g400)">No Telegram accounts configured. <a onclick="nav('profile')" style="color:var(--blue);cursor:pointer">Add in Profile →</a></div>';
+      return;
+    }
+    el.innerHTML = accounts.map(a=>`
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+        <input type="checkbox" value="${a.id}" checked class="tg-acct-check" style="width:14px;height:14px">
+        <span style="font-size:12px">${a.name}</span>
+        <span style="font-size:10px;color:var(--g400)">Chat: ${a.chat}</span>
+      </label>`).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--g400)">Could not load Telegram accounts</div>';
+  }
+}
+
 </script>
 </body>
 </html>
