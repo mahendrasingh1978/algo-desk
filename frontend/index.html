@@ -1028,8 +1028,7 @@ async function doLogin() {
     session.token = d.token;
     session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
     localStorage.setItem('algodesk_session', JSON.stringify(session));
-    showScreen('mainApp');
-    loadApp();
+    await loadApp();
   } catch(e) {
     errEl.style.display='flex';
     errMsg.textContent = e.message || 'Login failed. Check your email and password.';
@@ -1050,7 +1049,7 @@ async function doRegister() {
     session.token = d.token;
     session.user  = {email:d.email,name:d.name,role:d.role,plan:d.plan};
     localStorage.setItem('algodesk_session', JSON.stringify(session));
-    loadApp();
+    await loadApp();
   } catch(e) { showErr('regErr','regErrMsg',e.message); }
 }
 
@@ -1126,9 +1125,15 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadApp() {
-  document.querySelectorAll('.auth-screen').forEach(s => s.classList.remove('on'));
-  document.getElementById('mainApp').style.display = 'flex';
-  document.getElementById('mainApp').classList.add('on');
+  // Hide all auth screens cleanly
+  document.querySelectorAll('.auth-screen').forEach(s => {
+    s.classList.remove('on');
+    if (s.id !== 'mainApp') s.style.display = 'none';
+  });
+  // Show main app
+  var mainApp = document.getElementById('mainApp');
+  mainApp.style.display = 'flex';
+  mainApp.classList.add('on');
   var u = session.user;
   document.getElementById('topAv').textContent = (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   document.getElementById('profAv').textContent = document.getElementById('topAv').textContent;
