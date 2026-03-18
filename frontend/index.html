@@ -1891,7 +1891,7 @@ async function runCapitalCheck() {
     html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Qty ('+lots+' lot'+(lots>1?'s':'')+')</div>'
       + '<div style="font-size:13px;font-weight:600">'+(d.qty||0)+' units</div></div>';
     html += '<div><div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Max Lots Possible</div>'
-      + '<div style="font-size:13px;font-weight:600;color:'+(canTrade?'var(--green)':'var(--red))+'">'+(d.buffer_lots!=null?(d.buffer_lots+1):0)+'</div></div>';
+      + '<div style="font-size:13px;font-weight:600;color:'+(canTrade?'var(--green)':'var(--red)')+'">'+( d.buffer_lots!=null?(d.buffer_lots+1):0)+'</div></div>';
     html += '</div>';
 
     // Per-strategy table
