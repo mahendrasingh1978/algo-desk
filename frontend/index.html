@@ -374,7 +374,7 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Profile
       </div>
-      <div class="sidenav-item" onclick="nav('simulate')" id="sn-simulate">
+      <div class="sidenav-item" onclick="nav('performance')" id="sn-simulate">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px;stroke-width:2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Performance
       </div>
@@ -940,7 +940,7 @@ input:checked+.toggle-track::before{transform:translateX(20px)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Trades
       </button>
-      <button class="nav-item" id="bn-simulate" onclick="nav('simulate')">
+      <button class="nav-item" id="bn-performance" onclick="nav('performance')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="12" r="0"/></svg>
         Perf
       </button>
@@ -1183,7 +1183,7 @@ async function loadApp() {
 
 // ── NAV ───────────────────────────────────────────────
 function nav(id) {
-  var ids = ['dashboard','brokers','automate','live','trades','simulate','profile','admin'];
+  var ids = ['dashboard','brokers','automate','live','trades','performance','profile','admin'];
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id==='pg-'+id));
   // bottom nav
   ids.forEach(n => {
@@ -1192,14 +1192,14 @@ function nav(id) {
     var sn = document.getElementById('sn-'+n);
     if (sn) sn.classList.toggle('on', n===id);
   });
-  if (id==='dashboard') refreshDashboard();
-  if (id==='brokers')   loadBrokers();
-  if (id==='automate')  loadAutomate();
-  if (id==='live')      refreshLive();
-  if (id==='trades')    loadTrades();
-  if (id==='simulate')  loadSimulation();
-  if (id==='profile')   loadProfile();
-  if (id==='admin')     loadAdmin();
+  if (id==='dashboard')   refreshDashboard();
+  if (id==='brokers')     loadBrokers();
+  if (id==='automate')    loadAutomate();
+  if (id==='live')        refreshLive();
+  if (id==='trades')      loadTrades();
+  if (id==='performance') loadChartJs(loadPerformance);
+  if (id==='profile')     loadProfile();
+  if (id==='admin')       loadAdmin();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1640,6 +1640,7 @@ async function loadAutomate() {
 function showNewAutoForm() {
   document.getElementById('newAutoForm').style.display='block';
   document.getElementById('newAutoForm').scrollIntoView({behavior:'smooth'});
+  loadSymbols();
 }
 
 function toggleStrategy(code, checked) {
@@ -1866,6 +1867,7 @@ async function loadTrades() {
 // ═══════════════════════════════════════════════════════
 async function loadProfile() {
   try {
+    loadTelegramAccounts();
     var u = await api('GET','/api/me');
     document.getElementById('prof-name').value = u.name||'';
     document.getElementById('prof-tz').value   = u.timezone||'Asia/Kolkata';
@@ -2032,7 +2034,8 @@ async function updateMarketTicker() {
 // ═══════════════════════════════════════════════════════
 // SIMULATION / PERFORMANCE
 // ═══════════════════════════════════════════════════════
-async function loadSimulation() {
+async function loadPerformance() { return loadPerformance(); }
+async function loadPerformance() {
   if (!session.token) return;
   try {
     var days = document.getElementById('simDaysSelect')?.value || 7;
@@ -2210,6 +2213,7 @@ function renderSimChart(byDay) {
 // ═══════════════════════════════════════════════════════
 var equityChartInst = null;
 
+async function loadPerformance() { return loadPerformance(); }
 async function loadPerformance() {
   var days = document.getElementById('perf-days')?.value || 30;
   try {
@@ -2426,12 +2430,7 @@ async function testTgAccount(id) {
   } catch(e) { toast(e.message,'error'); }
 }
 
-// Load Telegram accounts when profile page opens
-var _origLoadProfile = loadProfile;
-async function loadProfile() {
-  await _origLoadProfile();
-  loadTelegramAccounts();
-}
+
 
 // ═══════════════════════════════════════════════════════
 // SYMBOLS FROM BROKER
@@ -2448,12 +2447,7 @@ async function loadSymbols() {
   } catch(e) {}
 }
 
-// Override showNewAutoForm to also load symbols
-var _origShowNewAutoForm = showNewAutoForm;
-function showNewAutoForm() {
-  _origShowNewAutoForm();
-  loadSymbols();
-}
+
 
 // ═══════════════════════════════════════════════════════
 // SAVE AUTO — updated to include shadow mode
@@ -2488,17 +2482,7 @@ async function saveAuto(mode) {
   } catch(e) { toast(e.message,'error'); }
 }
 
-// Override nav to load performance data with Chart.js
-var _origNav = nav;
-function nav(id) {
-  _origNav(id);
-  if (id === 'performance') {
-    loadChartJs(loadPerformance);
-  }
-}
 
-// Auto-refresh dashboard every 60 seconds
-setInterval(()=>{
 // Auto-refresh dashboard every 60 seconds
 setInterval(()=>{
   var dashPage = document.getElementById('pg-dashboard');
