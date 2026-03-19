@@ -785,12 +785,18 @@ function startTicker() {
 async function updateTicker() {
   if (!session.token) return;
   try {
-    var d = await api('GET', '/api/market/status');
+    var sym = _dashSymbol || 'NSE:NIFTY50-INDEX';
+    var d = await api('GET', '/api/market/status?symbol='+encodeURIComponent(sym));
     var el = document.getElementById('tb-price');
     if (!el) return;
     if (d.spot && d.spot > 0) {
-      el.textContent = Number(d.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
+      // Show "NIFTY 23,002" or "BNK 53,451" etc.
+      var shortLabel = (d.sym_short || 'NIFTY').replace('NIFTY','NF').replace('BANKNIFTY','BNK').replace('FINNIFTY','FNF').replace('SENSEX','SX');
+      el.textContent = shortLabel + ' ' + Number(d.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
       el.className = 'tb-price ' + (d.status==='live' ? 'live' : d.status==='closed' ? 'closed' : 'waiting');
+      // Update spot cache for this symbol
+      if (!_symSpotCache) _symSpotCache = {};
+      _symSpotCache[sym] = {spot: d.spot, atm: d.atm||0};
     } else {
       el.textContent = d.status==='waiting' ? 'No broker' : '—';
       el.className = 'tb-price waiting';
@@ -800,7 +806,11 @@ async function updateTicker() {
 
 // ── HELPERS ──────────────────────────────────────────────────
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function pnlFmt(v) { v=v||0; return (v>=0?'+':'')+'\u20b9'+Math.abs(v).toLocaleString('en-IN'); }
+function pnlFmt(v) {
+  v = v||0;
+  var sign = v > 0 ? '+' : v < 0 ? '-' : '';
+  return sign + '\u20b9' + Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits:0});
+}
 function pnlClass(v) { return v>0?'pos':v<0?'neg':'neutral'; }
 function fmtTime(iso) {
   if (!iso) return '—';
@@ -832,6 +842,8 @@ var _symSpotCache = {};
 
 function setDashSymbol(sym) {
   _dashSymbol = sym;
+  var symInfo = _dashSymbols.find(function(s){ return s.value===sym; }) || {};
+
   // Update tab styles
   _dashSymbols.forEach(function(s) {
     var btn = document.getElementById('dsym-'+s.short);
@@ -846,6 +858,36 @@ function setDashSymbol(sym) {
       btn.style.color = 'var(--text2)';
     }
   });
+
+  // Update topbar label immediately
+  var tbEl = document.getElementById('tb-price');
+  if (tbEl) {
+    var shortLabel = (symInfo.short||'NF').replace('NF','NF').replace('BNF','BNK').replace('FNF','FNF').replace('SX','SX');
+    var cached = _symSpotCache && _symSpotCache[sym];
+    if (cached && cached.spot > 0) {
+      tbEl.textContent = shortLabel + ' ' + Number(cached.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
+    } else {
+      tbEl.textContent = shortLabel + ' —';
+    }
+  }
+
+  // Update spot KPI label
+  var kpiLabel = document.getElementById('dash-spot-label');
+  if (kpiLabel) kpiLabel.textContent = symInfo.label || sym;
+
+  // Show cached spot immediately, fetch fresh in background
+  var spotEl = document.getElementById('dash-spot-val');
+  var atmEl  = document.getElementById('dash-atm-val');
+  var cached2 = _symSpotCache && _symSpotCache[sym];
+  if (cached2 && cached2.spot > 0) {
+    if (spotEl) spotEl.textContent = '₹' + Number(cached2.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
+    if (atmEl)  atmEl.textContent  = 'ATM ' + (cached2.atm > 0 ? cached2.atm.toLocaleString('en-IN') : '—');
+  } else {
+    if (spotEl) spotEl.textContent = '—';
+    if (atmEl)  atmEl.textContent  = 'Loading...';
+    updateTicker();
+  }
+
   // Reload funds card for new symbol
   _loadDashFunds();
 }
@@ -985,7 +1027,7 @@ async function renderDashboard() {
 
       '<div class="kpi-grid">'
       + '<div class="kpi green"><div class="kpi-label" id="dash-spot-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral" id="dash-spot-val">'+spotFmt+'</div><div class="kpi-sub" id="dash-atm-val">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
-      + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub">'+(s.running_automations||0)+' running</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.live_automations||0)+' live</span> • <span style="color:var(--amber)">'+(s.paper_automations||0)+' paper</span></div></div>'
       + '<div class="kpi '+(lp>=0?'green':'red')+'"><div class="kpi-label">Today Live P&amp;L</div><div class="kpi-value '+pnlClass(lp)+'">'+pnlFmt(lp)+'</div><div class="kpi-sub">'+(s.today_live_trades||0)+' closed</div></div>'
       + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Paper P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+(s.today_paper_trades||0)+' simulated</div></div>'
       + '</div>'
@@ -1296,7 +1338,7 @@ function showAutoForm() {
     + '<div class="strategy-grid" style="margin-top:8px">'+stratPicker+'</div></div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Lots</label><input type="number" id="af-lots" value="1" min="1" max="10"><div class="field-hint">Contracts per trade</div></div>'
-    + '<div class="field"><label>Lot Size</label><input type="number" id="af-lotsize" value="75"><div class="field-hint">NIFTY: 75 (2024)</div></div>'
+    + '<div class="field"><label>Lot Size</label><input type="number" id="af-lotsize" value="65"><div class="field-hint">NIFTY: 65 (Jan 2026 SEBI), BankNifty: 30, FinNifty: 60</div></div>'
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Auto Exit</label><input type="time" id="af-exit" value="14:00"><div class="field-hint">Force close at this time</div></div>'
@@ -1304,6 +1346,25 @@ function showAutoForm() {
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Max Trades Per Day</label><select id="af-maxtrades"><option value="1" selected>1 (recommended)</option><option value="2">2</option><option value="3">3</option><option value="0">Unlimited</option></select><div class="field-hint">Industry standard: 1 trade per automation per day</div></div>'
+    + '</div>'
+    + '<div class="section-title" style="margin-top:4px;font-size:11px">Signal Guards (Risk Filters)</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>Max Spot Drift % <span style="color:var(--amber);font-size:10px">Guard</span></label>'
+    + '<select id="af-driftmax">'
+    + '<option value="1.0">1.0% tight</option>'
+    + '<option value="1.5" selected>1.5% standard</option>'
+    + '<option value="2.0">2.0% relaxed</option>'
+    + '<option value="99">Off (no drift guard)</option>'
+    + '</select>'
+    + '<div class="field-hint">Suspend signals if spot moves more than this % from open. Today NIFTY moved 3.26% — would have skipped all trades.</div></div>'
+    + '<div class="field"><label>Max VIX <span style="color:var(--amber);font-size:10px">Guard</span></label>'
+    + '<select id="af-vixmax">'
+    + '<option value="15">15 conservative</option>'
+    + '<option value="17" selected>17 standard</option>'
+    + '<option value="20">20 relaxed</option>'
+    + '<option value="99">Off (no VIX guard)</option>'
+    + '</select>'
+    + '<div class="field-hint">Skip signals if India VIX is above this at open. Requires VIX data from broker.</div></div>'
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30% quick exit</option><option value="40">40%</option><option value="50" selected>50% standard</option><option value="60">60% hold longer</option></select></div>'
@@ -1610,131 +1671,148 @@ async function loadUnifiedTrades() {
   try {
     var d = await api('GET', '/api/trades/unified?days='+_tradesDays);
     var trades = d.trades||[];
-    var byAuto = d.by_auto||[];
-
-    // Filter by tab
     var filtered = trades.filter(function(t) {
       if (_tradesTab==='live')  return t.type==='live';
       if (_tradesTab==='paper') return t.type==='paper';
       return true;
     });
-
     if (!filtered.length) {
       el.innerHTML = '<div class="empty"><div class="empty-icon">&#128200;</div><div class="empty-title">No trades in last '+_tradesDays+' days</div><div class="empty-sub">Start an automation to see results here</div></div>';
       return;
     }
 
-    // Build by-automation groups
+    // Group: date → automation → trades
+    var byDate = {};
+    filtered.forEach(function(t) {
+      var dt = t.date||'Unknown';
+      if (!byDate[dt]) byDate[dt] = {};
+      var aid = t.automation_id||'manual';
+      if (!byDate[dt][aid]) byDate[dt][aid] = {trades:[], name:''};
+      byDate[dt][aid].trades.push(t);
+      if (!byDate[dt][aid].name) {
+        var ag = (d.by_auto||[]).find(function(a){ return a.automation_id===aid; });
+        byDate[dt][aid].name = (ag && ag.automation_name) ? ag.automation_name : 'Automation';
+      }
+    });
+
     var html = '';
-    byAuto.forEach(function(group) {
-      var groupTrades = filtered.filter(function(t){ return t.automation_id === group.automation_id; });
-      if (!groupTrades.length) return;
+    Object.keys(byDate).sort().reverse().forEach(function(dt) {
+      var dayTrades  = filtered.filter(function(t){ return t.date===dt; });
+      var dayPnl     = dayTrades.filter(function(t){ return !t.is_open; }).reduce(function(s,t){ return s+(t.net_pnl||0); },0);
+      var dayClosed  = dayTrades.filter(function(t){ return !t.is_open; }).length;
+      var dayWins    = dayTrades.filter(function(t){ return !t.is_open && (t.net_pnl||0)>0; }).length;
 
-      var livePnl  = groupTrades.filter(function(t){ return t.type==='live' && !t.is_open; }).reduce(function(s,t){ return s+(t.net_pnl||0); },0);
-      var paperPnl = groupTrades.filter(function(t){ return t.type==='paper' && !t.is_open; }).reduce(function(s,t){ return s+(t.net_pnl||0); },0);
-      var totalPnl = livePnl + paperPnl;
+      // Date header
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px 4px">'
+        + '<div style="font-size:12px;font-weight:700;color:var(--text2)">'+esc(dt)+'</div>'
+        + '<div style="display:flex;gap:8px;align-items:center">'
+        + (dayClosed ? '<span style="font-size:11px;color:var(--text2)">'+dayWins+'/'+dayClosed+' wins</span>' : '')
+        + '<span style="font-size:13px;font-weight:700;font-family:var(--mono);color:'+(dayPnl>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(dayPnl)+'</span>'
+        + '</div></div>';
 
-      html += '<div class="card" style="margin-bottom:12px">'
-        + '<div class="card-header" style="flex-wrap:wrap;gap:6px">'
-        + '<div><div style="font-size:13px;font-weight:600">'+esc(group.automation_name||'Manual')+'</div>'
-        + '<div style="font-size:11px;color:var(--text2);margin-top:2px">'
-        + groupTrades.length+' trade(s) &bull; '
-        + 'Win rate '+group.win_rate+'%'
-        + (livePnl  ? ' &bull; Live: <span style="color:'+(livePnl>=0?'var(--green)':'var(--red)')+'">'+(livePnl>=0?'+':'')+'&#8377;'+Math.abs(livePnl).toLocaleString('en-IN')+'</span>' : '')
-        + (paperPnl ? ' &bull; Paper: <span style="color:'+(paperPnl>=0?'var(--amber)':'var(--red)')+'">'+(paperPnl>=0?'+':'')+'&#8377;'+Math.abs(paperPnl).toLocaleString('en-IN')+'</span>' : '')
-        + '</div></div>'
-        + '<div style="font-family:var(--mono);font-size:18px;font-weight:700;color:'+(totalPnl>=0?'var(--green)':'var(--red)')+'">'
-        + pnlFmt(totalPnl)+'</div>'
-        + '</div>'
-        + '<div style="padding:0 16px">';
+      Object.keys(byDate[dt]).forEach(function(aid) {
+        var grp = byDate[dt][aid];
+        var gt  = grp.trades;
+        var gPnl = gt.filter(function(t){return !t.is_open;}).reduce(function(s,t){return s+(t.net_pnl||0);},0);
+        var hasOpen = gt.some(function(t){return t.is_open;});
+        var gKey = dt+'__'+aid;
 
-      groupTrades.forEach(function(t) {
-        var tid = t.id;
-        var expanded = _expandedTrades.has(tid);
-        var pnl = t.net_pnl||0;
-        var isOpen = t.is_open;
-        var ep = t.exit_parsed||{};
-        var typeBadge = t.type==='live'
-          ? '<span class="badge live" style="font-size:9px">Live</span>'
-          : '<span class="badge paper" style="font-size:9px">Paper</span>';
-        var outcomeIcon = isOpen ? '&#128993;' : pnl>0 ? '&#9989;' : '&#10060;';
-
-        html += '<div style="border-bottom:1px solid var(--border)">'
-          // Summary row — always visible
-          + '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;cursor:pointer" onclick="toggleTrade(\''+tid+'\')">'          + '<div style="font-size:14px;min-width:20px;text-align:center">'+outcomeIcon+'</div>'
-          + '<div style="flex:1;min-width:0">'
-          + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
-          + '<span class="badge strategy">'+esc(t.strategy)+'</span>'+typeBadge
-          + '<span style="font-size:11px;color:var(--text2)">'+esc(t.date)+' '+esc(t.entry_time||'')+'</span>'
-          + '</div>'
-          + '<div style="font-size:11px;color:var(--text2);margin-top:3px">'
-          + 'ATM '+esc(String(t.atm_strike||'—'))+' &bull; '
-          + 'Entry &#8377;'+esc(String(t.entry_combined))+' &rarr; '
-          + (isOpen ? '<span style="color:var(--amber)">OPEN</span>' : 'Exit &#8377;'+esc(String(t.exit_combined||'—')))
-          + '</div>'
-          + '</div>'
-          + '<div style="text-align:right;flex-shrink:0">'
-          + '<div style="font-size:13px;font-weight:600;font-family:var(--mono);color:'+(isOpen?'var(--amber)':pnl>=0?'var(--green)':'var(--red)')+'">'
-          + (isOpen ? 'OPEN' : pnlFmt(pnl))+'</div>'
-          + '<div style="font-size:10px;color:var(--text2)">'
-          + (t.decay_pct ? (t.decay_pct>0?'+':'')+t.decay_pct+'% decay' : '')
-          + '</div>'
-          + '</div>'
-          + '<div style="font-size:10px;color:var(--text2);padding-left:4px">'+(expanded?'&#9650;':'&#9660;')+'</div>'
-          + '</div>'
-
-          // Detail panel — toggle
-          + '<div id="td-'+tid+'" style="display:'+(expanded?'block':'none')+';background:var(--bg3);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">'
-          // Entry section
-          + '<div style="margin-bottom:10px">'
-          + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#9654; Entry</div>'
-          + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'
-          + '<div><span style="color:var(--text2)">Strategy: </span>'+esc(t.signal_name||t.strategy)+'</div>'
-          + '<div><span style="color:var(--text2)">Strike: </span>ATM '+esc(String(t.atm_strike||'—'))+'</div>'
-          + '<div><span style="color:var(--text2)">Combined: </span><strong>&#8377;'+esc(String(t.entry_combined))+'</strong></div>'
-          + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.entry_time||'—')+'</div>'
-          + '<div style="grid-column:span 2"><span style="color:var(--text2)">Why entered: </span>'+esc(t.entry_reason||'ORB condition met')+'</div>'
+        html += '<div class="card" style="margin-bottom:8px">'
+          + '<div class="card-header" style="padding:10px 16px;cursor:pointer" onclick="toggleAutoGroup(\''+gKey+'\')">'
+          + '<div style="min-width:0">'
+          + '<div style="font-size:12px;font-weight:600">'+esc(grp.name)+'</div>'
+          + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'
+          + gt.length+' trade'+(gt.length!==1?'s':'')
+          + ' \u2022 '+gt.filter(function(t){return t.type==='live';}).length+' live'
+          + ' \u2022 '+gt.filter(function(t){return t.type==='paper';}).length+' paper'
+          + (hasOpen?' \u2022 <span style="color:var(--amber)">open</span>':'')
           + '</div></div>'
+          + '<div style="display:flex;align-items:center;gap:8px">'
+          + '<span style="font-size:13px;font-weight:700;font-family:var(--mono);color:'+(gPnl>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(gPnl)+'</span>'
+          + '<span style="font-size:10px;color:var(--text2)">&#9660;</span>'
+          + '</div></div>'
+          + '<div id="ag-'+gKey+'" style="display:none"><div style="padding:0 16px">';
 
-          // Exit section
-          + (isOpen ? '' :
-            '<div style="margin-bottom:10px;padding-top:10px;border-top:1px solid var(--border)">'
-            + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#9632; Exit</div>'
-            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'
-            + '<div><span style="color:var(--text2)">Combined: </span><strong>&#8377;'+esc(String(t.exit_combined||'—'))+'</strong></div>'
-            + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.exit_time||'—')+'</div>'
-            + '<div style="grid-column:span 2">'
-            + '<span style="color:var(--text2)">Why exited: </span>'
-            + '<span style="color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'—')+'</span>'
+        gt.forEach(function(t) {
+          var tid = t.id;
+          var exp = _expandedTrades.has(tid);
+          var pnl = t.net_pnl||0;
+          var isOpen = t.is_open;
+          var ep = t.exit_parsed||{};
+          var typeBadge = t.type==='live'
+            ? '<span class="badge live" style="font-size:9px">Live</span>'
+            : '<span class="badge paper" style="font-size:9px">Paper</span>';
+          var icon = isOpen ? '&#128993;' : pnl>0 ? '&#9989;' : '&#10060;';
+
+          html += '<div style="border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;align-items:center;gap:8px;padding:9px 0;cursor:pointer" onclick="toggleTrade(\''+tid+'\')">'
+            + '<span style="font-size:12px">'+icon+'</span>'
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+            + '<span class="badge strategy">'+esc(t.strategy)+'</span>'+typeBadge
+            + '<span style="font-size:10px;color:var(--text2)">'+esc(t.entry_time||'')+'</span>'
             + '</div>'
+            + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'
+            + 'ATM '+esc(String(t.atm_strike||'\u2014'))
+            + ' \u2022 Entry \u20b9'+esc(String(t.entry_combined))
+            + (isOpen?' \u2192 <span style="color:var(--amber)">OPEN</span>':' \u2192 \u20b9'+esc(String(t.exit_combined||'\u2014')))
             + '</div></div>'
-            // SL state at exit (paper only)
-            + (t.sl_at_exit && t.sl_at_exit.candles > 0 ?
-              '<div style="margin-bottom:10px;padding-top:10px;border-top:1px solid var(--border)">'
-              + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">SL State at Exit</div>'
-              + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px">'
-              + '<span>VWAP &#8377;'+((t.sl_at_exit.vwap||0).toFixed(1))+'</span>'
-              + '<span>EMA75 &#8377;'+((t.sl_at_exit.ema75||0).toFixed(1))+'</span>'
-              + '<span>Trail low &#8377;'+((t.sl_at_exit.trailing_low||0).toFixed(1))+'</span>'
-              + '<span>Candles: '+(t.sl_at_exit.candles||0)+'</span>'
-              + '</div></div>' : '')
-          )
+            + '<div style="text-align:right;flex-shrink:0">'
+            + '<div style="font-size:12px;font-weight:600;font-family:var(--mono);color:'+(isOpen?'var(--amber)':pnl>=0?'var(--green)':'var(--red)')+'">'+( isOpen?'OPEN':pnlFmt(pnl))+'</div>'
+            + (t.decay_pct?'<div style="font-size:9px;color:var(--text2)">'+(t.decay_pct>0?'+':'')+t.decay_pct+'%</div>':'')
+            + '</div>'
+            + '<span style="font-size:9px;color:var(--text2)">'+(exp?'&#9650;':'&#9660;')+'</span>'
+            + '</div>'
 
-          // P&L breakdown
-          + '<div style="padding-top:10px;border-top:1px solid var(--border)">'
-          + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">P&amp;L Breakdown</div>'
-          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Qty ('+esc(String(t.lots))+'lot × '+esc(String(t.lot_size))+')</span><span>'+esc(String(t.qty||'—'))+' units</span></div>'
-          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Gross P&amp;L</span><span style="color:'+(isOpen?'var(--text2)':(t.gross_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.gross_pnl||0)+'</span></div>'
-          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Charges</span><span style="color:var(--red)">-&#8377;'+(t.brokerage||0).toLocaleString('en-IN')+'</span></div>'
-          + '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;padding-top:4px;border-top:1px solid var(--border)">'
-          + '<span>Net P&amp;L</span>'
-          + '<span style="font-family:var(--mono);color:'+(isOpen?'var(--text)':(t.net_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.net_pnl||0)+'</span>'
-          + '</div></div>'
-          + '</div>'  // end detail panel
-          + '</div>'; // end trade row
+            + '<div id="td-'+tid+'" style="display:'+(exp?'block':'none')+';background:var(--bg3);border-radius:4px;padding:10px;margin-bottom:8px;font-size:11px">'
+            // Entry
+            + '<div style="margin-bottom:8px">'
+            + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">&#9654; WHY ENTERED</div>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
+            + '<div><span style="color:var(--text2)">Strategy: </span>'+esc(t.signal_name||t.strategy)+'</div>'
+            + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.entry_time||'\u2014')+'</div>'
+            + '<div><span style="color:var(--text2)">ATM Strike: </span>'+esc(String(t.atm_strike||'\u2014'))+'</div>'
+            + '<div><span style="color:var(--text2)">Hedge: </span>\u00b1'+esc(String(t.hedge_width||2))+' strikes</div>'
+            + '<div><span style="color:var(--text2)">Combined: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
+            + '<div><span style="color:var(--text2)">Spot: </span>'+esc(String(t.entry_spot||'\u2014'))+'</div>'
+            + '<div style="grid-column:span 2;color:var(--text2)">Signal: '+esc(t.entry_reason||'ORB condition met')+'</div>'
+            + '</div></div>'
+            // Legs
+            + _buildLegsHtml(t)
+            // Exit
+            + (isOpen
+              ? '<div style="color:var(--amber)">Position open \u2014 monitoring SL every 60s</div>'
+              : '<div style="margin-bottom:8px;padding-top:8px;border-top:1px solid var(--border)">'
+                + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">&#9632; WHY EXITED</div>'
+                + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
+                + '<div><span style="color:var(--text2)">Exit combined: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
+                + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
+                + '<div style="grid-column:span 2;color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'\u2014')+'</div>'
+                + '</div>'
+                + (t.sl_at_exit&&t.sl_at_exit.candles>0
+                  ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2)">'
+                    + '<span>VWAP \u20b9'+((t.sl_at_exit.vwap||0).toFixed(1))+'</span>'
+                    + '<span>EMA75 \u20b9'+((t.sl_at_exit.ema75||0).toFixed(1))+'</span>'
+                    + '<span>Trail low \u20b9'+((t.sl_at_exit.trailing_low||0).toFixed(1))+'</span>'
+                    + '<span>'+t.sl_at_exit.candles+' candles</span>'
+                    + '</div>' : '')
+                + '</div>'
+            )
+            // P&L
+            + '<div style="padding-top:8px;border-top:1px solid var(--border)">'
+            + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">P&L</div>'
+            + '<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">'+t.lots+'lot \u00d7 '+t.lot_size+' = '+esc(String(t.qty||0))+' units</span></div>'
+            + '<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Gross</span><span style="color:'+(isOpen?'var(--text2)':(t.gross_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.gross_pnl||0)+'</span></div>'
+            + '<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Charges</span><span style="color:var(--red)">-\u20b9'+(t.brokerage||0).toLocaleString('en-IN')+'</span></div>'
+            + '<div style="display:flex;justify-content:space-between;font-weight:600;padding-top:4px;border-top:1px solid var(--border)">'
+            + '<span>Net P&L</span><span style="font-family:var(--mono);color:'+(isOpen?'var(--text)':(t.net_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.net_pnl||0)+'</span>'
+            + '</div></div>'
+
+            + '</div></div>'; // end detail + trade row
+        });
+
+        html += '</div></div></div>'; // close padding + group body + card
       });
-
-      html += '</div></div>';
     });
 
     el.innerHTML = html || '<div class="empty"><div class="empty-sub">No trades found</div></div>';
@@ -1743,6 +1821,38 @@ async function loadUnifiedTrades() {
   }
 }
 
+function _buildLegsHtml(t) {
+  var orders = t.orders||[];
+  var legs = [];
+  if (orders.length > 0) {
+    legs = orders.map(function(o){
+      return {side:o.side||'?', symbol:o.symbol||'', id:o.order_id||'PAPER'};
+    });
+  } else if (t.atm_strike) {
+    var s = t.atm_strike, hw = t.hedge_width||2, gap = 50;
+    legs = [
+      {side:'SELL', symbol:'CE '+s+' (ATM)', id:''},
+      {side:'SELL', symbol:'PE '+s+' (ATM)', id:''},
+      {side:'BUY',  symbol:'CE '+(s+hw*gap)+' (hedge)', id:''},
+      {side:'BUY',  symbol:'PE '+(s-hw*gap)+' (hedge)', id:''},
+    ];
+  }
+  if (!legs.length) return '';
+  return '<div style="margin-bottom:8px;padding:6px;background:var(--bg2);border-radius:4px">'
+    + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">&#128196; LEGS</div>'
+    + legs.map(function(leg){
+        return '<div style="display:flex;justify-content:space-between;font-size:10px;padding:2px 0">'
+          + '<span><span style="color:'+(leg.side==='SELL'?'var(--red)':'var(--green)')+';font-weight:600">'+(leg.side==='SELL'?'\u25bc SELL':'\u25b2 BUY ')+'</span> '+esc(leg.symbol)+'</span>'
+          + '<span style="color:var(--text2);font-size:9px">'+esc(String(leg.id||'')).substring(0,16)+'</span>'
+          + '</div>';
+      }).join('')
+    + '</div>';
+}
+
+function toggleAutoGroup(key) {
+  var el = document.getElementById('ag-'+key);
+  if (el) el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
 function toggleTrade(tid) {
   if (_expandedTrades.has(tid)) {
     _expandedTrades.delete(tid);
@@ -1754,215 +1864,268 @@ function toggleTrade(tid) {
 
 // ── PERFORMANCE ──────────────────────────────────────────────
 var _equityChart = null;
+var _perfMode = 'paper';   // 'paper' or 'live'
+var _perfDays = 7;         // default 7 days so chart is not too wide
+var _perfAutoId = '';      // filter by automation
 
 async function renderPerformance() {
   var el = document.getElementById('pg-performance');
-  var days = 30;
-  el.innerHTML = '<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">'
-    + '<div><div class="page-title">Paper Results</div><div class="page-sub">Shadow mode simulation performance</div></div>'
-    + '<select id="perf-days" onchange="renderPerformance()" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:6px 10px;font-size:12px">'
-    + '<option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">All time</option>'
-    + '</select></div>'
+
+  el.innerHTML = '<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'
+    + '<div><div class="page-title">Results</div><div class="page-sub">Paper and live performance</div></div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+    // Mode toggle
+    + '<div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">'
+    + '<button id="pm-paper" onclick="setPerfMode(\'paper\')" style="padding:5px 12px;font-size:12px;border:none;cursor:pointer;background:'+((_perfMode==='paper')?'var(--amber)':'transparent')+';color:'+((_perfMode==='paper')?'#000':'var(--text2)')+'">Paper</button>'
+    + '<button id="pm-live"  onclick="setPerfMode(\'live\')"  style="padding:5px 12px;font-size:12px;border:none;cursor:pointer;background:'+((_perfMode==='live') ?'var(--green)':'transparent')+';color:'+((_perfMode==='live') ?'#000':'var(--text2)')+'">Live</button>'
+    + '</div>'
+    // Days selector
+    + '<select id="perf-days" onchange="_perfDays=parseInt(this.value);loadPerformance()" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 8px;font-size:12px">'
+    + '<option value="7"'  +(_perfDays===7  ?' selected':'')+'>7 days</option>'
+    + '<option value="14"' +(_perfDays===14 ?' selected':'')+'>2 weeks</option>'
+    + '<option value="30"' +(_perfDays===30 ?' selected':'')+'>30 days</option>'
+    + '<option value="90"' +(_perfDays===90 ?' selected':'')+'>90 days</option>'
+    + '<option value="365"+(_perfDays===365 ? \' selected\':\'\')>All time</option>'
+    + '</select>'
+    + '</div></div>'
     + '<div id="perf-content"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div>';
 
+  loadPerformance();
+}
+
+function setPerfMode(mode) {
+  _perfMode = mode;
+  renderPerformance();
+}
+
+async function loadPerformance() {
+  var el2 = document.getElementById('perf-content');
+  if (!el2) return;
+  el2.innerHTML = '<div class="empty"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>';
+
   try {
-    var sel = document.getElementById('perf-days');
-    if (sel) days = parseInt(sel.value)||30;
-    var [perfRes, tradesRes] = await Promise.all([
-      api('GET', '/api/shadow/performance?days='+days),
-      api('GET', '/api/shadow/trades?days='+days)
-    ]);
-    var p = perfRes;
-    var el2 = document.getElementById('perf-content');
-    if (!el2) return;
+    var endpoint = _perfMode === 'paper'
+      ? '/api/shadow/performance?days=' + _perfDays
+      : '/api/live/performance?days='   + _perfDays;
+
+    var p = await api('GET', endpoint);
 
     if (!p.total_trades) {
-      el2.innerHTML = '<div class="empty"><div class="empty-icon">&#128202;</div><div class="empty-title">No paper trades yet</div><div class="empty-sub">Enable Shadow Mode on an automation and run it during market hours (9:15-15:30 IST)</div></div>';
+      el2.innerHTML = '<div class="empty"><div class="empty-icon">'
+        + (_perfMode==='paper' ? '&#128203;' : '&#128200;')+'</div>'
+        + '<div class="empty-title">No '+_perfMode+' trades in last '+_perfDays+' days</div>'
+        + '<div class="empty-sub">'
+        + (_perfMode==='paper'
+            ? 'Enable Shadow Mode on an automation and run during market hours'
+            : 'Start a live automation to see real performance here')
+        + '</div></div>';
       return;
     }
 
-    // ── Go-Live readiness panel ──────────────────────────────
-    var score = p.go_live_score || 0;
-    var ready = p.go_live_ready || false;
-    var scoreColor = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
-    var checks = p.ready_checks || {};
-    var checkRows = Object.entries(checks).map(function(kv) {
-      var key = kv[0], c = kv[1];
-      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">'
-        + '<span style="font-size:14px">'+(c.pass ? '✅' : '❌')+'</span>'
-        + '<div style="flex:1">'
-        + '<div style="font-size:12px;font-weight:500">'+esc(c.desc||key)+'</div>'
-        + '<div style="font-size:10px;color:var(--text2)">Required: '+esc(String(c.threshold||''))+'</div>'
-        + '</div>'
-        + '<div style="font-size:12px;font-weight:600;color:'+(c.pass?'var(--green)':'var(--red)')+'">'+esc(String(c.value||''))+'</div>'
-        + '</div>';
-    }).join('');
+    var isPaper = _perfMode === 'paper';
+    var modeColor = isPaper ? 'var(--amber)' : 'var(--green)';
+    var modeBadge = isPaper
+      ? '<span class="badge paper" style="vertical-align:middle">Paper</span>'
+      : '<span class="badge live"  style="vertical-align:middle">Live</span>';
 
-    var goLiveHtml = '<div class="card" style="margin-bottom:12px;border-color:'+(ready?'rgba(0,230,118,.4)':'rgba(255,171,64,.3)')+'">'
-      + '<div class="card-header">'
-      + '<div class="card-title">'+(ready?'✅ Ready to Go Live':'⏳ Keep Paper Trading')+'</div>'
-      + '<div style="font-size:22px;font-weight:700;font-family:var(--display);color:'+scoreColor+'">'+score+'%</div>'
-      + '</div>'
-      + '<div class="card-body">'
-      + '<div style="background:var(--bg3);border-radius:var(--radius-sm);height:6px;margin-bottom:12px;overflow:hidden">'
-      + '<div style="height:100%;width:'+score+'%;background:'+scoreColor+';border-radius:var(--radius-sm);transition:width .5s"></div>'
-      + '</div>'
-      + (ready
-        ? '<div class="alert alert-success" style="margin-bottom:10px">Your paper results meet all 7 industry thresholds for options selling. You can proceed to live trading.</div>'
-        : '<div class="alert alert-warn" style="margin-bottom:10px">Continue paper trading until all checks pass. Each check represents a real risk for your capital.</div>')
-      + checkRows
-      + '</div></div>';
+    // ── Go-live panel (paper only) ────────────────────────────
+    var goLiveHtml = '';
+    if (isPaper) {
+      var score = p.go_live_score || 0;
+      var ready = p.go_live_ready || false;
+      var scoreColor = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
+      var checks = p.ready_checks || {};
+      goLiveHtml = '<div class="card" style="margin-bottom:12px;border-color:'
+        + (ready ? 'rgba(0,230,118,.4)' : 'rgba(255,171,64,.3)') + '">'
+        + '<div class="card-header">'
+        + '<div class="card-title">'+(ready ? '✅ Ready to Go Live' : '⏳ Keep Paper Trading')+'</div>'
+        + '<div style="font-size:22px;font-weight:700;font-family:var(--display);color:'+scoreColor+'">'+score+'%</div>'
+        + '</div><div class="card-body">'
+        + '<div style="background:var(--bg3);border-radius:var(--radius-sm);height:6px;margin-bottom:12px;overflow:hidden">'
+        + '<div style="height:100%;width:'+score+'%;background:'+scoreColor+';border-radius:var(--radius-sm)"></div></div>'
+        + (ready
+            ? '<div class="alert alert-success" style="margin-bottom:10px">Paper results meet all thresholds. You can proceed to live trading.</div>'
+            : '<div class="alert alert-warn" style="margin-bottom:10px">Continue paper trading until all 7 checks pass.</div>')
+        + Object.entries(checks).map(function(kv) {
+            var c = kv[1];
+            return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
+              + '<span>'+(c.pass?'✅':'❌')+'</span>'
+              + '<div style="flex:1"><div style="font-size:11px;font-weight:500">'+esc(c.desc||kv[0])+'</div>'
+              + '<div style="font-size:10px;color:var(--text2)">Need: '+esc(String(c.threshold||''))+'</div></div>'
+              + '<div style="font-size:11px;font-weight:600;color:'+(c.pass?'var(--green)':'var(--red)')+'">'+esc(String(c.value||''))+'</div>'
+              + '</div>';
+          }).join('')
+        + '</div></div>';
+    }
 
     // ── Core KPIs ─────────────────────────────────────────────
-    var kpiHtml = '<div class="kpi-grid">'
-      + '<div class="kpi '+(+(p.total_pnl||0)>=0?'green':'red')+'"><div class="kpi-label">Total P&amp;L</div><div class="kpi-value '+pnlClass(p.total_pnl)+'">'+pnlFmt(p.total_pnl)+'</div><div class="kpi-sub">Last '+days+' days</div></div>'
-      + '<div class="kpi blue"><div class="kpi-label">Win Rate</div><div class="kpi-value neutral">'+(p.win_rate||0)+'%</div><div class="kpi-sub">'+(p.wins||0)+' / '+(p.total_trades||0)+'</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Profit Factor</div><div class="kpi-value '+(+(p.profit_factor||0)>=1.5?'pos':'neg')+'">'+(p.profit_factor||0)+'</div><div class="kpi-sub">>1.5 is healthy</div></div>'
-      + '<div class="kpi '+(+(p.avg_pnl||0)>=0?'green':'red')+'"><div class="kpi-label">Expectancy</div><div class="kpi-value '+pnlClass(p.expectancy)+'">'+pnlFmt(p.expectancy)+'</div><div class="kpi-sub">Per trade expected</div></div>'
+    var kpiHtml = '<div class="kpi-grid" style="margin-bottom:8px">'
+      + '<div class="kpi '+(p.total_pnl>=0?'green':'red')+'"><div class="kpi-label">Total P&L '+modeBadge+'</div>'
+      + '<div class="kpi-value '+pnlClass(p.total_pnl)+'">'+pnlFmt(p.total_pnl)+'</div>'
+      + '<div class="kpi-sub">Last '+_perfDays+' days</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">Win Rate</div>'
+      + '<div class="kpi-value neutral">'+p.win_rate+'%</div>'
+      + '<div class="kpi-sub">'+p.wins+' / '+p.total_trades+'</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Profit Factor</div>'
+      + '<div class="kpi-value '+(p.profit_factor>=1.5?'pos':'neg')+'">'+p.profit_factor+'</div>'
+      + '<div class="kpi-sub">>1.5 is healthy</div></div>'
+      + '<div class="kpi '+(p.expectancy>=0?'green':'red')+'"><div class="kpi-label">Expectancy</div>'
+      + '<div class="kpi-value '+pnlClass(p.expectancy)+'">'+pnlFmt(p.expectancy)+'</div>'
+      + '<div class="kpi-sub">Per trade</div></div>'
       + '</div>';
 
-    // ── Risk KPIs ─────────────────────────────────────────────
+    // ── Risk + best/worst ─────────────────────────────────────
     var riskHtml = '<div class="kpi-grid" style="margin-bottom:12px">'
-      + '<div class="kpi '+(+(p.reward_risk||0)>=1?'green':'red')+'"><div class="kpi-label">Reward:Risk</div><div class="kpi-value neutral">'+(p.reward_risk||0)+'x</div><div class="kpi-sub">Avg win / avg loss</div></div>'
-      + '<div class="kpi red"><div class="kpi-label">Max Drawdown</div><div class="kpi-value neg">'+pnlFmt(-(p.max_drawdown||0))+'</div><div class="kpi-sub">Peak to trough</div></div>'
-      + '<div class="kpi '+(+(p.max_consec_loss||0)<=4?'':'red')+'"><div class="kpi-label">Max Consec. Loss</div><div class="kpi-value neutral">'+(p.max_consec_loss||0)+'</div><div class="kpi-sub">Consecutive losses</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Days Traded</div><div class="kpi-value neutral">'+(p.days_traded||0)+'</div><div class="kpi-sub">Trading sessions</div></div>'
+      + '<div class="kpi '+(p.reward_risk>=1?'green':'red')+'"><div class="kpi-label">Reward:Risk</div>'
+      + '<div class="kpi-value neutral">'+p.reward_risk+'x</div>'
+      + '<div class="kpi-sub">Avg win / avg loss</div></div>'
+      + '<div class="kpi red"><div class="kpi-label">Max Drawdown</div>'
+      + '<div class="kpi-value neg">'+pnlFmt(-p.max_drawdown)+'</div>'
+      + '<div class="kpi-sub">Peak to trough</div></div>'
+      // Best day — use correct sign
+      + '<div class="kpi green"><div class="kpi-label">Best Day</div>'
+      + '<div class="kpi-value pos">'+(p.best_day ? pnlFmt(p.best_day.pnl) : '\u2014')+'</div>'
+      + '<div class="kpi-sub">'+(p.best_day ? p.best_day.date : '')+'</div></div>'
+      // Worst day — always negative
+      + '<div class="kpi red"><div class="kpi-label">Worst Day</div>'
+      + '<div class="kpi-value neg">'+(p.worst_day ? pnlFmt(p.worst_day.pnl) : '\u2014')+'</div>'
+      + '<div class="kpi-sub">'+(p.worst_day ? p.worst_day.date : '')+'</div></div>'
       + '</div>';
 
-    // Best/worst
-    var extremesHtml = '<div class="kpi-grid" style="margin-bottom:12px">'
-      + '<div class="kpi green"><div class="kpi-label">Best Day</div><div class="kpi-value pos">'+(p.best_day?pnlFmt(p.best_day.pnl):'—')+'</div><div class="kpi-sub">'+(p.best_day?p.best_day.date:'')+'</div></div>'
-      + '<div class="kpi red"><div class="kpi-label">Worst Day</div><div class="kpi-value neg">'+(p.worst_day?pnlFmt(p.worst_day.pnl):'—')+'</div><div class="kpi-sub">'+(p.worst_day?p.worst_day.date:'')+'</div></div>'
-      + '</div>';
+    // ── Chart — weekly window by default ─────────────────────
+    var byDay = p.by_day || [];
+    var chartHtml = '<div class="card" style="margin-bottom:12px">'
+      + '<div class="card-header"><div class="card-title">Daily P&L</div>'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:11px;color:var(--text2)"><span style="color:'+modeColor+'">&#9632;</span> '+_perfMode+'</span>'
+      + '<span style="font-size:11px;color:var(--text2)">&#8212; cumulative</span>'
+      + '</div></div>'
+      + '<div class="card-body" style="padding:12px">'
+      + '<canvas id="equity-chart" style="max-height:180px"></canvas>'
+      + '</div></div>';
 
-    // Equity curve
-    var chartHtml = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Daily P&amp;L + Cumulative Equity</div><div style="font-size:11px;color:var(--text2)"><span style="color:var(--green)">&#9632;</span> profit day &nbsp;<span style="color:var(--red)">&#9632;</span> loss day &nbsp;<span style="color:var(--text2)">&#8212;</span> cumulative</div></div><div class="card-body" style="padding:12px"><canvas id="equity-chart" style="max-height:200px"></canvas></div></div>';
-
-    // By strategy
-    var stratHtml = '<div class="section-title">By Strategy</div><div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0 16px">';
-    var strats = p.by_strategy||{};
+    // ── By strategy ───────────────────────────────────────────
+    var stratHtml = '<div class="section-title">By Strategy</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0 16px">';
+    var strats = p.by_strategy || {};
     if (Object.keys(strats).length) {
       Object.entries(strats).forEach(function(kv) {
-        var code=kv[0], s=kv[1];
+        var code = kv[0], s = kv[1];
         stratHtml += '<div class="trade-item">'
           + '<div class="trade-icon" style="background:var(--bg3);font-size:11px;font-weight:700">'+esc(code)+'</div>'
-          + '<div class="trade-info"><div class="trade-name">'+esc(code)+'</div><div class="trade-meta">'+s.trades+' trades &bull; '+s.win_rate+'% win rate</div></div>'
-          + '<div class="trade-pnl"><div class="trade-pnl-val '+pnlClass(s.total_pnl)+'">'+pnlFmt(s.total_pnl)+'</div><div class="trade-pnl-sub">avg '+pnlFmt(s.avg_pnl)+'</div></div>'
-          + '</div>';
+          + '<div class="trade-info"><div class="trade-name">'+esc(code)+'</div>'
+          + '<div class="trade-meta">'+s.trades+' trades \u2022 '+s.win_rate+'% wins</div></div>'
+          + '<div class="trade-pnl">'
+          + '<div class="trade-pnl-val '+pnlClass(s.total_pnl)+'">'+pnlFmt(s.total_pnl)+'</div>'
+          + '<div class="trade-pnl-sub">avg '+pnlFmt(s.avg_pnl)+'</div></div></div>';
       });
     } else { stratHtml += '<div style="padding:12px 0;color:var(--text2);font-size:12px">No data</div>'; }
     stratHtml += '</div></div>';
 
-    // Exit reasons
-    var reasons = p.exit_reasons||{};
-    var exitHtml = '<div class="section-title">Exit Reasons</div><div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0 16px">';
-    Object.entries(reasons).forEach(function(kv) {
-      exitHtml += '<div class="card-row"><span class="card-label">'+esc(kv[0].replace(/_/g,' '))+'</span><span class="card-val">'+kv[1]+'</span></div>';
+    // ── Exit reasons — clean grouped display ──────────────────
+    var reasons = p.exit_reasons || {};
+    var totalExits = Object.values(reasons).reduce(function(a,b){return a+b;},0);
+    var reasonMeta = {
+      PROFIT_TARGET:    {icon:'✅', label:'Profit Target',   color:'var(--green)'},
+      TRAILING_SL:      {icon:'🔄', label:'Trailing SL',     color:'var(--amber)'},
+      VWAP_SL:          {icon:'📊', label:'VWAP SL',         color:'var(--red)'},
+      MAX_LOSS:         {icon:'🛑', label:'Max Loss',         color:'var(--red)'},
+      AUTO_EXIT:        {icon:'⏰', label:'Auto Exit (time)', color:'var(--blue)'},
+      MARKET_CLOSE:     {icon:'🔔', label:'Market Close',    color:'var(--text2)'},
+      FORCE_EXIT:       {icon:'⚡', label:'Force Exit',       color:'var(--amber)'},
+      SERVER_RESTART:   {icon:'🔄', label:'Server Restart',  color:'var(--text2)'},
+    };
+    var exitHtml = '<div class="section-title">Exit Reasons</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:12px">';
+    // Sort by count desc
+    Object.entries(reasons).sort(function(a,b){return b[1]-a[1];}).forEach(function(kv) {
+      var rawKey = kv[0].split(' ')[0].split('|')[0].trim().toUpperCase();
+      var meta   = reasonMeta[rawKey] || {icon:'•', label:kv[0].split(' ')[0], color:'var(--text2)'};
+      var pct    = totalExits > 0 ? Math.round(kv[1]/totalExits*100) : 0;
+      exitHtml += '<div style="margin-bottom:10px">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+        + '<span style="font-size:12px">'+meta.icon+' '+esc(meta.label)+'</span>'
+        + '<span style="font-size:12px;font-weight:600;color:'+meta.color+'">'+kv[1]+' <span style="color:var(--text2);font-weight:400;font-size:10px">('+pct+'%)</span></span>'
+        + '</div>'
+        + '<div style="background:var(--bg3);border-radius:99px;height:4px;overflow:hidden">'
+        + '<div style="height:100%;width:'+pct+'%;background:'+meta.color+';border-radius:99px"></div>'
+        + '</div></div>';
     });
+    if (!totalExits) exitHtml += '<div style="color:var(--text2);font-size:12px">No exits yet</div>';
     exitHtml += '</div></div>';
 
-    // Daily
-    var dailyHtml = '<div class="section-title">Daily Breakdown</div><div class="card"><div class="card-body" style="padding:0 16px">';
+    // ── Daily breakdown — with live/paper label ───────────────
+    var dailyHtml = '<div class="section-title">Daily Breakdown</div>'
+      + '<div class="card"><div class="card-body" style="padding:0 16px">';
     (p.by_day||[]).slice(-14).reverse().forEach(function(d) {
+      var liveCount  = d.live  || 0;
+      var paperCount = d.paper || 0;
       dailyHtml += '<div class="trade-item">'
-        + '<div class="trade-info"><div class="trade-name">'+esc(d.date)+'</div><div class="trade-meta">'+d.trades+' trades &bull; '+d.wins+' wins</div></div>'
+        + '<div class="trade-info"><div class="trade-name">'+esc(d.date)+'</div>'
+        + '<div class="trade-meta">'+d.trades+' trades \u2022 '+d.wins+' wins'
+        + (liveCount  ? ' \u2022 <span style="color:var(--green)">'+liveCount+' live</span>'  : '')
+        + (paperCount ? ' \u2022 <span style="color:var(--amber)">'+paperCount+' paper</span>' : '')
+        + '</div></div>'
         + '<div class="trade-pnl"><div class="trade-pnl-val '+pnlClass(d.pnl)+'">'+pnlFmt(d.pnl)+'</div></div>'
         + '</div>';
     });
-    if (!p.by_day || !p.by_day.length) dailyHtml += '<div style="padding:12px 0;color:var(--text2);font-size:12px">No data</div>';
+    if (!p.by_day||!p.by_day.length) dailyHtml += '<div style="padding:12px 0;color:var(--text2);font-size:12px">No data</div>';
     dailyHtml += '</div></div>';
 
-    el2.innerHTML = goLiveHtml + kpiHtml + riskHtml + extremesHtml + chartHtml + stratHtml + exitHtml + dailyHtml;
+    el2.innerHTML = goLiveHtml + kpiHtml + riskHtml + chartHtml + stratHtml + exitHtml + dailyHtml;
 
-    // Draw dual chart: daily bars (green/red) + cumulative equity line
-    var curve = p.equity_curve||[];
-    var byDay = p.by_day||[];
+    // ── Draw chart — show _perfDays worth of data ─────────────
     if (byDay.length > 0) {
-      var loadChart = function() {
+      var drawChart = function() {
         var canvas = document.getElementById('equity-chart');
         if (!canvas) return;
         var ctx = canvas.getContext('2d');
         if (_equityChart) { try{ _equityChart.destroy(); }catch(e){} }
 
-        // Bar colours: green for profit day, red for loss day
-        var barColors = byDay.map(function(d){ return d.pnl >= 0 ? 'rgba(0,230,118,.7)' : 'rgba(255,82,82,.7)'; });
-        var barBorder = byDay.map(function(d){ return d.pnl >= 0 ? '#00e676' : '#ff5252'; });
-        var labels    = byDay.map(function(d){ return d.date.slice(5); });
+        var barColor  = isPaper ? 'rgba(255,171,64,.7)' : 'rgba(0,230,118,.7)';
+        var barBorder = isPaper ? '#ffab40' : '#00e676';
+        var lineColor = isPaper ? '#ffab40' : '#00e676';
+
+        var barColors = byDay.map(function(d){ return d.pnl>=0 ? barColor : 'rgba(255,82,82,.7)'; });
+        var barBorders= byDay.map(function(d){ return d.pnl>=0 ? barBorder : '#ff5252'; });
+        var labels    = byDay.map(function(d){ return d.date.slice(5); });  // MM-DD
         var dailyPnl  = byDay.map(function(d){ return d.pnl; });
-        // Cumulative line
-        var cumPnl = [];
-        var running = 0;
+        var cumPnl    = []; var running = 0;
         byDay.forEach(function(d){ running += d.pnl; cumPnl.push(running); });
         var finalEq = cumPnl[cumPnl.length-1] || 0;
-        var lineColor = finalEq >= 0 ? '#00e676' : '#ff5252';
+        var cumColor = finalEq >= 0 ? lineColor : '#ff5252';
 
         _equityChart = new Chart(ctx, {
           data: {
             labels: labels,
             datasets: [
-              {
-                type: 'bar',
-                label: 'Daily P&L',
-                data: dailyPnl,
-                backgroundColor: barColors,
-                borderColor: barBorder,
-                borderWidth: 1,
-                borderRadius: 3,
-                yAxisID: 'y',
-              },
-              {
-                type: 'line',
-                label: 'Cumulative',
-                data: cumPnl,
-                borderColor: lineColor,
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                pointRadius: 2,
-                tension: 0.3,
-                yAxisID: 'y',
-              }
+              { type:'bar',  label:'Daily P&L',  data:dailyPnl, backgroundColor:barColors, borderColor:barBorders, borderWidth:1, borderRadius:3 },
+              { type:'line', label:'Cumulative', data:cumPnl,   borderColor:cumColor, backgroundColor:'transparent', borderWidth:2, pointRadius:byDay.length<=14?3:1, tension:0.3 }
             ]
           },
           options: {
             plugins: {
-              legend: { display: false },
-              tooltip: {
-                callbacks: {
-                  label: function(ctx) {
-                    var v = ctx.parsed.y;
-                    return (v >= 0 ? '+' : '') + '\u20b9' + Math.abs(v).toLocaleString('en-IN');
-                  }
-                }
-              }
+              legend: { display:false },
+              tooltip: { callbacks: { label: function(c){ var v=c.parsed.y; return (v>=0?'+':'')+'\u20b9'+Math.abs(v).toLocaleString('en-IN'); }}}
             },
             scales: {
-              x: { grid:{display:false}, ticks:{font:{size:10},maxTicksLimit:10} },
-              y: {
-                grid: { color:'rgba(255,255,255,.05)' },
-                ticks: {
-                  font: {size:10},
-                  callback: function(v) {
-                    return (v>=0?'+':'')+Math.round(v/1000)+'K';
-                  }
-                }
-              }
+              x: { grid:{display:false}, ticks:{font:{size:10}, maxTicksLimit: Math.min(byDay.length,10)} },
+              y: { grid:{color:'rgba(255,255,255,.05)'}, ticks:{font:{size:10}, callback:function(v){return (v>=0?'+':'')+Math.round(v/1000)+'K';}}}
             },
-            responsive: true,
-            maintainAspectRatio: false
+            responsive:true, maintainAspectRatio:false
           }
         });
       };
-      if (window.Chart) { loadChart(); }
+      if (window.Chart) { drawChart(); }
       else {
-        var chartScript = document.createElement('script');
-        chartScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
-        chartScript.onload = loadChart;
-        document.head.appendChild(chartScript);
+        var cs = document.createElement('script');
+        cs.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
+        cs.onload = drawChart; document.head.appendChild(cs);
       }
     }
   } catch(e) {
-    var el3 = document.getElementById('perf-content');
-    if (el3) el3.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+    var e2 = document.getElementById('perf-content');
+    if (e2) e2.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
 }
 
