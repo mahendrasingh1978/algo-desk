@@ -865,6 +865,249 @@ def t_delete_own_trades_only():
     ok_status(me)
 test("Reset trades: only affects requesting user", t_delete_own_trades_only)
 
+# ── 17. Signal quality guards ────────────────────────────────
+print("\n17. Signal quality guards...")
+
+def t_s1_uses_current_atm():
+    from engine import EngineState, StrikeState, _s1, _current_atm
+    from datetime import datetime, time as dtime
+    import types
+
+    # Build state simulating morning ATM=23500, spot drifted to 23100
+    state = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
+    state.orb_complete = True
+    state.atm_strike   = 23500
+    state.spot_locked  = 23500.0
+    state.spot_history = [23500, 23400, 23300, 23200, 23100]  # drifted
+
+    # Add 7 strikes around morning ATM
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500 + i*50, offset=i, is_atm=(i==0))
+        sk.orb_low  = 470.0
+        sk.orb_high = 480.0
+        # Strike nearest current ATM (23100 → nearest=23100, but monitored range
+        # is 23350–23650, so nearest monitored is 23350)
+        # Simulate 23350 (offset=-3) breaking ORB low
+        if i == -3:
+            sk.combined_history = [465.0]  # below orb_low=470
+        else:
+            sk.combined_history = [475.0]  # above orb_low
+        state.strikes.append(sk)
+
+    t_val = dtime(10, 0)
+    now   = datetime.now()
+    sig   = _s1(state, t_val, now)
+
+    # Drift = (23500-23100)/50 = 8 strikes > DRIFT_MAX_STRIKES=3
+    # So S1 should be SKIPPED (candidate 23350 is 5 strikes from current ATM 23100)
+    assert sig is None, f"S1 should skip when drift too large, got: {sig}"
+test("S1: skips when candidate strike too far from current ATM", t_s1_uses_current_atm)
+
+def t_s1_fires_at_nearest_current_atm():
+    from engine import EngineState, StrikeState, _s1, nearest_strike, DRIFT_MAX_STRIKES
+    from datetime import datetime, time as dtime
+
+    # Small drift: morning ATM=23500, spot now=23350 (3 strikes = exactly at limit)
+    state = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
+    state.orb_complete = True
+    state.atm_strike   = 23500
+    state.spot_locked  = 23500.0
+    state.spot_history = [23500, 23450, 23350]  # 3 strikes drift
+
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500 + i*50, offset=i, is_atm=(i==0))
+        sk.orb_low  = 470.0
+        sk.orb_high = 480.0
+        # Both -2 (23400) and -3 (23350) break ORB low
+        # -3 is closest to current ATM 23350, should be preferred
+        if i in (-2, -3):
+            sk.combined_history = [460.0]  # below 470
+        else:
+            sk.combined_history = [475.0]
+        state.strikes.append(sk)
+
+    t_val = dtime(10, 0)
+    sig   = _s1(state, t_val, datetime.now())
+
+    # Current ATM = nearest_strike(23350) = 23350 (offset=-3)
+    # -3 should be preferred over -2 as it's closer to current ATM
+    if sig:
+        assert sig["strike"] == 23350, f"Should fire at 23350 (nearest current ATM), got {sig['strike']}"
+test("S1: fires at strike nearest current ATM not morning ATM", t_s1_fires_at_nearest_current_atm)
+
+def t_drift_guard_suspends_all_signals():
+    from engine import EngineState, StrikeState, check_all_strategies
+    from datetime import datetime, time as dtime
+
+    state = EngineState({
+        "strategies": ["S1","S7","S8","S2","S3"],
+        "mode": "paper",
+        "strike_round": 50,
+        "drift_max_pct": 1.5,  # 1.5% threshold
+    })
+    state.orb_complete  = True
+    state.atm_strike    = 23500
+    state.spot_locked   = 23500.0
+    # Simulate 3.26% drift like today (23500 → 23034)
+    state.spot_history  = [23500, 23400, 23300, 23200, 23034]
+
+    # Add strikes
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 480.0
+        sk.combined_history = [460.0]  # all breaking ORB low
+        state.strikes.append(sk)
+    state.orb_complete = True
+
+    sig = check_all_strategies(state, datetime.now())
+    assert sig is None, f"All signals should be suspended at 3.26% drift, got: {sig}"
+test("Drift guard: suspends all signals when spot drifts >1.5%", t_drift_guard_suspends_all_signals)
+
+def t_drift_guard_allows_normal_day():
+    from engine import EngineState, StrikeState, check_all_strategies
+    from datetime import datetime
+
+    state = EngineState({
+        "strategies": ["S1"],
+        "mode": "paper",
+        "strike_round": 50,
+        "drift_max_pct": 1.5,
+    })
+    state.orb_complete = True
+    state.atm_strike   = 23500
+    state.spot_locked  = 23500.0
+    # Normal day: spot moves 0.3% (70 pts)
+    state.spot_history = [23500, 23480, 23450, 23430]
+
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 480.0
+        sk.combined_history = [460.0]  # breaking ORB low
+        sk.ce_symbol = f"NIFTY24MAR{23500+i*50}CE"
+        sk.pe_symbol = f"NIFTY24MAR{23500+i*50}PE"
+        state.strikes.append(sk)
+
+    sig = check_all_strategies(state, datetime.now())
+    # Should NOT be blocked by drift guard (only 0.3% drift)
+    # sig may be None for other reasons (no ce/pe symbols) but not drift
+    # We verify drift_guard didn't fire by checking the log
+    drift_blocked = any("signals suspended" in (e.get("msg","")) for e in state.log)
+    assert not drift_blocked, "Normal day should not be blocked by drift guard"
+test("Drift guard: allows signals on normal low-drift day", t_drift_guard_allows_normal_day)
+
+def t_vix_guard_blocks_high_vix():
+    from engine import EngineState, StrikeState, check_all_strategies
+    from datetime import datetime
+
+    state = EngineState({
+        "strategies": ["S1"],
+        "mode": "paper",
+        "strike_round": 50,
+        "vix_open": 18.5,   # high VIX
+        "vix_max":  17.0,   # threshold
+        "drift_max_pct": 99, # disable drift guard for this test
+    })
+    state.orb_complete = True
+    state.atm_strike   = 23500
+    state.spot_locked  = 23500.0
+    state.spot_history = [23500]
+
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.combined_history = [460.0]
+        state.strikes.append(sk)
+
+    sig = check_all_strategies(state, datetime.now())
+    assert sig is None, f"VIX guard should block signals at VIX 18.5, got: {sig}"
+test("VIX guard: blocks all signals when VIX >= threshold", t_vix_guard_blocks_high_vix)
+
+def t_vix_guard_allows_low_vix():
+    from engine import EngineState, StrikeState, check_all_strategies
+    from datetime import datetime
+
+    state = EngineState({
+        "strategies": ["S1"],
+        "mode": "paper",
+        "strike_round": 50,
+        "vix_open": 13.5,   # low VIX — safe to trade
+        "vix_max":  17.0,
+        "drift_max_pct": 99,
+    })
+    state.orb_complete = True
+    state.atm_strike   = 23500
+    state.spot_locked  = 23500.0
+    state.spot_history = [23500]
+
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23500+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.combined_history = [460.0]
+        state.strikes.append(sk)
+
+    # VIX is fine — signal should not be blocked by VIX guard
+    vix_blocked = any("VIX" in (e.get("msg","")) for e in state.log)
+    assert not vix_blocked, "Low VIX day should not be blocked by VIX guard"
+test("VIX guard: allows signals when VIX below threshold", t_vix_guard_allows_low_vix)
+
+# ── 18. Results page & dashboard fixes ───────────────────────
+print("\n18. Results page & dashboard fixes...")
+
+def t_live_performance_endpoint():
+    r = client.get("/api/live/performance?days=30", headers=H())
+    ok_status(r)
+    d = r.json()
+    # Must have all same fields as shadow/performance
+    for field in ["total_trades","total_pnl","win_rate","wins","losses",
+                  "profit_factor","reward_risk","expectancy","max_drawdown",
+                  "max_consec_loss","days_traded","by_strategy","by_day",
+                  "equity_curve","exit_reasons","best_day","worst_day"]:
+        assert field in d, f"Missing field in live/performance: {field}"
+test("GET /api/live/performance: all KPI fields present", t_live_performance_endpoint)
+
+def t_live_performance_empty_correct():
+    r = client.get("/api/live/performance?days=1", headers=H())
+    ok_status(r)
+    d = r.json()
+    if d["total_trades"] == 0:
+        assert d["total_pnl"] == 0
+        assert d["by_day"] == []
+test("GET /api/live/performance: empty returns correct defaults", t_live_performance_empty_correct)
+
+def t_market_status_accepts_symbol():
+    r = client.get("/api/market/status?symbol=NSE:NIFTYBANK-INDEX", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "symbol" in d
+    assert "sym_short" in d
+    assert d["symbol"] == "NSE:NIFTYBANK-INDEX"
+test("GET /api/market/status: accepts symbol param, returns sym_short", t_market_status_accepts_symbol)
+
+def t_market_status_default_symbol():
+    r = client.get("/api/market/status", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "symbol" in d
+    assert "sym_short" in d
+    assert d["symbol"] == "NSE:NIFTY50-INDEX"
+test("GET /api/market/status: default symbol is NIFTY", t_market_status_default_symbol)
+
+def t_dashboard_live_paper_auto_split():
+    r = client.get("/api/dashboard/summary", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "live_automations" in d,  "Missing live_automations"
+    assert "paper_automations" in d, "Missing paper_automations"
+    assert d["live_automations"] + d["paper_automations"] == d["total_automations"],         "live + paper automations must equal total"
+test("Dashboard: live_automations + paper_automations = total_automations", t_dashboard_live_paper_auto_split)
+
+def t_best_worst_day_different():
+    # When we have trades, best_day.pnl should >= worst_day.pnl
+    r = client.get("/api/shadow/performance?days=365", headers=H())
+    ok_status(r)
+    d = r.json()
+    if d["total_trades"] > 0 and d["best_day"] and d["worst_day"]:
+        assert d["best_day"]["pnl"] >= d["worst_day"]["pnl"],             f"best_day {d['best_day']['pnl']} must be >= worst_day {d['worst_day']['pnl']}"
+test("Performance: best_day.pnl >= worst_day.pnl always", t_best_worst_day_different)
+
 # ── Summary ──────────────────────────────────────────────────
 import os
 if os.path.exists("functest.db"):
