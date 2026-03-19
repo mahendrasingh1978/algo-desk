@@ -53,6 +53,60 @@ SYMBOL_REGISTRY = {
     "NSE:NIFTYNXT50-INDEX": {"lot_size": 25,  "label": "NIFTY NEXT 50","strike_gap": 50},
 }
 
+def calc_brokerage(lots: int, lot_size: int, 
+                   entry_combined: float, exit_combined: float) -> dict:
+    """
+    Calculate real Fyers brokerage for a 4-leg Iron Fly/Condor.
+    
+    Fyers charges (F&O options):
+    - Brokerage:      ₹20 flat per executed order (4 legs × 2 sides = 8 orders)
+    - STT:            0.1% of premium × qty on SELL side only (at exercise/expiry)
+                      For intraday close: STT on sell premium
+    - Exchange fee:   0.05% of premium × qty (NSE) or 0.05% (BSE)
+    - SEBI charges:   ₹10 per crore of turnover
+    - Stamp duty:     0.003% of buy premium (Maharashtra)
+    - GST:            18% on (brokerage + exchange fee + SEBI)
+    
+    Total realistic cost for 1 NIFTY lot Iron Fly: ~₹150-250 per round trip
+    """
+    qty = lots * lot_size
+    
+    # Entry: 2 sell legs + 2 buy legs = 4 orders
+    # Exit:  2 buy legs + 2 sell legs = 4 orders
+    # Total: 8 orders at ₹20 each
+    brokerage = 20 * 8  # ₹160 for 8 orders
+    
+    # Exchange transaction fee: 0.05% of premium turnover
+    # Turnover = (entry_combined + exit_combined) × qty
+    turnover = (entry_combined + exit_combined) * qty
+    exchange_fee = turnover * 0.0005
+    
+    # STT: 0.1% × premium × qty on sell legs at exit (not collected at intraday close by NSE)
+    # For closed positions before expiry: STT = 0 on options (only on exercise)
+    stt = 0  # Zero for squared-off options positions (SEBI circular)
+    
+    # SEBI charges: ₹10 per crore = 0.0001% of turnover
+    sebi = turnover * 0.000001
+    
+    # Stamp duty: 0.003% of buy side premium only
+    buy_premium = (exit_combined) * qty  # buying back the short
+    stamp = buy_premium * 0.00003
+    
+    # GST: 18% on (brokerage + exchange_fee + sebi)
+    gst = (brokerage + exchange_fee + sebi) * 0.18
+    
+    total = brokerage + exchange_fee + stt + sebi + stamp + gst
+    
+    return {
+        "brokerage":    round(brokerage, 2),
+        "exchange_fee": round(exchange_fee, 2),
+        "stt":          round(stt, 2),
+        "sebi":         round(sebi, 2),
+        "stamp":        round(stamp, 2),
+        "gst":          round(gst, 2),
+        "total":        round(total, 2),
+    }
+
 # Margin multipliers per strategy structure (Iron Fly vs Condor)
 # Based on SPAN margin calculation approximations
 # Naked short: ~12-15% of notional. Hedged: ~4-6% of notional
@@ -209,6 +263,54 @@ def estimate_margin(symbol: str, lots: int, lot_size: int,
         "legs":             legs,
         "note": "Estimated using typical ATM IV. Use Fyers SPAN calculator for exact margin.",
     }
+
+# ── Plan/tier definitions ─────────────────────────────────────────
+# FREE:    Paper trading only. All 9 strategies in paper mode.
+#          Broker connection for data only (no live orders).
+# STARTER: Live trading. Strategies S1, S2, S3, S8.
+#          Up to 2 automations.
+# PRO:     Live trading. All 9 strategies.
+#          Up to 10 automations. Priority support.
+# Note: Admin/SUPER_ADMIN always get PRO access.
+
+PLAN_CONFIG = {
+    "FREE": {
+        "live_trading":   False,
+        "strategies":     ["S1","S2","S3","S4","S6","S7","S8","S9","S5"],  # all in paper
+        "max_automations": 3,
+        "shadow_mode":    True,
+        "label":          "Free",
+        "description":    "Paper trading · All 9 strategies simulated · No live orders",
+    },
+    "STARTER": {
+        "live_trading":   True,
+        "strategies":     ["S1","S2","S3","S8"],
+        "max_automations": 2,
+        "shadow_mode":    True,
+        "label":          "Starter",
+        "description":    "Live trading · 4 core strategies · 2 automations",
+    },
+    "PRO": {
+        "live_trading":   True,
+        "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9"],
+        "max_automations": 10,
+        "shadow_mode":    True,
+        "label":          "Pro",
+        "description":    "Live trading · All 9 strategies · 10 automations",
+    },
+}
+
+def get_plan(user) -> dict:
+    """Get effective plan — admins always get PRO."""
+    if user.role in ("SUPER_ADMIN", "ADMIN"):
+        return PLAN_CONFIG["PRO"]
+    return PLAN_CONFIG.get(user.plan, PLAN_CONFIG["FREE"])
+
+def check_plan_can_live(user) -> bool:
+    return get_plan(user).get("live_trading", False)
+
+def check_plan_strategy(user, strategy_code: str) -> bool:
+    return strategy_code in get_plan(user).get("strategies", [])
 
 # Per-user market data cache
 # Each user with a connected broker gets their own live feed entry.
@@ -521,6 +623,7 @@ async def _auto_resume_engines():
     await asyncio.sleep(30)
     db = SessionLocal()
     try:
+        # ── Resume running live automations ─────────────────────
         running = db.query(Automation).filter(Automation.status=="RUNNING").all()
         for auto in running:
             user = db.query(User).filter(
@@ -535,6 +638,46 @@ async def _auto_resume_engines():
             active_engines[user.id] = state
             asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
             log.info(f"Auto-resumed: {user.email} / {auto.name}")
+
+        # ── Close orphaned open shadow trades from before restart ──
+        # Any ShadowTrade that is still open but not monitored for >2 hours
+        # was orphaned by a server restart — close it at last known combined
+        import pytz
+        ist = pytz.timezone("Asia/Kolkata")
+        cutoff = datetime.utcnow() - __import__("datetime").timedelta(hours=2)
+        orphans = db.query(ShadowTrade).filter(
+            ShadowTrade.is_open == True,
+        ).all()
+        for ot in orphans:
+            # Check if last_monitored was more than 2 hours ago
+            last = ot.last_monitored or ot.entry_time
+            if last and (datetime.utcnow() - last).total_seconds() > 7200:
+                # Close at entry (we don't know exit price — conservative)
+                ot.exit_combined = ot.entry_combined
+                ot.exit_time     = datetime.utcnow()
+                ot.exit_reason   = "SERVER_RESTART (position data lost)"
+                ot.gross_pnl     = 0.0
+                ot.net_pnl       = 0.0
+                ot.is_open       = False
+                ot.sl_tracking   = {"note": "Closed due to server restart — P&L unknown"}
+                db.commit()
+                log.warning(f"Closed orphaned shadow trade {ot.id} for user {ot.user_id}")
+
+        # ── Close orphaned open live trades too ──────────────────
+        orphan_live = db.query(Trade).filter(Trade.is_open == True).all()
+        for ot in orphan_live:
+            age = (datetime.utcnow() - ot.entry_time).total_seconds() if ot.entry_time else 999999
+            # If open for more than 8 hours (overnight), mark as orphaned
+            if age > 28800:
+                ot.exit_combined = ot.entry_combined
+                ot.exit_time     = datetime.utcnow()
+                ot.exit_reason   = "SERVER_RESTART (check broker app)"
+                ot.gross_pnl     = 0.0
+                ot.net_pnl       = 0.0
+                ot.is_open       = False
+                db.commit()
+                log.warning(f"Closed orphaned live trade {ot.id} — check Fyers for actual status")
+
     except Exception as e:
         log.error(f"Auto-resume: {e}")
     finally:
@@ -680,6 +823,24 @@ class UpdateProfileReq(BaseModel):
     timezone: Optional[str] = None
     telegram_token: Optional[str] = None
     telegram_chat: Optional[str] = None
+
+@app.get("/api/plan")
+def get_user_plan(user: User = Depends(get_current_user)):
+    """Returns current user plan details and feature access."""
+    plan = get_plan(user)
+    return {
+        "plan":            user.plan,
+        "label":           plan["label"],
+        "description":     plan["description"],
+        "live_trading":    plan["live_trading"],
+        "strategies":      plan["strategies"],
+        "max_automations": plan["max_automations"],
+        "all_plans":       {k: {"label":v["label"],
+                               "description":v["description"],
+                               "live_trading":v["live_trading"],
+                               "max_automations":v["max_automations"]}
+                            for k,v in PLAN_CONFIG.items()},
+    }
 
 @app.put("/api/me")
 def update_profile(req: UpdateProfileReq, user: User = Depends(get_current_user),
@@ -917,12 +1078,64 @@ async def market_profile(user: User = Depends(get_current_user),
 @app.get("/api/market/funds")
 async def market_funds(user: User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
+    """
+    Fetch account balance from Fyers — works 24/7, not just market hours.
+    Returns raw fund keys AND a parsed available_balance for easy display.
+    """
     conn = _get_fyers(user, db)
     if not conn:
-        return {"ok": False, "funds": {}}
-    await conn.refresh_token()
-    funds = await conn.get_funds()
-    return {"ok": True, "funds": funds}
+        return {"ok": False, "funds": {}, "available_balance": 0,
+                "message": "No broker connected — add Fyers in My Brokers"}
+
+    if conn.mode == "paper":
+        return {"ok": True, "mode": "paper", "funds": {},
+                "available_balance": 0,
+                "message": "Paper mode — no real account balance"}
+
+    try:
+        await conn.refresh_token()
+        funds = await conn.get_funds()
+    except Exception as e:
+        return {"ok": False, "funds": {}, "available_balance": 0,
+                "message": f"Could not reach Fyers: {str(e)}"}
+
+    if not funds:
+        return {"ok": False, "funds": {}, "available_balance": 0,
+                "message": "Fyers returned empty funds — check token"}
+
+    # Parse available balance — try every key Fyers might use
+    available = 0
+    matched_key = None
+    KNOWN_KEYS = [
+        "Available Balance", "Available cash", "Available Cash",
+        "Cash Available", "Clear Balance", "Net Balance",
+        "Payin", "Total Balance", "Equity Amount",
+        "available_balance", "availableBalance",
+    ]
+    for key in KNOWN_KEYS:
+        val = funds.get(key, 0)
+        if val and float(val) > 0:
+            available = float(val)
+            matched_key = key
+            break
+
+    # If no key matched, take the largest positive value
+    if not available and funds:
+        pos = {k: float(v) for k, v in funds.items()
+               if isinstance(v, (int, float)) and float(v) > 0}
+        if pos:
+            matched_key = max(pos, key=pos.get)
+            available = pos[matched_key]
+
+    return {
+        "ok":               True,
+        "mode":             "live",
+        "funds":            funds,          # raw keys for debugging
+        "available_balance": round(available, 2),
+        "matched_key":      matched_key,    # which key was used
+        "message":          f"Balance from '{matched_key}'" if matched_key
+                            else "Could not parse balance from Fyers response",
+    }
 
 # ── Strategies ────────────────────────────────────────────────
 
@@ -986,9 +1199,39 @@ class SaveAutoReq(BaseModel):
 @app.post("/api/automations")
 def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
+    plan = get_plan(user)
+
+    # Check live trading permission
+    if req.mode == "live" and not plan["live_trading"]:
+        raise HTTPException(403,
+            "Live trading requires a paid plan. "
+            "Upgrade to Starter or Pro in your profile.")
+
+    # Check automation limit
+    existing = db.query(Automation).filter(
+        Automation.user_id == user.id).count()
+    if existing >= plan["max_automations"]:
+        raise HTTPException(403,
+            f"Your {plan['label']} plan allows up to "
+            f"{plan['max_automations']} automation(s). "
+            f"Upgrade to add more.")
+
+    # Check strategy permissions
+    locked = [s for s in (req.strategies or [])
+              if not check_plan_strategy(user, s)]
+    if locked:
+        raise HTTPException(403,
+            f"Strategies {locked} require a higher plan. "
+            f"Upgrade to Pro to unlock all strategies.")
+
+    # Paper mode enforced for FREE plan
+    mode = req.mode
+    if not plan["live_trading"]:
+        mode = "paper"
+
     a = Automation(user_id=user.id, name=req.name, symbol=req.symbol,
                    broker_id=req.broker_id, strategies=req.strategies,
-                   mode=req.mode, shadow_mode=req.shadow_mode,
+                   mode=mode, shadow_mode=req.shadow_mode,
                    telegram_alerts=req.telegram_alerts,
                    config=req.config, status="IDLE")
     db.add(a); db.commit(); db.refresh(a)
@@ -1169,6 +1412,20 @@ def activate_user(user_id: str, admin: User = Depends(require_admin),
     u = db.query(User).filter(User.id == user_id).first()
     if u: u.is_active = True; db.commit()
     return {"ok": True}
+
+@app.post("/api/admin/users/{user_id}/set-plan")
+def admin_set_plan(user_id: str, req: dict,
+                   admin: User = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    """Admin: change a user's plan (FREE/STARTER/PRO)."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u: raise HTTPException(404, "User not found")
+    new_plan = req.get("plan", "FREE")
+    if new_plan not in PLAN_CONFIG:
+        raise HTTPException(400, f"Invalid plan: {new_plan}")
+    u.plan = new_plan
+    db.commit()
+    return {"ok": True, "plan": new_plan}
 
 @app.post("/api/admin/users/{user_id}/reset-password")
 def admin_reset_pw(user_id: str, admin: User = Depends(require_admin),
@@ -1356,9 +1613,25 @@ def shadow_performance(
     ).all()
 
     if not trades:
-        return {"total_trades":0,"total_pnl":0,"win_rate":0,
-                "avg_pnl":0,"best_day":None,"worst_day":None,
-                "by_strategy":{},"by_day":[],"days":days}
+        # Return full schema with zeros — go_live_ready=False, score=0
+        empty_checks = {
+            "min_trades":      {"pass":False,"value":0,     "threshold":"≥20 trades",       "desc":"Statistical significance"},
+            "win_rate":        {"pass":False,"value":"0%",  "threshold":"≥55%",              "desc":"Minimum viable win rate"},
+            "profit_factor":   {"pass":False,"value":0,     "threshold":"≥1.5",              "desc":"Gross profit vs gross loss"},
+            "positive_equity": {"pass":False,"value":"₹0",  "threshold":">₹0",              "desc":"Overall profitable"},
+            "max_consec_loss": {"pass":False,"value":0,     "threshold":"≤4 consecutive",    "desc":"Manageable losing streaks"},
+            "reward_risk":     {"pass":False,"value":0,     "threshold":"≥1.0",              "desc":"Avg win ≥ avg loss"},
+            "days_traded":     {"pass":False,"value":0,     "threshold":"≥10 trading days",  "desc":"Tested across enough sessions"},
+        }
+        return {
+            "total_trades":0,"total_pnl":0,"win_rate":0,"avg_pnl":0,
+            "profit_factor":0,"avg_win":0,"avg_loss":0,"reward_risk":0,
+            "expectancy":0,"max_drawdown":0,"max_consec_loss":0,"days_traded":0,
+            "go_live_ready":False,"go_live_score":0,"ready_checks":empty_checks,
+            "wins":0,"losses":0,
+            "best_day":None,"worst_day":None,
+            "by_strategy":{},"by_day":[],"equity_curve":[],"exit_reasons":{},"days":days
+        }
 
     total_pnl = sum(t.net_pnl or 0 for t in trades)
     wins   = [t for t in trades if (t.net_pnl or 0) > 0]
@@ -1410,20 +1683,94 @@ def shadow_performance(
     best_day  = max(by_day, key=lambda x: x["pnl"]) if by_day else None
     worst_day = min(by_day, key=lambda x: x["pnl"]) if by_day else None
 
+    # ── Industry-standard performance metrics ─────────────────
+    n = len(trades)
+    total_wins   = len(wins)
+    total_losses = len(losses)
+    win_rate     = total_wins / n * 100
+
+    # Profit factor = gross profit / gross loss (>1.5 is good, >2.0 is excellent)
+    gross_profit = sum(t.net_pnl for t in wins)
+    gross_loss   = abs(sum(t.net_pnl for t in losses)) if losses else 0
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 99.0
+
+    # Average win / average loss ratio (>1.5 is healthy)
+    avg_win  = round(gross_profit / total_wins, 0) if total_wins else 0
+    avg_loss = round(-gross_loss / total_losses, 0) if total_losses else 0
+    reward_risk = round(avg_win / abs(avg_loss), 2) if avg_loss else 99.0
+
+    # Max consecutive losses (drawdown risk indicator)
+    consec_loss = max_consec = current_consec = 0
+    for t in sorted(trades, key=lambda x: x.trade_date):
+        if (t.net_pnl or 0) <= 0:
+            current_consec += 1
+            max_consec = max(max_consec, current_consec)
+        else:
+            current_consec = 0
+
+    # Max drawdown from equity curve peak
+    peak = 0
+    max_dd = 0
+    running_eq = 0
+    for d in by_day:
+        running_eq += d["pnl"]
+        if running_eq > peak:
+            peak = running_eq
+        dd = peak - running_eq
+        if dd > max_dd:
+            max_dd = dd
+
+    # Expectancy = (win_rate × avg_win) - (loss_rate × avg_loss)
+    loss_rate = 1 - win_rate/100
+    expectancy = round((win_rate/100 * avg_win) - (loss_rate * abs(avg_loss)), 0)
+
+    # Days traded (not just total days in range)
+    days_traded = len(by_day)
+
+    # ── Go-Live readiness assessment ────────────────────────────
+    # Industry thresholds for options selling strategies:
+    ready_checks = {
+        "min_trades":        {"pass": n >= 20,           "value": n,                  "threshold": "≥20 trades",           "desc": "Statistical significance"},
+        "win_rate":          {"pass": win_rate >= 55,    "value": f"{win_rate:.1f}%", "threshold": "≥55%",                 "desc": "Minimum viable win rate"},
+        "profit_factor":     {"pass": profit_factor >= 1.5, "value": profit_factor,  "threshold": "≥1.5",                 "desc": "Gross profit vs gross loss"},
+        "positive_equity":   {"pass": total_pnl > 0,    "value": f"₹{total_pnl:,.0f}", "threshold": ">₹0",              "desc": "Overall profitable"},
+        "max_consec_loss":   {"pass": max_consec <= 4,  "value": max_consec,         "threshold": "≤4 consecutive",       "desc": "Manageable losing streaks"},
+        "reward_risk":       {"pass": reward_risk >= 1.0, "value": reward_risk,       "threshold": "≥1.0",                "desc": "Avg win ≥ avg loss"},
+        "days_traded":       {"pass": days_traded >= 10, "value": days_traded,        "threshold": "≥10 trading days",     "desc": "Tested across enough sessions"},
+    }
+    checks_passed = sum(1 for c in ready_checks.values() if c["pass"])
+    go_live_score = round(checks_passed / len(ready_checks) * 100)
+    go_live_ready = go_live_score >= 85  # Need to pass ≥6 of 7 checks
+
     return {
-        "total_trades":  len(trades),
-        "total_pnl":     round(total_pnl, 0),
-        "wins":          len(wins),
-        "losses":        len(losses),
-        "win_rate":      round(len(wins)/len(trades)*100,1),
-        "avg_pnl":       round(total_pnl/len(trades),0),
-        "best_day":      best_day,
-        "worst_day":     worst_day,
-        "by_strategy":   by_strat,
-        "by_day":        by_day,
-        "equity_curve":  equity_curve,
-        "exit_reasons":  exit_reasons,
-        "days":          days,
+        # Core metrics
+        "total_trades":   n,
+        "total_pnl":      round(total_pnl, 0),
+        "wins":           total_wins,
+        "losses":         total_losses,
+        "win_rate":       round(win_rate, 1),
+        "avg_pnl":        round(total_pnl / n, 0),
+        # Industry metrics
+        "profit_factor":  profit_factor,
+        "avg_win":        avg_win,
+        "avg_loss":       avg_loss,
+        "reward_risk":    reward_risk,
+        "expectancy":     expectancy,
+        "max_drawdown":   round(max_dd, 0),
+        "max_consec_loss": max_consec,
+        "days_traded":    days_traded,
+        # Go-live assessment
+        "go_live_ready":  go_live_ready,
+        "go_live_score":  go_live_score,
+        "ready_checks":   ready_checks,
+        # Detail
+        "best_day":       best_day,
+        "worst_day":      worst_day,
+        "by_strategy":    by_strat,
+        "by_day":         by_day,
+        "equity_curve":   equity_curve,
+        "exit_reasons":   exit_reasons,
+        "days":           days,
     }
 
 
@@ -1443,7 +1790,9 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
     ist = pytz.timezone("Asia/Kolkata")
 
     config = {**auto.config, "strategies": auto.strategies}
-    lot_sz = int(config.get("lot_size", 25))
+    # Get lot size from config, falling back to symbol registry
+    _reg_lot = SYMBOL_REGISTRY.get(auto.symbol, {}).get("lot_size", 65)
+    lot_sz = int(config.get("lot_size") or _reg_lot)
     lots   = int(config.get("lots", 1))
 
     # Create shadow trade record
@@ -1481,6 +1830,8 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
     sl = SLState()
     sl.activate(entry_combined, config)
     sl_tracking = {}
+    combined_history = [entry_combined]  # seed with entry combined
+    ema75_val = entry_combined            # seed EMA with entry combined
 
     while True:
         await asyncio.sleep(60)
@@ -1492,14 +1843,17 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
             exit_time = config.get("auto_exit_time", "14:00")
             eh, em = map(int, exit_time.split(":"))
             if t >= dtime(eh, em):
+                # Use current combined at exit time, not entry_combined
+                exit_price = current if current > 0 else entry_combined
                 await _close_shadow_trade(trade_id, user_id, "AUTO_EXIT",
-                    entry_combined, auto, lots, lot_sz, sl_tracking)
+                    exit_price, auto, lots, lot_sz, sl_tracking)
                 return
 
             # Market closed
             if t > dtime(15, 30):
+                exit_price = current if current > 0 else entry_combined
                 await _close_shadow_trade(trade_id, user_id, "MARKET_CLOSE",
-                    entry_combined, auto, lots, lot_sz, sl_tracking)
+                    exit_price, auto, lots, lot_sz, sl_tracking)
                 return
 
             # Get current combined from cache
@@ -1513,17 +1867,32 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
                 continue
 
             current = chain_entry.get("combined", entry_combined)
-            vwap    = 0.0  # simplified — full VWAP needs history
-            ema75   = 0.0
+
+            # Track VWAP and EMA75 of combined premium properly
+            # Use the StrikeState from cache if available, else calculate inline
+            combined_history.append(current)
+            candle_count = len(combined_history)
+
+            # VWAP: cumulative average of combined premium from entry
+            vwap = sum(combined_history) / candle_count
+
+            # EMA75: exponential moving average with span=75
+            k75 = 2 / (75 + 1)
+            if candle_count == 1:
+                ema75_val = current
+            else:
+                ema75_val = current * k75 + ema75_val * (1 - k75)
 
             sl_tracking = {
-                "current": current,
+                "current":      current,
                 "trailing_low": sl.trailing_low,
-                "trailing_sl": sl.trailing_sl,
-                "candles": sl.candles,
+                "trailing_sl":  sl.trailing_sl,
+                "candles":      candle_count,
+                "vwap":         round(vwap, 2),
+                "ema75":        round(ema75_val, 2),
             }
 
-            should_exit, reason = sl.update(current, vwap, ema75, 0, config)
+            should_exit, reason = sl.update(current, vwap, ema75_val, candle_count, config)
             if should_exit:
                 await _close_shadow_trade(trade_id, user_id, reason,
                     current, auto, lots, lot_sz, sl_tracking)
@@ -1544,11 +1913,14 @@ async def _close_shadow_trade(trade_id, user_id, reason,
         if not t or not t.is_open:
             return
         pnl = (t.entry_combined - exit_combined) * lots * lot_sz
+        # Real brokerage calculation (not flat ₹40)
+        charges = calc_brokerage(lots, lot_sz, t.entry_combined, exit_combined)
         t.exit_combined = exit_combined
         t.exit_time     = datetime.utcnow()
         t.exit_reason   = reason
         t.gross_pnl     = round(pnl, 2)
-        t.net_pnl       = round(pnl - 40, 2)
+        t.brokerage     = round(charges["total"], 2)
+        t.net_pnl       = round(pnl - charges["total"], 2)
         t.is_open       = False
         t.sl_tracking   = sl_tracking
         db.commit()
@@ -1556,13 +1928,20 @@ async def _close_shadow_trade(trade_id, user_id, reason,
         if auto.telegram_alerts:
             user = db.query(User).filter(User.id == user_id).first()
             if user:
-                emoji = "✅" if pnl > 0 else "🔴"
+                emoji = "✅" if t.net_pnl > 0 else "🔴"
                 await _send_telegram_all(user,
                     f"{emoji} [PAPER MODE] Trade Closed\n"
                     f"Strategy: {t.strategy_code}\n"
+                    f"Symbol: {auto.symbol}\n"
                     f"Entry: ₹{t.entry_combined:.1f} → Exit: ₹{exit_combined:.1f}\n"
-                    f"P&L: ₹{pnl:+.0f}\n"
-                    f"Reason: {reason}\n"
+                    f"Qty: {lots} lot(s) × {lot_sz} = {lots*lot_sz} units\n"
+                    f"Gross P&L: ₹{pnl:+.0f}\n"
+                    f"Charges:   ₹{charges['total']:.0f} "
+                    f"(brok ₹{charges['brokerage']:.0f} + "
+                    f"fees ₹{charges['exchange_fee']:.0f} + "
+                    f"GST ₹{charges['gst']:.0f})\n"
+                    f"Net P&L:   ₹{t.net_pnl:+.0f}\n"
+                    f"Exit: {reason}\n"
                     f"⚠️ Simulation only — no real money")
     finally:
         db.close()
@@ -1943,7 +2322,9 @@ async def _run_engine(user_id: str, auto: Automation,
 
     state.is_running = True
     symbol  = auto.symbol
-    lot_sz  = int(state.config.get("lot_size", 25))
+    # Get lot size from config, falling back to symbol registry
+    _sym_reg_lot = SYMBOL_REGISTRY.get(auto.symbol, {}).get("lot_size", 65)
+    lot_sz  = int(state.config.get("lot_size") or _sym_reg_lot)
     lots    = int(state.config.get("lots", 1))
 
     state.emit(f"Engine started — {auto.name} | Mode: {auto.mode.upper()}", "START")
@@ -2212,19 +2593,52 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
 
     db = SessionLocal()
     try:
-        trade = Trade(
-            user_id=user_id, automation_id=auto_id,
-            trade_date=datetime.now().strftime("%Y-%m-%d"),
-            symbol=state.config.get("symbol", "NIFTY"),
-            strategy_code=signal["code"], mode=state.config.get("mode", "paper"),
-            atm_strike=state.atm_strike,
-            sell_ce_strike=signal.get("sell_ce_strike", signal["strike"]),
-            sell_pe_strike=signal.get("sell_pe_strike", signal["strike"]),
-            entry_combined=combined, net_credit=combined,
-            lots=lots, lot_size=lot_sz, entry_time=datetime.now(),
-            is_open=True, signal_data=signal, orders=orders)
-        db.add(trade); db.commit()
-        state.position["trade_id"] = trade.id
+        ist_now = datetime.now()
+        trade_mode = state.config.get("mode", "paper")
+
+        if trade_mode == "paper":
+            # Paper trades → ShadowTrade table for Results page
+            # Calculate expected max profit and max loss for this position
+            hw = signal.get("hedge_width", 2)
+            gap = SYMBOL_REGISTRY.get(
+                state.config.get("symbol", "NSE:NIFTY50-INDEX"), {}
+            ).get("strike_gap", 50)
+            max_profit = combined * qty           # if both legs expire worthless
+            max_loss = (hw * gap * qty) - combined * qty  # defined by hedge
+
+            trade = ShadowTrade(
+                user_id=user_id, automation_id=auto_id,
+                trade_date=ist_now.strftime("%Y-%m-%d"),
+                symbol=state.config.get("symbol", "NSE:NIFTY50-INDEX"),
+                strategy_code=signal["code"],
+                atm_strike=state.atm_strike,
+                entry_combined=combined, entry_spot=state.spot_history[-1] if state.spot_history else 0,
+                entry_time=ist_now,
+                lots=lots, lot_size=lot_sz,
+                hedge_width=hw,
+                max_profit=round(max_profit, 0),
+                max_loss=round(max_loss, 0),
+                is_open=True, signal_data=signal,
+                last_monitored=ist_now)
+            db.add(trade); db.commit()
+            state.position["trade_id"] = trade.id
+            state.position["trade_table"] = "shadow"
+        else:
+            # Live trades → Trade table
+            trade = Trade(
+                user_id=user_id, automation_id=auto_id,
+                trade_date=ist_now.strftime("%Y-%m-%d"),
+                symbol=state.config.get("symbol", "NIFTY"),
+                strategy_code=signal["code"], mode=trade_mode,
+                atm_strike=state.atm_strike,
+                sell_ce_strike=signal.get("sell_ce_strike", signal["strike"]),
+                sell_pe_strike=signal.get("sell_pe_strike", signal["strike"]),
+                entry_combined=combined, net_credit=combined,
+                lots=lots, lot_size=lot_sz, entry_time=ist_now,
+                is_open=True, signal_data=signal, orders=orders)
+            db.add(trade); db.commit()
+            state.position["trade_id"] = trade.id
+            state.position["trade_table"] = "live"
     finally:
         db.close()
 
@@ -2299,19 +2713,54 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
     state.emit(f"Closed. P&L: ₹{pnl:.0f} | Day: ₹{state.day_pnl:.0f}",
                "OK" if pnl > 0 else "SL")
 
-    trade_id = state.position.get("trade_id")
+    trade_id    = state.position.get("trade_id")
+    trade_table = state.position.get("trade_table", "live")
+    charges     = calc_brokerage(lots, lot_sz,
+                    state.position.get("entry_combined", exit_combined),
+                    exit_combined)
+
     if trade_id:
         db = SessionLocal()
         try:
-            t = db.query(Trade).filter(Trade.id == trade_id).first()
-            if t:
-                t.exit_combined = exit_combined
-                t.exit_time     = datetime.now()
-                t.exit_reason   = reason
-                t.gross_pnl     = pnl
-                t.net_pnl       = pnl - t.brokerage
-                t.is_open       = False
-                db.commit()
+            if trade_table == "shadow":
+                # Paper trade — update ShadowTrade
+                t = db.query(ShadowTrade).filter(ShadowTrade.id == trade_id).first()
+                if t and t.is_open:
+                    t.exit_combined  = exit_combined
+                    t.exit_time      = datetime.now()
+                    t.exit_spot      = state.spot_history[-1] if state.spot_history else 0
+                    t.exit_reason    = reason
+                    t.gross_pnl      = round(pnl, 2)
+                    t.brokerage      = round(charges["total"], 2)
+                    t.net_pnl        = round(pnl - charges["total"], 2)
+                    t.sl_tracking    = {
+                        "exit_combined":  round(exit_combined, 2),
+                        "entry_combined": round(state.position.get("entry_combined",0), 2),
+                        "decay_pct":      round((1 - exit_combined /
+                                           max(state.position.get("entry_combined",1),0.01)) * 100, 1),
+                        "reason":         reason,
+                        "charges_detail": charges,
+                    }
+                    t.last_monitored = datetime.now()
+                    t.is_open        = False
+                    db.commit()
+                    state.emit(
+                        f"📋 Paper trade closed | Entry ₹{t.entry_combined:.1f} "
+                        f"→ Exit ₹{exit_combined:.1f} | "
+                        f"Gross ₹{pnl:+.0f} | Charges ₹{charges['total']:.0f} | "
+                        f"Net ₹{(pnl - charges['total']):+.0f}", "OK" if pnl > 0 else "SL")
+            else:
+                # Live trade — update Trade
+                t = db.query(Trade).filter(Trade.id == trade_id).first()
+                if t:
+                    t.exit_combined = exit_combined
+                    t.exit_time     = datetime.now()
+                    t.exit_reason   = reason
+                    t.gross_pnl     = round(pnl, 2)
+                    t.brokerage     = round(charges["total"], 2)
+                    t.net_pnl       = round(pnl - charges["total"], 2)
+                    t.is_open       = False
+                    db.commit()
         finally:
             db.close()
 

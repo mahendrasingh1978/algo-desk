@@ -151,7 +151,7 @@ class Trade(Base):
     exit_combined   = Column(Float, nullable=True)
     net_credit      = Column(Float, nullable=False)
     lots            = Column(Integer, default=1)
-    lot_size        = Column(Integer, default=25)
+    lot_size        = Column(Integer, default=65)
     entry_time      = Column(DateTime, nullable=False)
     exit_time       = Column(DateTime, nullable=True)
     exit_reason     = Column(String(100), nullable=True)
@@ -192,7 +192,7 @@ class ShadowTrade(Base):
     exit_reason      = Column(String(100), nullable=True)
     # P&L
     lots             = Column(Integer, default=1)
-    lot_size         = Column(Integer, default=25)
+    lot_size         = Column(Integer, default=65)
     gross_pnl        = Column(Float, nullable=True)
     net_pnl          = Column(Float, nullable=True)
     is_open          = Column(Boolean, default=True)
@@ -200,6 +200,13 @@ class ShadowTrade(Base):
     signal_data      = Column(JSON, default=dict)
     # SL tracking
     sl_tracking      = Column(JSON, default=dict)  # vwap, trailing_low etc at exit
+    # Extra fields for industry-standard reporting
+    brokerage        = Column(Float, default=0.0)
+    hedge_width      = Column(Integer, default=2)
+    max_profit       = Column(Float, nullable=True)   # max profit if held to expiry
+    max_loss         = Column(Float, nullable=True)   # defined max loss (hedge width × gap × qty)
+    # Recovery: track monitoring state for restart
+    last_monitored   = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, default=datetime.utcnow)
     user             = relationship("User", back_populates="shadow_trades")
     automation       = relationship("Automation", back_populates="shadow_trades")
@@ -222,6 +229,17 @@ MIGRATIONS = [
     "ALTER TABLE automations ADD COLUMN IF NOT EXISTS telegram_alerts BOOLEAN DEFAULT TRUE",
     # Broker definitions
     "ALTER TABLE broker_definitions ADD COLUMN IF NOT EXISTS symbols JSON DEFAULT '[]'",
+    # Shadow trades — extra reporting fields
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS brokerage FLOAT DEFAULT 0",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS hedge_width INTEGER DEFAULT 2",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS max_profit FLOAT",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS max_loss FLOAT",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS last_monitored TIMESTAMP",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS exit_spot FLOAT",
+    # Fix lot_size defaults
+    "ALTER TABLE shadow_trades ALTER COLUMN lot_size SET DEFAULT 65",
+    "ALTER TABLE trades ALTER COLUMN lot_size SET DEFAULT 65",
+    "ALTER TABLE trades ALTER COLUMN brokerage SET DEFAULT 0",
 ]
 
 def run_migrations(engine):
