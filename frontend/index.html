@@ -209,6 +209,7 @@ details[open] summary{color:var(--text)}
 .strat-pick-code{font-size:11px;font-weight:700;font-family:var(--mono);margin-bottom:2px}
 .strat-pick-name{font-size:9px;color:var(--text2);line-height:1.3}
 .strat-pick.selected .strat-pick-name{color:var(--green)}
+.strat-pick.strat-locked{opacity:.5;cursor:not-allowed}
 
 /* ── Log entries ── */
 .log-entry{display:flex;gap:8px;padding:5px 0;font-size:11px;border-bottom:1px solid var(--border);font-family:var(--mono)}
@@ -227,6 +228,19 @@ details[open] summary{color:var(--text)}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ── More drawer (mobile) ── */
+#more-drawer{position:fixed;inset:0;z-index:200;display:none}
+#more-drawer.open{display:block}
+#more-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+#more-sheet{position:absolute;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:12px 0 calc(16px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .25s}
+#more-drawer.open #more-sheet{transform:translateY(0)}
+.more-item{display:flex;align-items:center;gap:14px;padding:13px 24px;font-size:14px;font-weight:500;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.more-item:hover,.more-item:active{background:var(--bg3)}
+.more-item svg{width:20px;height:20px;color:var(--text2);flex-shrink:0}
+.more-item.active-item svg,.more-item.active-item{color:var(--green)}
+.more-item .more-badge{margin-left:auto;font-size:10px;padding:2px 8px;border-radius:99px;background:var(--green-bg);color:var(--green);font-weight:600}
+.more-handle{width:36px;height:4px;background:var(--border2);border-radius:2px;margin:0 auto 12px}
 
 /* ── Toast ── */
 #toast{position:fixed;bottom:72px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--bg4);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px 18px;font-size:13px;opacity:0;transition:all .25s;pointer-events:none;z-index:999;white-space:nowrap;max-width:90vw}
@@ -430,6 +444,7 @@ details[open] summary{color:var(--text)}
       <div class="tb-logo">ALGO<span>DESK</span></div>
       <div class="tb-spacer"></div>
       <div class="tb-price waiting" id="tb-price">—</div>
+      <div id="tb-balance" style="display:none;align-items:center;background:var(--green-bg);border:1px solid rgba(0,230,118,.3);border-radius:var(--radius-sm);padding:4px 10px;font-size:12px;font-weight:600;color:var(--green);font-family:var(--mono)"></div>
       <div class="tb-btn" onclick="doLogout()" title="Sign out">
         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </div>
@@ -468,9 +483,43 @@ details[open] summary{color:var(--text)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
         <span>Results</span>
       </div>
-      <div class="bn-item" id="bn-profile" onclick="nav('profile')">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <span>Profile</span>
+      <div class="bn-item" id="bn-more" onclick="openMoreDrawer()">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+        <span>More</span>
+      </div>
+    </div>
+
+    <!-- More drawer -->
+    <div id="more-drawer" onclick="closeMoreDrawer()">
+      <div id="more-backdrop"></div>
+      <div id="more-sheet" onclick="event.stopPropagation()">
+        <div class="more-handle"></div>
+        <div class="more-item" onclick="navMore('brokers')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          My Brokers
+        </div>
+        <div class="more-item" onclick="navMore('trades')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Trades
+        </div>
+        <div class="more-item" onclick="navMore('help')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Help &amp; Guide
+        </div>
+        <div class="more-item" onclick="navMore('profile')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Profile &amp; Settings
+        </div>
+        <div class="more-item" id="more-admin-item" style="display:none" onclick="navMore('admin')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Admin Panel
+          <span class="more-badge">Admin</span>
+        </div>
+        <div style="border-top:1px solid var(--border);margin:8px 0"></div>
+        <div class="more-item" style="color:var(--red)" onclick="doLogout()">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Sign Out
+        </div>
       </div>
     </div>
   </div>
@@ -599,8 +648,11 @@ function showApp() {
   var initials = (u.name||'?').split(' ').map(function(w){return w[0];}).join('').substring(0,2).toUpperCase();
   document.getElementById('tb-av').textContent = initials;
   if (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN') {
-    var el = document.getElementById('sn-admin');
-    if (el) el.style.display = 'flex';
+    var snadmin = document.getElementById('sn-admin');
+    if (snadmin) snadmin.style.display = 'flex';
+    // Also show in More drawer
+    var moreAdmin = document.getElementById('more-admin-item');
+    if (moreAdmin) moreAdmin.style.display = 'flex';
   }
   nav('dashboard');
   startTicker();
@@ -609,8 +661,29 @@ function showApp() {
   } catch(e) {}
 }
 
+// ── More drawer ─────────────────────────────────────────────
+function openMoreDrawer() {
+  var d = document.getElementById('more-drawer');
+  if (!d) return;
+  d.classList.add('open');
+  // Show admin item if admin
+  var ai = document.getElementById('more-admin-item');
+  if (ai && session.user && (session.user.role==='SUPER_ADMIN'||session.user.role==='ADMIN')) {
+    ai.style.display = 'flex';
+  }
+}
+function closeMoreDrawer() {
+  var d = document.getElementById('more-drawer');
+  if (d) d.classList.remove('open');
+}
+function navMore(id) {
+  closeMoreDrawer();
+  setTimeout(function(){ nav(id); }, 150);
+}
+
 // ── NAV ─────────────────────────────────────────────────────
 function nav(id) {
+  closeMoreDrawer();
   var pages = ['dashboard','brokers','automate','live','trades','performance','help','profile','admin'];
   pages.forEach(function(p) {
     var pg = document.getElementById('pg-' + p);
@@ -620,6 +693,12 @@ function nav(id) {
     var bn = document.getElementById('bn-' + p);
     if (bn) bn.className = 'bn-item' + (p===id ? ' active' : '');
   });
+  // More button stays highlighted when on a "More" page
+  var morePages = ['brokers','trades','help','profile','admin'];
+  var bn_more = document.getElementById('bn-more');
+  if (bn_more) {
+    bn_more.className = 'bn-item' + (morePages.includes(id) ? ' active' : '');
+  }
   // Lazy render pages
   if (id==='dashboard') renderDashboard();
   if (id==='brokers') renderBrokers();
@@ -640,10 +719,62 @@ function toast(msg, type) {
   setTimeout(function(){ t.classList.remove('show'); }, 3000);
 }
 
+// ── Global account balance cache ────────────────────────────
+var _accountFunds = {available: 0, raw: {}, matched_key: null, loaded: false, error: null};
+
+async function fetchAccountFunds() {
+  try {
+    var d = await api('GET', '/api/market/funds');
+    if (d.ok && d.mode !== 'paper') {
+      _accountFunds = {
+        available:   d.available_balance || 0,
+        raw:         d.funds || {},
+        matched_key: d.matched_key || null,
+        loaded:      true,
+        error:       null,
+        message:     d.message || ''
+      };
+    } else if (d.mode === 'paper') {
+      _accountFunds = {available: 0, raw: {}, matched_key: null,
+                       loaded: true, error: null, message: 'Paper mode'};
+    } else {
+      _accountFunds = {available: 0, raw: {}, matched_key: null,
+                       loaded: true, error: d.message || 'No balance',
+                       message: d.message || ''};
+    }
+    // Refresh any visible balance displays
+    _updateBalanceDisplays();
+  } catch(e) {
+    _accountFunds.error = e.message;
+    _accountFunds.loaded = true;
+  }
+}
+
+function _updateBalanceDisplays() {
+  // Update topbar balance chip if present
+  var chip = document.getElementById('tb-balance');
+  if (chip) {
+    if (_accountFunds.available > 0) {
+      chip.textContent = '₹' + Number(_accountFunds.available).toLocaleString('en-IN', {maximumFractionDigits:0});
+      chip.style.display = 'flex';
+    } else {
+      chip.style.display = 'none';
+    }
+  }
+  // Refresh dashboard funds row if dashboard is active
+  var dashFunds = document.getElementById('dash-funds-row');
+  if (dashFunds && document.getElementById('pg-dashboard').classList.contains('active')) {
+    _loadDashFunds();
+  }
+}
+
 // ── TICKER ──────────────────────────────────────────────────
 function startTicker() {
   updateTicker();
   _tickerTimer = setInterval(updateTicker, 60000);
+  // Fetch balance immediately and then every 5 minutes
+  fetchAccountFunds();
+  setInterval(fetchAccountFunds, 300000);
 }
 
 async function updateTicker() {
@@ -687,11 +818,12 @@ function fmtDate(s) {
 // ── Dashboard symbol watchlist state ────────────────────────
 var _dashSymbol = 'NSE:NIFTY50-INDEX';
 var _dashSymbols = [
-  {value:'NSE:NIFTY50-INDEX',  label:'NIFTY',    short:'NF'},
-  {value:'NSE:NIFTYBANK-INDEX',label:'BANKNIFTY', short:'BNF'},
-  {value:'NSE:FINNIFTY-INDEX', label:'FINNIFTY',  short:'FNF'},
-  {value:'BSE:SENSEX-INDEX',   label:'SENSEX',    short:'SX'},
+  {value:'NSE:NIFTY50-INDEX',  label:'NIFTY',     short:'NF',  lot:65,  gap:50},
+  {value:'NSE:NIFTYBANK-INDEX',label:'BANKNIFTY',  short:'BNF', lot:30,  gap:100},
+  {value:'NSE:FINNIFTY-INDEX', label:'FINNIFTY',   short:'FNF', lot:60,  gap:50},
+  {value:'BSE:SENSEX-INDEX',   label:'SENSEX',     short:'SX',  lot:20,  gap:100},
 ];
+var _symSpotCache = {};
 
 function setDashSymbol(sym) {
   _dashSymbol = sym;
@@ -716,23 +848,53 @@ function setDashSymbol(sym) {
 async function _loadDashFunds() {
   var fr = document.getElementById('dash-funds-row');
   if (!fr) return;
+
+  // Use cached balance if available, otherwise fetch
+  var avail = _accountFunds.available || 0;
+
+  // Show loading state with what we know immediately
+  var reg = {
+    'NSE:NIFTY50-INDEX':   {label:'NIFTY 50',    lot:65},
+    'NSE:NIFTYBANK-INDEX': {label:'BANK NIFTY',  lot:30},
+    'NSE:FINNIFTY-INDEX':  {label:'FINNIFTY',    lot:60},
+    'BSE:SENSEX-INDEX':    {label:'SENSEX',      lot:20},
+  };
+  var info = reg[_dashSymbol] || {label:_dashSymbol, lot:'—'};
+
+  // If balance not loaded yet, fetch it now
+  if (!_accountFunds.loaded) {
+    fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body" style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px"><div class="spin"></div> Fetching account balance...</div></div>';
+    await fetchAccountFunds();
+    avail = _accountFunds.available || 0;
+  }
+
+  // If error or no broker
+  if (_accountFunds.error && !avail) {
+    fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<div style="font-size:12px;color:var(--text2)">&#128179; Account balance unavailable — '
+      + esc(_accountFunds.message || _accountFunds.error || 'Connect Fyers in My Brokers')+'</div>'
+      + '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="nav(\'brokers\')">Connect Broker</button>'
+      + '</div></div>';
+    return;
+  }
+
+  // Paper mode
+  if (_accountFunds.message === 'Paper mode') {
+    fr.innerHTML = '';
+    return;
+  }
+
   try {
     var d = await api('GET', '/api/capital/check?symbol='+encodeURIComponent(_dashSymbol)+'&lots=1&strategies=S1,S8');
-    if (!d || d.mode === 'paper' || !d.available) {
+    if (!d || d.mode === 'paper') {
       fr.innerHTML = '';
       return;
     }
-    var avail = d.available || 0;
+    // Use live balance from API if better than cached
+    if (d.available > 0) avail = d.available;
     var m = d.margin || {};
-    var canTrade = d.can_trade;
+    var canTrade = avail >= (m.net_required || 0);
     var maxLots = d.buffer_lots || 0;
-    var reg = {
-      'NSE:NIFTY50-INDEX':   {label:'NIFTY 50',    lot:65},
-      'NSE:NIFTYBANK-INDEX': {label:'BANK NIFTY',  lot:30},
-      'NSE:FINNIFTY-INDEX':  {label:'FINNIFTY',    lot:60},
-      'BSE:SENSEX-INDEX':    {label:'SENSEX',      lot:20},
-    };
-    var info = reg[_dashSymbol] || {label:_dashSymbol, lot:'—'};
 
     fr.innerHTML = '<div class="card" style="margin-bottom:12px">'
       + '<div class="card-header"><div class="card-title">Account Funds — '+esc(info.label)+'</div>'
@@ -767,6 +929,9 @@ async function renderDashboard() {
   try {
     var s = await api('GET', '/api/dashboard/summary');
     var spot = s.spot||0;
+    var atm  = s.atm||0;
+    // Seed per-symbol cache so tab switching shows last known data
+    if (spot > 0) { _symSpotCache[_dashSymbol] = {spot:spot, atm:atm}; }
     var spotFmt = spot>0 ? '\u20b9'+Number(spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1}) : '\u2014';
     var lp=s.today_live_pnl||0, pp=s.today_paper_pnl||0;
     var ml=s.month_live_pnl||0, mp=s.month_paper_pnl||0;
@@ -805,7 +970,7 @@ async function renderDashboard() {
       + '<div style="display:flex;gap:6px;flex-wrap:wrap">'+symTabs+'</div></div>'+
 
       '<div class="kpi-grid">'
-      + '<div class="kpi green"><div class="kpi-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral">'+spotFmt+'</div><div class="kpi-sub">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
+      + '<div class="kpi green"><div class="kpi-label" id="dash-spot-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral" id="dash-spot-val">'+spotFmt+'</div><div class="kpi-sub" id="dash-atm-val">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub">'+(s.running_automations||0)+' running</div></div>'
       + '<div class="kpi '+(lp>=0?'green':'red')+'"><div class="kpi-label">Today Live P&amp;L</div><div class="kpi-value '+pnlClass(lp)+'">'+pnlFmt(lp)+'</div><div class="kpi-sub">'+(s.today_live_trades||0)+' closed</div></div>'
       + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Paper P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+(s.today_paper_trades||0)+' simulated</div></div>'
@@ -1001,12 +1166,21 @@ async function renderAutomate() {
   var el = document.getElementById('pg-automate');
   el.innerHTML = '<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="page-title">Automate</div><div class="page-sub">Create and manage trading automations</div></div><button class="btn btn-primary btn-sm" onclick="showAutoForm()">+ New</button></div><div id="autos-list"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div><div id="auto-form" style="display:none"></div>';
   try {
-    var [autosRes, symRes] = await Promise.all([
+    // Always fetch brokers fresh — myBrokers may be empty if Brokers page not visited
+    var [autosRes, symRes, brokRes] = await Promise.all([
       api('GET', '/api/automations'),
-      api('GET', '/api/market/symbols').catch(function(){return {symbols:[]};})
+      api('GET', '/api/capital/symbols').catch(function(){ return api('GET', '/api/market/symbols').catch(function(){ return {symbols:[]}; }); }),
+      api('GET', '/api/brokers')
     ]);
+    // Update global broker list
+    myBrokers = brokRes.brokers || [];
     _symbols = symRes.symbols||[];
-    if (_symbols.length===0) _symbols = [{value:'NSE:NIFTY50-INDEX',label:'NIFTY 50'},{value:'NSE:NIFTYBANK-INDEX',label:'BANK NIFTY'},{value:'NSE:FINNIFTY-INDEX',label:'FINNIFTY'},{value:'BSE:SENSEX-INDEX',label:'SENSEX'}];
+    if (_symbols.length===0) _symbols = [
+      {value:'NSE:NIFTY50-INDEX', label:'NIFTY 50',    lot_size:65},
+      {value:'NSE:NIFTYBANK-INDEX',label:'BANK NIFTY',  lot_size:30},
+      {value:'NSE:FINNIFTY-INDEX', label:'FINNIFTY',    lot_size:60},
+      {value:'BSE:SENSEX-INDEX',   label:'SENSEX',      lot_size:20},
+    ];
     _renderAutoList(autosRes.automations||[]);
   } catch(e) {
     document.getElementById('autos-list').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -1390,11 +1564,52 @@ async function renderPerformance() {
       return;
     }
 
+    // ── Go-Live readiness panel ──────────────────────────────
+    var score = p.go_live_score || 0;
+    var ready = p.go_live_ready || false;
+    var scoreColor = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
+    var checks = p.ready_checks || {};
+    var checkRows = Object.entries(checks).map(function(kv) {
+      var key = kv[0], c = kv[1];
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">'
+        + '<span style="font-size:14px">'+(c.pass ? '✅' : '❌')+'</span>'
+        + '<div style="flex:1">'
+        + '<div style="font-size:12px;font-weight:500">'+esc(c.desc||key)+'</div>'
+        + '<div style="font-size:10px;color:var(--text2)">Required: '+esc(String(c.threshold||''))+'</div>'
+        + '</div>'
+        + '<div style="font-size:12px;font-weight:600;color:'+(c.pass?'var(--green)':'var(--red)')+'">'+esc(String(c.value||''))+'</div>'
+        + '</div>';
+    }).join('');
+
+    var goLiveHtml = '<div class="card" style="margin-bottom:12px;border-color:'+(ready?'rgba(0,230,118,.4)':'rgba(255,171,64,.3)')+'">'
+      + '<div class="card-header">'
+      + '<div class="card-title">'+(ready?'✅ Ready to Go Live':'⏳ Keep Paper Trading')+'</div>'
+      + '<div style="font-size:22px;font-weight:700;font-family:var(--display);color:'+scoreColor+'">'+score+'%</div>'
+      + '</div>'
+      + '<div class="card-body">'
+      + '<div style="background:var(--bg3);border-radius:var(--radius-sm);height:6px;margin-bottom:12px;overflow:hidden">'
+      + '<div style="height:100%;width:'+score+'%;background:'+scoreColor+';border-radius:var(--radius-sm);transition:width .5s"></div>'
+      + '</div>'
+      + (ready
+        ? '<div class="alert alert-success" style="margin-bottom:10px">Your paper results meet all 7 industry thresholds for options selling. You can proceed to live trading.</div>'
+        : '<div class="alert alert-warn" style="margin-bottom:10px">Continue paper trading until all checks pass. Each check represents a real risk for your capital.</div>')
+      + checkRows
+      + '</div></div>';
+
+    // ── Core KPIs ─────────────────────────────────────────────
     var kpiHtml = '<div class="kpi-grid">'
       + '<div class="kpi '+(+(p.total_pnl||0)>=0?'green':'red')+'"><div class="kpi-label">Total P&amp;L</div><div class="kpi-value '+pnlClass(p.total_pnl)+'">'+pnlFmt(p.total_pnl)+'</div><div class="kpi-sub">Last '+days+' days</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">Win Rate</div><div class="kpi-value neutral">'+(p.win_rate||0)+'%</div><div class="kpi-sub">'+(p.wins||0)+' / '+(p.total_trades||0)+'</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Total Trades</div><div class="kpi-value neutral">'+(p.total_trades||0)+'</div><div class="kpi-sub">'+(p.losses||0)+' losses</div></div>'
-      + '<div class="kpi '+(+(p.avg_pnl||0)>=0?'green':'red')+'"><div class="kpi-label">Avg P&amp;L</div><div class="kpi-value '+pnlClass(p.avg_pnl)+'">'+pnlFmt(p.avg_pnl)+'</div><div class="kpi-sub">Per trade</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Profit Factor</div><div class="kpi-value '+(+(p.profit_factor||0)>=1.5?'pos':'neg')+'">'+(p.profit_factor||0)+'</div><div class="kpi-sub">>1.5 is healthy</div></div>'
+      + '<div class="kpi '+(+(p.avg_pnl||0)>=0?'green':'red')+'"><div class="kpi-label">Expectancy</div><div class="kpi-value '+pnlClass(p.expectancy)+'">'+pnlFmt(p.expectancy)+'</div><div class="kpi-sub">Per trade expected</div></div>'
+      + '</div>';
+
+    // ── Risk KPIs ─────────────────────────────────────────────
+    var riskHtml = '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi '+(+(p.reward_risk||0)>=1?'green':'red')+'"><div class="kpi-label">Reward:Risk</div><div class="kpi-value neutral">'+(p.reward_risk||0)+'x</div><div class="kpi-sub">Avg win / avg loss</div></div>'
+      + '<div class="kpi red"><div class="kpi-label">Max Drawdown</div><div class="kpi-value neg">'+pnlFmt(-(p.max_drawdown||0))+'</div><div class="kpi-sub">Peak to trough</div></div>'
+      + '<div class="kpi '+(+(p.max_consec_loss||0)<=4?'':'red')+'"><div class="kpi-label">Max Consec. Loss</div><div class="kpi-value neutral">'+(p.max_consec_loss||0)+'</div><div class="kpi-sub">Consecutive losses</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Days Traded</div><div class="kpi-value neutral">'+(p.days_traded||0)+'</div><div class="kpi-sub">Trading sessions</div></div>'
       + '</div>';
 
     // Best/worst
@@ -1440,7 +1655,7 @@ async function renderPerformance() {
     if (!p.by_day || !p.by_day.length) dailyHtml += '<div style="padding:12px 0;color:var(--text2);font-size:12px">No data</div>';
     dailyHtml += '</div></div>';
 
-    el2.innerHTML = kpiHtml + extremesHtml + chartHtml + stratHtml + exitHtml + dailyHtml;
+    el2.innerHTML = goLiveHtml + kpiHtml + riskHtml + extremesHtml + chartHtml + stratHtml + exitHtml + dailyHtml;
 
     // Draw equity chart
     var curve = p.equity_curve||[];
@@ -1480,11 +1695,13 @@ async function renderProfile() {
   var el = document.getElementById('pg-profile');
   el.innerHTML = '<div class="page-header"><div class="page-title">Profile</div></div><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
   try {
-    var [meRes, tgRes] = await Promise.all([
+    var [meRes, tgRes, planRes] = await Promise.all([
       api('GET', '/api/me'),
-      api('GET', '/api/telegram/accounts')
+      api('GET', '/api/telegram/accounts'),
+      api('GET', '/api/plan').catch(function(){ return {}; })
     ]);
     var u = meRes;
+    var plan = planRes || {};
     var accounts = tgRes.accounts||[];
 
     var tgCards = accounts.map(function(a) {
@@ -1503,7 +1720,12 @@ async function renderProfile() {
       + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
       + '<div style="width:48px;height:48px;border-radius:50%;background:var(--green-bg);border:1px solid rgba(0,230,118,.3);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:var(--green)">'
       + ((u.name||'?').split(' ').map(function(w){return w[0];}).join('').substring(0,2).toUpperCase())
-      + '</div><div><div style="font-size:15px;font-weight:600">'+esc(u.name||'')+'</div><div style="font-size:12px;color:var(--text2)">'+esc(u.email||'')+'</div></div></div>'
+      + '</div><div><div style="font-size:15px;font-weight:600">'+esc(u.name||'')+'</div>'
+      + '<div style="font-size:12px;color:var(--text2)">'+esc(u.email||'')+'</div>'
+      + '<div style="margin-top:4px;display:flex;gap:6px;align-items:center">'
+      + '<span class="badge '+(plan.plan==='PRO'?'running':plan.plan==='STARTER'?'blue':'idle')+'">'+(plan.label||u.plan||'FREE')+'</span>'
+      + '<span style="font-size:11px;color:var(--text2)">'+esc(plan.description||'')+'</span>'
+      + '</div></div></div>'
       + '<div class="field-row">'
       + '<div class="field"><label>Display Name</label><input id="prof-name" value="'+esc(u.name||'')+'">'+'</div>'
       + '<div class="field"><label>Timezone</label><select id="prof-tz"><option value="Asia/Kolkata"'+(u.timezone==='Asia/Kolkata'?' selected':'')+'>Asia/Kolkata (IST)</option><option value="Europe/London"'+(u.timezone==='Europe/London'?' selected':'')+'>Europe/London (UK)</option></select></div>'
@@ -1594,7 +1816,7 @@ async function renderAdmin() {
   if (!session.user || (session.user.role !== 'SUPER_ADMIN' && session.user.role !== 'ADMIN')) {
     el.innerHTML = '<div class="alert alert-error">Access denied</div>'; return;
   }
-  el.innerHTML = '<div class="page-header"><div class="page-title">Admin</div></div><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
+  el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
   try {
     var [usersRes, statsRes] = await Promise.all([
       api('GET', '/api/admin/users'),
@@ -1602,34 +1824,119 @@ async function renderAdmin() {
     ]);
     var users = usersRes.users||[];
     var stats = statsRes||{};
-    el.innerHTML = '<div class="page-header"><div class="page-title">Admin</div></div>'
-      + '<div class="kpi-grid" style="margin-bottom:16px">'
+
+    var planColors = {FREE:'idle', STARTER:'blue', PRO:'running'};
+
+    var userRows = users.map(function(u) {
+      var planBadge = '<span class="badge '+(planColors[u.plan]||'idle')+'">'+(u.plan||'FREE')+'</span>';
+      var statusBadge = '<span class="badge '+(u.is_active?'running':'idle')+'">'+(u.is_active?'Active':'Suspended')+'</span>';
+      var roleBadge = u.role !== 'USER' ? '<span class="badge shadow">'+u.role+'</span>' : '';
+      return '<div class="card" style="margin-bottom:8px"><div class="card-body" style="padding:10px 14px">'
+        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">'
+        + '<div><div style="font-size:13px;font-weight:600">'+esc(u.name||'—')+'</div>'
+        + '<div style="font-size:11px;color:var(--text2);margin-top:2px">'+esc(u.email||'')+'</div>'
+        + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">'+statusBadge+' '+planBadge+' '+roleBadge+'</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex-shrink:0">'
+        // Plan upgrade/downgrade
+        + '<select onchange="setPlan(\''+u.id+'\',this.value)" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px">'
+        + '<option value="FREE"'+(u.plan==='FREE'?' selected':'')+'>Free</option>'
+        + '<option value="STARTER"'+(u.plan==='STARTER'?' selected':'')+'>Starter</option>'
+        + '<option value="PRO"'+(u.plan==='PRO'?' selected':'')+'>Pro</option>'
+        + '</select>'
+        + (u.is_active
+          ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="suspendUser(\''+u.id+'\')">Suspend</button>'
+          : '<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="activateUser(\''+u.id+'\')">Activate</button>')
+        + '</div></div></div></div>';
+    }).join('');
+
+    el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div>'
+      // Stats
+      + '<div class="kpi-grid" style="margin-bottom:12px">'
       + '<div class="kpi blue"><div class="kpi-label">Total Users</div><div class="kpi-value neutral">'+(stats.total_users||0)+'</div></div>'
       + '<div class="kpi green"><div class="kpi-label">Active</div><div class="kpi-value neutral">'+(stats.active_users||0)+'</div></div>'
       + '<div class="kpi amber"><div class="kpi-label">Trades Today</div><div class="kpi-value neutral">'+(stats.trades_today||0)+'</div></div>'
       + '<div class="kpi"><div class="kpi-label">Running</div><div class="kpi-value neutral">'+(stats.running_engines||0)+'</div></div>'
       + '</div>'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="section-title" style="margin-bottom:0">Users</div><button class="btn btn-primary btn-sm" onclick="createInvite()">Create Invite</button></div>'
+      // Plan summary
+      + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Plan Tiers</div></div>'
+      + '<div class="card-body" style="padding:0 16px">'
+      + '<div class="card-row"><span class="card-label">Free</span><span class="card-val" style="font-size:11px">Paper only · All 9 strategies simulated · 3 automations</span></div>'
+      + '<div class="card-row"><span class="card-label" style="color:var(--blue)">Starter</span><span class="card-val" style="font-size:11px">Live trading · S1 S2 S3 S8 · 2 automations</span></div>'
+      + '<div class="card-row"><span class="card-label" style="color:var(--green)">Pro</span><span class="card-val" style="font-size:11px">Live trading · All 9 strategies · 10 automations</span></div>'
+      + '</div></div>'
+      // Create user form
+      + '<div class="section-title">Add User Directly</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<div class="field-row">'
+      + '<div class="field"><label>Full Name</label><input id="au-name" placeholder="User name"></div>'
+      + '<div class="field"><label>Email</label><input id="au-email" type="email" placeholder="user@email.com"></div>'
+      + '</div>'
+      + '<div class="field-row">'
+      + '<div class="field"><label>Password</label><input id="au-pass" type="password" placeholder="Temporary password"></div>'
+      + '<div class="field"><label>Plan</label>'
+      + '<select id="au-plan"><option value="FREE">Free (paper only)</option><option value="STARTER">Starter (live S1-S8)</option><option value="PRO">Pro (all strategies)</option></select>'
+      + '</div></div>'
+      + '<div class="field"><label>Role</label>'
+      + '<select id="au-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select>'
+      + '</div>'
+      + '<div id="au-result"></div>'
+      + '<button class="btn btn-primary" onclick="createUser()">Create User</button>'
+      + '</div></div>'
+      // Invite link
+      + '<div class="section-title">Invite Link</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">Generate a signup link. User chooses their own password on registration.</p>'
+      + '<div class="field-row">'
+      + '<div class="field"><label>Plan for invite</label><select id="inv-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select></div>'
+      + '</div>'
       + '<div id="invite-res"></div>'
-      + '<div class="card"><div class="card-body" style="padding:0 16px">'
-      + users.map(function(u) {
-          return '<div class="card-row">'
-            + '<div><div style="font-size:13px;font-weight:500">'+esc(u.name||u.email||'')+'</div><div style="font-size:11px;color:var(--text2)">'+esc(u.email||'')+'</div></div>'
-            + '<div style="display:flex;gap:6px;align-items:center"><span class="badge '+(u.is_active?'running':'idle')+'">'+(u.role||'USER')+'</span>'
-            + (u.is_active ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="suspendUser(\''+u.id+'\')">Suspend</button>' : '<button class="btn btn-ghost btn-sm" onclick="activateUser(\''+u.id+'\')">Activate</button>')
-            + '</div></div>';
-        }).join('')
-      + '</div></div>';
+      + '<button class="btn btn-ghost" onclick="createInvite()">Generate Invite Link</button>'
+      + '</div></div>'
+      // User list
+      + '<div class="section-title">All Users</div>'
+      + userRows;
+
   } catch(e) {
     el.innerHTML += '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
 }
 
-async function createInvite() {
+async function createUser() {
+  var name  = document.getElementById('au-name').value.trim();
+  var email = document.getElementById('au-email').value.trim();
+  var pass  = document.getElementById('au-pass').value;
+  var plan  = document.getElementById('au-plan').value;
+  var role  = document.getElementById('au-role').value;
+  var res   = document.getElementById('au-result');
+  if (!name||!email||!pass) { toast('Fill all fields', 'error'); return; }
+  if (pass.length < 8) { toast('Password must be 8+ characters', 'error'); return; }
   try {
-    var d = await api('POST', '/api/admin/invite', {role:'USER', plan:'FREE'});
+    await api('POST', '/api/admin/users', {name:name, email:email, password:pass, plan:plan, role:role});
+    if (res) res.innerHTML = '<div class="alert alert-success" style="margin-bottom:8px">User '+esc(email)+' created on '+esc(plan)+' plan.</div>';
+    document.getElementById('au-name').value='';
+    document.getElementById('au-email').value='';
+    document.getElementById('au-pass').value='';
+    renderAdmin();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function setPlan(uid, plan) {
+  try {
+    await api('POST', '/api/admin/users/'+uid+'/set-plan', {plan:plan});
+    toast('Plan updated to '+plan, 'success');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function createInvite() {
+  var plan = (document.getElementById('inv-plan')||{}).value || 'FREE';
+  try {
+    var d = await api('POST', '/api/admin/invite', {role:'USER', plan:plan});
     var el = document.getElementById('invite-res');
-    if (el) el.innerHTML = '<div class="alert alert-success" style="margin-bottom:10px">Invite URL: <code style="word-break:break-all;font-size:11px">'+esc(d.invite_url||d.token||'')+'</code></div>';
+    if (el) el.innerHTML = '<div class="alert alert-success" style="margin-bottom:10px">'
+      + '<div style="font-size:11px;margin-bottom:4px;font-weight:600">'+esc(plan)+' invite link:</div>'
+      + '<code style="word-break:break-all;font-size:10px;display:block">'+esc(d.invite_url||d.token||'')+'</code>'
+      + '</div>';
   } catch(e) { toast(e.message, 'error'); }
 }
 
