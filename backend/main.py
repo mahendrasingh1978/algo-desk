@@ -1195,6 +1195,7 @@ class SaveAutoReq(BaseModel):
     shadow_mode: bool = True
     telegram_alerts: bool = True
     config: dict = {}
+    # max_trades_per_day stored in config: 1 (default), 2, 3, 0=unlimited
 
 @app.post("/api/automations")
 def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
@@ -1349,6 +1350,213 @@ def get_trades(user: User = Depends(get_current_user),
          "entry_time": t.entry_time.isoformat() if t.entry_time else None}
         for t in trades]}
 
+@app.get("/api/trades/unified")
+def get_unified_trades(
+    days: int = 30,
+    automation_id: str = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Unified trade history — live and paper combined, grouped by automation.
+    Returns full entry/exit detail including signal reason, SL tracking,
+    combined premium at every stage.
+    """
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # Fetch live trades
+    live_q = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date >= since
+    )
+    if automation_id:
+        live_q = live_q.filter(Trade.automation_id == automation_id)
+    live_trades = live_q.order_by(Trade.entry_time.desc()).all()
+
+    # Fetch paper trades from ShadowTrade
+    paper_q = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since
+    )
+    if automation_id:
+        paper_q = paper_q.filter(ShadowTrade.automation_id == automation_id)
+    paper_trades = paper_q.order_by(ShadowTrade.entry_time.desc()).all()
+
+    def _parse_reason(reason: str) -> dict:
+        """Parse exit reason into human-readable parts."""
+        if not reason: return {"type": "UNKNOWN", "detail": "", "friendly": "Unknown"}
+        r = reason.upper()
+        if "PROFIT_TARGET" in r:
+            return {"type": "PROFIT_TARGET", "detail": reason,
+                    "friendly": "✅ Profit target hit — premium decayed 50%",
+                    "outcome": "WIN"}
+        elif "TRAILING_SL" in r:
+            return {"type": "TRAILING_SL", "detail": reason,
+                    "friendly": "🔄 Trailing SL — premium bounced from low",
+                    "outcome": "MANAGED"}
+        elif "VWAP_SL" in r:
+            return {"type": "VWAP_SL", "detail": reason,
+                    "friendly": "📊 VWAP SL — premium rose above VWAP",
+                    "outcome": "LOSS"}
+        elif "MAX_LOSS" in r:
+            return {"type": "MAX_LOSS", "detail": reason,
+                    "friendly": "🛑 Max loss backstop — 30% limit hit",
+                    "outcome": "LOSS"}
+        elif "AUTO_EXIT" in r:
+            return {"type": "AUTO_EXIT", "detail": reason,
+                    "friendly": "⏰ Auto exit at scheduled time",
+                    "outcome": "TIMED"}
+        elif "MARKET_CLOSE" in r:
+            return {"type": "MARKET_CLOSE", "detail": reason,
+                    "friendly": "🔔 Market closed — position squared off",
+                    "outcome": "TIMED"}
+        elif "FORCE_EXIT" in r:
+            return {"type": "FORCE_EXIT", "detail": reason,
+                    "friendly": "⚡ Force exit triggered manually",
+                    "outcome": "MANUAL"}
+        else:
+            return {"type": "OTHER", "detail": reason,
+                    "friendly": reason, "outcome": "UNKNOWN"}
+
+    def _format_live(t) -> dict:
+        sig = t.signal_data or {}
+        reason_parsed = _parse_reason(t.exit_reason)
+        decay_pct = 0
+        if t.entry_combined and t.exit_combined:
+            decay_pct = round((1 - t.exit_combined / t.entry_combined) * 100, 1)
+        return {
+            "id":             t.id,
+            "type":           "live",
+            "automation_id":  t.automation_id,
+            "date":           t.trade_date,
+            "strategy":       t.strategy_code,
+            "symbol":         t.symbol,
+            "atm_strike":     t.atm_strike,
+            # Entry detail
+            "entry_combined": round(t.entry_combined or 0, 1),
+            "entry_time":     t.entry_time.strftime("%H:%M:%S") if t.entry_time else None,
+            "entry_reason":   sig.get("reason", ""),
+            "signal_name":    sig.get("name", ""),
+            "hedge_width":    sig.get("hedge_width", 2),
+            "sell_ce_strike": t.sell_ce_strike,
+            "sell_pe_strike": t.sell_pe_strike,
+            # Exit detail
+            "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
+            "exit_time":      t.exit_time.strftime("%H:%M:%S") if t.exit_time else None,
+            "exit_reason":    t.exit_reason,
+            "exit_parsed":    reason_parsed,
+            "decay_pct":      decay_pct,
+            # P&L
+            "lots":           t.lots,
+            "lot_size":       t.lot_size,
+            "qty":            (t.lots or 1) * (t.lot_size or 65),
+            "gross_pnl":      round(t.gross_pnl or 0, 0),
+            "brokerage":      round(t.brokerage or 0, 0),
+            "net_pnl":        round(t.net_pnl or 0, 0),
+            "is_open":        t.is_open,
+            # Orders placed
+            "orders":         t.orders or [],
+        }
+
+    def _format_paper(t) -> dict:
+        sig = t.signal_data or {}
+        sl  = t.sl_tracking or {}
+        reason_parsed = _parse_reason(t.exit_reason)
+        decay_pct = 0
+        if t.entry_combined and t.exit_combined:
+            decay_pct = round((1 - t.exit_combined / t.entry_combined) * 100, 1)
+        return {
+            "id":             t.id,
+            "type":           "paper",
+            "automation_id":  t.automation_id,
+            "date":           t.trade_date,
+            "strategy":       t.strategy_code,
+            "symbol":         t.symbol,
+            "atm_strike":     t.atm_strike,
+            # Entry detail
+            "entry_combined": round(t.entry_combined or 0, 1),
+            "entry_time":     t.entry_time.strftime("%H:%M:%S") if t.entry_time else None,
+            "entry_reason":   sig.get("reason", ""),
+            "signal_name":    sig.get("name", ""),
+            "hedge_width":    sig.get("hedge_width", t.hedge_width or 2),
+            "entry_spot":     round(t.entry_spot or 0, 0),
+            # Exit detail
+            "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
+            "exit_time":      t.exit_time.strftime("%H:%M:%S") if t.exit_time else None,
+            "exit_reason":    t.exit_reason,
+            "exit_parsed":    reason_parsed,
+            "decay_pct":      decay_pct,
+            # SL tracking at exit
+            "sl_at_exit":     {
+                "vwap":         sl.get("vwap", 0),
+                "ema75":        sl.get("ema75", 0),
+                "trailing_low": sl.get("trailing_low", 0),
+                "trailing_sl":  sl.get("trailing_sl", 0),
+                "candles":      sl.get("candles", 0),
+            },
+            # P&L
+            "lots":           t.lots,
+            "lot_size":       t.lot_size,
+            "qty":            (t.lots or 1) * (t.lot_size or 65),
+            "gross_pnl":      round(t.gross_pnl or 0, 0),
+            "brokerage":      round(t.brokerage or 0, 0),
+            "net_pnl":        round(t.net_pnl or 0, 0),
+            "max_profit":     round(t.max_profit or 0, 0),
+            "max_loss":       round(t.max_loss or 0, 0),
+            "is_open":        t.is_open,
+        }
+
+    # Combine and sort by entry_time desc
+    all_trades = ([_format_live(t) for t in live_trades] +
+                  [_format_paper(t) for t in paper_trades])
+    all_trades.sort(key=lambda x: (x["date"], x["entry_time"] or ""), reverse=True)
+
+    # Group by automation_id
+    by_auto = {}
+    autos = db.query(Automation).filter(
+        Automation.user_id == user.id).all()
+    auto_map = {a.id: a.name for a in autos}
+
+    for t in all_trades:
+        aid = t["automation_id"] or "manual"
+        if aid not in by_auto:
+            by_auto[aid] = {
+                "automation_id":   aid,
+                "automation_name": auto_map.get(aid, "Manual"),
+                "trades":          [],
+                "live_pnl":        0,
+                "paper_pnl":       0,
+                "total_trades":    0,
+                "wins":            0,
+            }
+        by_auto[aid]["trades"].append(t)
+        by_auto[aid]["total_trades"] += 1
+        if not t["is_open"]:
+            pnl = t["net_pnl"] or 0
+            if t["type"] == "live":
+                by_auto[aid]["live_pnl"] += pnl
+            else:
+                by_auto[aid]["paper_pnl"] += pnl
+            if pnl > 0:
+                by_auto[aid]["wins"] += 1
+
+    for aid in by_auto:
+        g = by_auto[aid]
+        closed = [t for t in g["trades"] if not t["is_open"]]
+        g["live_pnl"]  = round(g["live_pnl"], 0)
+        g["paper_pnl"] = round(g["paper_pnl"], 0)
+        g["win_rate"]  = round(g["wins"] / len(closed) * 100, 1) if closed else 0
+
+    return {
+        "trades":     all_trades,
+        "by_auto":    list(by_auto.values()),
+        "total":      len(all_trades),
+        "live_count": len(live_trades),
+        "paper_count": len(paper_trades),
+    }
+
+
 @app.get("/api/trades/summary")
 def trades_summary(user: User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
@@ -1426,6 +1634,51 @@ def admin_set_plan(user_id: str, req: dict,
     u.plan = new_plan
     db.commit()
     return {"ok": True, "plan": new_plan}
+
+@app.delete("/api/trades/reset")
+def reset_trade_history(
+    trade_type: str = "paper",   # "paper", "live", or "all"
+    days: int = None,              # None = all history
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    User-initiated reset of their own trade history.
+    trade_type: 'paper' = shadow_trades only
+                'live'  = trades table only (mode='live')
+                'all'   = both tables
+    days: if set, only delete trades older than N days
+    Never touches other users or other data.
+    """
+    from datetime import timedelta
+    deleted = {"paper": 0, "live": 0}
+
+    cutoff = None
+    if days:
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    if trade_type in ("paper", "all"):
+        q = db.query(ShadowTrade).filter(ShadowTrade.user_id == user.id)
+        if cutoff:
+            q = q.filter(ShadowTrade.trade_date <= cutoff)
+        deleted["paper"] = q.count()
+        q.delete(synchronize_session=False)
+
+    if trade_type in ("live", "all"):
+        q = db.query(Trade).filter(Trade.user_id == user.id)
+        if cutoff:
+            q = q.filter(Trade.trade_date <= cutoff)
+        deleted["live"] = q.count()
+        q.delete(synchronize_session=False)
+
+    db.commit()
+    return {
+        "ok":      True,
+        "deleted": deleted,
+        "message": (f"Deleted {deleted['paper']} paper trades and "
+                    f"{deleted['live']} live trades")
+    }
+
 
 @app.post("/api/admin/users/{user_id}/reset-password")
 def admin_reset_pw(user_id: str, admin: User = Depends(require_admin),
@@ -2024,12 +2277,16 @@ async def dashboard_summary(user: User = Depends(get_current_user),
         "today_paper_pnl":  round(today_paper_pnl, 0),
         "today_live_trades": len([t for t in today_trades if not t.is_open]),
         "today_paper_trades": len([t for t in today_shadow if not t.is_open]),
-        "open_positions":   len([t for t in today_trades if t.is_open]),
+        "open_live":        len([t for t in today_trades if t.is_open]),
+        "open_paper":       len([t for t in today_shadow if t.is_open]),
+        "open_positions":   len([t for t in today_trades if t.is_open]) + len([t for t in today_shadow if t.is_open]),
         "month_live_pnl":   round(month_live_pnl, 0),
         "month_paper_pnl":  round(month_paper_pnl, 0),
         "automations":      auto_status,
         "total_automations": len(autos),
         "running_automations": len([a for a in autos if a.status=="RUNNING"]),
+        "live_automations":  len([a for a in autos if a.mode=="live"]),
+        "paper_automations": len([a for a in autos if a.mode=="paper"]),
     }
 
 
@@ -2069,7 +2326,7 @@ async def capital_check(
 
     # Get registry lot size if not overridden
     reg = SYMBOL_REGISTRY.get(symbol, {})
-    actual_lot_size = lot_size or reg.get("lot_size", 75)
+    actual_lot_size = lot_size or reg.get("lot_size", 65)
 
     # Strategy-specific hedge widths
     auto_hedges = {"S9": 1, "S8": 3, "S6": 4}
@@ -2323,8 +2580,21 @@ async def _run_engine(user_id: str, auto: Automation,
     state.is_running = True
     symbol  = auto.symbol
     # Get lot size from config, falling back to symbol registry
+    # Always use registry lot size — it reflects SEBI-mandated changes
+    # Config lot_size is used only as a multiplier hint (lots count), not lot size
     _sym_reg_lot = SYMBOL_REGISTRY.get(auto.symbol, {}).get("lot_size", 65)
-    lot_sz  = int(state.config.get("lot_size") or _sym_reg_lot)
+    _cfg_lot = state.config.get("lot_size", 0)
+    # If config lot_size matches an old value (75 for NIFTY) use registry
+    if _cfg_lot == 75 and "NIFTY50" in auto.symbol:
+        lot_sz = 65   # NIFTY lot size changed Nov 2025
+    elif _cfg_lot == 35 and "NIFTYBANK" in auto.symbol:
+        lot_sz = 30   # BANKNIFTY lot size changed
+    elif _cfg_lot == 65 and "FINNIFTY" in auto.symbol:
+        lot_sz = 60   # FINNIFTY lot size changed
+    elif _cfg_lot == 140 and "MIDCPNIFTY" in auto.symbol:
+        lot_sz = 120  # MIDCPNIFTY lot size changed
+    else:
+        lot_sz = int(_cfg_lot or _sym_reg_lot)
     lots    = int(state.config.get("lots", 1))
 
     state.emit(f"Engine started — {auto.name} | Mode: {auto.mode.upper()}", "START")
@@ -2398,6 +2668,12 @@ async def _run_engine(user_id: str, auto: Automation,
                         f"ORB complete. ATM {atm.strike}: "
                         f"Low={atm.orb_low:.1f} High={atm.orb_high:.1f}", "OK")
 
+            # Reset daily gate at 9:15 each morning (new trading day)
+            if t == dtime(9, 15) and state.traded_today:
+                state.traded_today = False
+                state.trade_count  = 0
+                state.emit("Daily trade gate reset — new trading session", "INFO")
+
             # Auto-exit time
             exit_time = state.config.get("auto_exit_time", "14:00")
             eh, em = map(int, exit_time.split(":"))
@@ -2423,9 +2699,15 @@ async def _run_engine(user_id: str, auto: Automation,
                     finally:
                         db2.close()
 
-            # Check signals
+            # Check signals — respects max_trades_per_day config
             elif state.orb_complete:
-                signal = check_all_strategies(state, now)
+                max_trades = int(state.config.get("max_trades_per_day", 1))
+                at_limit = (max_trades > 0 and state.trade_count >= max_trades)
+                if at_limit:
+                    if state.sl_state.candles % 15 == 0:
+                        state.emit(
+                            f"Trade limit reached: {state.trade_count}/{max_trades} today — watching but will not re-enter", "INFO")
+                signal = check_all_strategies(state, now) if not at_limit else None
                 if signal:
                     # Auto-set hedge width per strategy if not overridden
                     auto_hedges = {"S9":1,"S8":3,"S6":4}
@@ -2590,6 +2872,25 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
         "entry_time": datetime.now().isoformat(),
         "orders": orders,
     }
+
+    # ── CRITICAL: Activate SL with real entry price ───────────────
+    # SLState.activate() takes raw percentages (30, not 0.30)
+    _sl_cfg = {
+        "max_loss_pct":      state.config.get("max_loss_pct",      30),
+        "trail_pct":         state.config.get("trail_pct",         20),
+        "min_profit_pct":    state.config.get("min_profit_pct",    15),
+        "vwap_buffer_pct":   state.config.get("vwap_buffer_pct",    2),
+        "ema_buffer_pct":    state.config.get("ema_buffer_pct",     1),
+        "profit_target_pct": state.config.get("profit_target_pct", 50),
+    }
+    state.sl_state.reset()
+    state.sl_state.activate(combined, _sl_cfg)
+    state.emit(
+        f"SL armed: entry=₹{combined:.1f} | "
+        f"max_loss=₹{combined*(1+_sl_cfg['max_loss_pct']/100):.1f} | "
+        f"target=₹{combined*(1-_sl_cfg['profit_target_pct']/100):.1f} | "
+        f"trail at ₹{combined*(1-_sl_cfg['min_profit_pct']/100):.1f}",
+        "OK")
 
     db = SessionLocal()
     try:
@@ -2764,7 +3065,9 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
         finally:
             db.close()
 
-    state.position = None
+    state.position    = None
+    state.traded_today = True  # One trade per day gate — prevents re-entry
+    state.trade_count += 1
 
 # ── Simulation endpoints ─────────────────────────────────────
 

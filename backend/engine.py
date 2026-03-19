@@ -143,17 +143,20 @@ class SLState:
 
 class EngineState:
     def __init__(self, config: dict):
-        self.config       = config
-        self.is_running   = False
+        self.config        = config
+        self.is_running    = False
         self.spot_history: List[float] = []
-        self.atm_strike:  Optional[int] = None
-        self.spot_locked: Optional[float] = None
-        self.strikes:     List[StrikeState] = []
+        self.atm_strike:   Optional[int] = None
+        self.spot_locked:  Optional[float] = None
+        self.strikes:      List[StrikeState] = []
         self.orb_complete: bool = False
-        self.position:    Optional[dict] = None
-        self.day_pnl:     float = 0.0
-        self.sl_state     = SLState()
-        self.log:         List[dict] = []
+        self.position:     Optional[dict] = None
+        self.day_pnl:      float = 0.0
+        self.sl_state      = SLState()
+        self.log:          List[dict] = []
+        # One trade per automation per day gate
+        self.traded_today: bool = False
+        self.trade_count:  int  = 0
 
     @property
     def atm(self) -> Optional[StrikeState]:
@@ -210,7 +213,8 @@ def _build_legs(strategy: str, sell_strike: StrikeState,
 
 def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
     """Priority order: S7 > S1 > S8 > S2 > S3 > S4 > S6 > S9 > S5"""
-    if not state.orb_complete or state.position:
+    # One trade per automation per day — industry standard for options selling
+    if not state.orb_complete or state.position or state.traded_today:
         return None
     enabled = set(state.config.get("strategies", ["S1", "S8"]))
     t = now.time()
