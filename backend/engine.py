@@ -175,6 +175,28 @@ class EngineState:
 def nearest_strike(spot: float, gap: int = 50) -> int:
     return round(spot / gap) * gap
 
+# Maximum spot drift (in strike widths) before suspending signals.
+# 3 strikes = 150 pts on NIFTY (50pt gap × 3).
+# Beyond this, the morning ATM is too far from current price to be relevant.
+DRIFT_MAX_STRIKES = 3
+
+def _current_atm(state: "EngineState") -> int:
+    """ATM based on the most recent spot price, not the morning lock."""
+    if state.spot_history:
+        return nearest_strike(state.spot_history[-1])
+    return state.atm_strike or 0
+
+def _drift_strikes(state: "EngineState") -> int:
+    """How many strikes has spot drifted from morning ATM?"""
+    if not state.atm_strike or not state.spot_history:
+        return 0
+    gap = state.config.get("strike_round", 50)
+    return abs(state.spot_history[-1] - state.atm_strike) / gap
+
+def _drift_ok(state: "EngineState") -> bool:
+    """True if spot is still within DRIFT_MAX_STRIKES of morning ATM."""
+    return _drift_strikes(state) <= DRIFT_MAX_STRIKES
+
 
 def _sb(state: EngineState) -> dict:
     return {s.offset: s for s in state.strikes}
@@ -212,12 +234,48 @@ def _build_legs(strategy: str, sell_strike: StrikeState,
 # ── Strategy checks ───────────────────────────────────────────────
 
 def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
-    """Priority order: S7 > S1 > S8 > S2 > S3 > S4 > S6 > S9 > S5"""
-    # One trade per automation per day — industry standard for options selling
+    """
+    Priority order: S7 > S1 > S8 > S2 > S3 > S4 > S6 > S9 > S5
+
+    Three pre-signal guards (all configurable per automation):
+
+    Guard 1 — One trade per day gate (always on)
+    Guard 2 — VIX filter: if India VIX >= vix_max (default 17), skip all
+              signals for the day. High VIX = elevated IV = options expensive
+              to buy back = adverse SL hits likely.
+    Guard 3 — Drift suspension: if spot has moved more than drift_max_pct
+              (default 1.5%) from the morning open, suspend signals.
+              Large intraday moves cause IV expansion that works against
+              all short-premium strategies.
+    """
+    # Gate: one trade per automation per day
     if not state.orb_complete or state.position or state.traded_today:
         return None
-    enabled = set(state.config.get("strategies", ["S1", "S8"]))
+
     t = now.time()
+
+    # Guard 2 — VIX filter
+    vix_open = state.config.get("vix_open", 0)       # Set from Fyers at open if available
+    vix_max  = state.config.get("vix_max",  17.0)    # User-configurable, default 17
+    if vix_open and vix_open >= vix_max:
+        state.emit(
+            f"All signals suspended — India VIX {vix_open:.1f} >= threshold {vix_max:.1f}. "            f"High IV day: risk of adverse premium expansion too high.", "INFO")
+        return None
+
+    # Guard 3 — Drift suspension
+    # If spot has moved more than drift_max_pct from morning open, suspend signals.
+    # This catches days like today (NIFTY -3.26%) where IV expansion makes
+    # all short-premium strategies unfavourable regardless of ORB levels.
+    drift_max_pct = state.config.get("drift_max_pct", 1.5)  # default 1.5%
+    if state.spot_locked and state.spot_history:
+        current_spot  = state.spot_history[-1]
+        drift_pct     = abs(current_spot - state.spot_locked) / state.spot_locked * 100
+        if drift_pct >= drift_max_pct:
+            state.emit(
+                f"All signals suspended — spot drifted {drift_pct:.2f}% from open "                f"{state.spot_locked:.0f} → {current_spot:.0f} "                f"(threshold {drift_max_pct}%). "                f"High-drift days favour IV expansion, not theta decay.", "INFO")
+            return None
+
+    enabled = set(state.config.get("strategies", ["S1", "S8"]))
     for code, fn in [
         ("S7",_s7),("S1",_s1),("S8",_s8),
         ("S2",_s2),("S3",_s3),("S4",_s4),
@@ -271,8 +329,18 @@ def _s7(state, t, now):
     Hedge: ±2 strikes (tight wings, lower margin, higher protection)
     Industry insight: Maximum theta decay at ATM. Iron Fly uses less
     margin than naked straddle. Best on low-IV consolidation days.
+
+    FIX: Drift guard — if spot has moved >3 strikes from morning ATM,
+    the monitored strikes are no longer relevant. Skip to avoid
+    entering a straddle at a stale strike far from current market.
     """
     if not (dtime(9,22) <= t <= dtime(10,0)): return None
+    # Drift guard — spot too far from morning ATM
+    if not _drift_ok(state):
+        drift = _drift_strikes(state)
+        state.emit(
+            f"S7 skipped — spot drifted {drift:.0f} strikes from morning ATM "            f"{state.atm_strike} (current ATM {_current_atm(state)})", "INFO")
+        return None
     broken = [s for s in state.strikes if s.orb_low > 0 and s.current < s.orb_low]
     if len(broken) < len(state.strikes) or len(broken) < 5: return None
     atm = state.atm
@@ -284,7 +352,7 @@ def _s7(state, t, now):
         "structure":"Iron Fly (ATM sell, ±2 hedge)",
         "strike": atm.strike,
         "combined": atm.current,
-        "reason": f"All {len(broken)} strikes below ORB low",
+        "reason": f"All {len(broken)} strikes below ORB low — drift {_drift_strikes(state):.0f} strikes",
         "margin_note": "~50% margin vs naked straddle",
         **legs,
     }
@@ -299,21 +367,51 @@ def _s1(state, t, now):
     Hedge: ±2 strikes for defined risk
     Industry insight: ORB breakdown is most reliable intraday signal.
     Theta decay strongest in first 2 hours. Iron Fly reduces margin.
+
+    FIX 1 — Current ATM sorting:
+    Pick the candidate closest to CURRENT spot ATM (not morning ATM).
+    Prevents firing at a stale strike far from where market actually is.
+    Example: morning ATM 23500, spot now 23100 → prefer candidate at
+    23100 over candidate at 23500 even though 23500 has offset=0.
+
+    FIX 2 — Drift guard:
+    If spot has moved >3 strikes from morning ATM, the entire monitored
+    strike set may be stale. Log and skip rather than entering a bad trade.
+    The 7-strike window is still searched — if the nearest monitored
+    strike to current ATM broke its ORB, we fire there. If not, skip.
     """
     if not (dtime(9,22) <= t <= dtime(14,0)): return None
+
+    # Find all candidate strikes with ORB breakdown
     candidates = [s for s in state.strikes
                   if s.orb_low > 0 and s.current < s.orb_low and not s.fired]
     if not candidates: return None
-    w = sorted(candidates, key=lambda s: abs(s.offset))[0]
+
+    # Sort by distance from CURRENT spot ATM (not morning ATM)
+    cur_atm = _current_atm(state)
+    w = sorted(candidates, key=lambda s: abs(s.strike - cur_atm))[0]
+
+    # Drift guard — if best candidate is >3 strikes from current ATM, skip
+    gap = state.config.get("strike_round", 50)
+    candidate_drift = abs(w.strike - cur_atm) / gap
+    morning_drift   = _drift_strikes(state)
+
+    if candidate_drift > DRIFT_MAX_STRIKES:
+        state.emit(
+            f"S1 skipped — best candidate {w.strike} is {candidate_drift:.0f} strikes "            f"from current ATM {cur_atm} (spot drifted {morning_drift:.0f} strikes from morning). "            f"ORB range no longer relevant at current price.", "INFO")
+        return None
+
     w.fired = True
     sb = _sb(state)
     legs = _build_legs("S1", w, sb, hedge_width=2)
+    drift_note = (f" | Drift: {morning_drift:.0f} strikes from morning ATM {state.atm_strike}"
+                  if morning_drift > 0 else "")
     return {
         "code":"S1", "name":"ORB Breakdown Iron Fly",
         "structure":"Iron Fly (sell at breakdown strike, ±2 hedge)",
         "strike": w.strike,
         "combined": w.current,
-        "reason": f"Strike {w.strike} broke ORB low {w.orb_low:.1f}",
+        "reason": f"Strike {w.strike} broke ORB low {w.orb_low:.1f} | Current ATM {cur_atm}{drift_note}",
         "margin_note": "Defined risk, ~50% margin vs naked",
         **legs,
     }

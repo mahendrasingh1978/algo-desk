@@ -477,6 +477,11 @@ def _save_tokens(user_id: str, conn: FyersConnection,
 
 # ── Startup ───────────────────────────────────────────────────
 
+
+def _to_ist(dt) -> str:
+    if dt is None: return None
+    return dt.strftime("%H:%M IST")
+
 @app.on_event("startup")
 async def startup():
     init_db()
@@ -1032,12 +1037,32 @@ async def market_live(symbol: str = "NSE:NIFTY50-INDEX",
 
 
 @app.get("/api/market/status")
-def market_status(user: User = Depends(get_current_user)):
-    """Quick status check for this user's market data."""
+def market_status(
+    symbol: str = "NSE:NIFTY50-INDEX",
+    user: User = Depends(get_current_user)
+):
+    """Quick status check for this user's market data.
+    Returns spot/ATM for the requested symbol if available in chain cache.
+    """
     cache = _user_cache(user.id)
+    spot  = cache.get("spot", 0)
+    atm   = cache.get("atm", 0)
+
+    # If a non-NIFTY symbol is requested, try to find its data in the chain
+    # The market data service currently only fetches NIFTY — for other symbols
+    # return the cached NIFTY data with a note (multi-symbol support is a future feature)
+    sym_short = {
+        "NSE:NIFTY50-INDEX":    "NIFTY",
+        "NSE:NIFTYBANK-INDEX":  "BANKNIFTY",
+        "NSE:FINNIFTY-INDEX":   "FINNIFTY",
+        "BSE:SENSEX-INDEX":     "SENSEX",
+    }.get(symbol, symbol)
+
     return {
-        "spot":    cache.get("spot", 0),
-        "atm":     cache.get("atm", 0),
+        "spot":    spot,
+        "atm":     atm,
+        "symbol":  symbol,
+        "sym_short": sym_short,
         "chain":   cache.get("chain", {}),
         "status":  cache.get("status", "waiting"),
         "message": cache.get("message", "Connect your broker to see live data."),
@@ -1239,11 +1264,31 @@ def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
     return {"ok": True, "automation": {"id": a.id, "name": a.name}}
 
 @app.delete("/api/automations/{auto_id}")
-def delete_automation(auto_id: str, user: User = Depends(get_current_user),
-                      db: Session = Depends(get_db)):
+async def delete_automation(auto_id: str, user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    # Stop engine if running — cannot delete a running automation safely
+    eng = active_engines.get(user.id)
+    if eng and eng.is_running:
+        auto = db.query(Automation).filter(
+            Automation.id == auto_id,
+            Automation.user_id == user.id).first()
+        if auto and auto.status == "RUNNING":
+            eng.is_running = False
+            auto.status = "IDLE"
+            db.commit()
+            await asyncio.sleep(1)  # Let engine loop notice
+
+    # Force-clear status on the automation regardless
+    auto = db.query(Automation).filter(
+        Automation.id == auto_id,
+        Automation.user_id == user.id).first()
+    if auto:
+        auto.status = "IDLE"
+        db.commit()
+
     db.query(Automation).filter(
         Automation.id == auto_id,
-        Automation.user_id == user.id).delete()
+        Automation.user_id == user.id).delete(synchronize_session=False)
     db.commit()
     return {"ok": True}
 
@@ -1435,7 +1480,7 @@ def get_unified_trades(
             "atm_strike":     t.atm_strike,
             # Entry detail
             "entry_combined": round(t.entry_combined or 0, 1),
-            "entry_time":     t.entry_time.strftime("%H:%M:%S") if t.entry_time else None,
+            "entry_time":     (_to_ist(t.entry_time)) if t.entry_time else None,
             "entry_reason":   sig.get("reason", ""),
             "signal_name":    sig.get("name", ""),
             "hedge_width":    sig.get("hedge_width", 2),
@@ -1443,7 +1488,7 @@ def get_unified_trades(
             "sell_pe_strike": t.sell_pe_strike,
             # Exit detail
             "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
-            "exit_time":      t.exit_time.strftime("%H:%M:%S") if t.exit_time else None,
+            "exit_time":      (_to_ist(t.exit_time)) if t.exit_time else None,
             "exit_reason":    t.exit_reason,
             "exit_parsed":    reason_parsed,
             "decay_pct":      decay_pct,
@@ -1476,14 +1521,14 @@ def get_unified_trades(
             "atm_strike":     t.atm_strike,
             # Entry detail
             "entry_combined": round(t.entry_combined or 0, 1),
-            "entry_time":     t.entry_time.strftime("%H:%M:%S") if t.entry_time else None,
+            "entry_time":     (_to_ist(t.entry_time)) if t.entry_time else None,
             "entry_reason":   sig.get("reason", ""),
             "signal_name":    sig.get("name", ""),
             "hedge_width":    sig.get("hedge_width", t.hedge_width or 2),
             "entry_spot":     round(t.entry_spot or 0, 0),
             # Exit detail
             "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
-            "exit_time":      t.exit_time.strftime("%H:%M:%S") if t.exit_time else None,
+            "exit_time":      (_to_ist(t.exit_time)) if t.exit_time else None,
             "exit_reason":    t.exit_reason,
             "exit_parsed":    reason_parsed,
             "decay_pct":      decay_pct,
@@ -1554,6 +1599,109 @@ def get_unified_trades(
         "total":      len(all_trades),
         "live_count": len(live_trades),
         "paper_count": len(paper_trades),
+    }
+
+
+@app.get("/api/live/performance")
+def live_performance(
+    days: int = 30,
+    automation_id: str = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Performance summary for live trades — mirrors shadow/performance structure."""
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    q = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.trade_date >= since,
+        Trade.is_open == False,
+        Trade.mode == "live"
+    )
+    if automation_id:
+        q = q.filter(Trade.automation_id == automation_id)
+    trades = q.all()
+
+    if not trades:
+        return {"total_trades":0,"total_pnl":0,"win_rate":0,"avg_pnl":0,
+                "wins":0,"losses":0,"profit_factor":0,"avg_win":0,"avg_loss":0,
+                "reward_risk":0,"expectancy":0,"max_drawdown":0,"max_consec_loss":0,
+                "days_traded":0,"by_strategy":{},"by_day":[],"equity_curve":[],
+                "exit_reasons":{},"best_day":None,"worst_day":None,"days":days}
+
+    total_pnl = sum(t.net_pnl or 0 for t in trades)
+    wins   = [t for t in trades if (t.net_pnl or 0) > 0]
+    losses = [t for t in trades if (t.net_pnl or 0) <= 0]
+    n = len(trades)
+
+    by_strat = {}
+    for t in trades:
+        s = t.strategy_code
+        if s not in by_strat:
+            by_strat[s] = {"trades":0,"wins":0,"total_pnl":0}
+        by_strat[s]["trades"] += 1
+        by_strat[s]["total_pnl"] += t.net_pnl or 0
+        if (t.net_pnl or 0) > 0: by_strat[s]["wins"] += 1
+    for s in by_strat:
+        nn = by_strat[s]["trades"]
+        by_strat[s]["win_rate"] = round(by_strat[s]["wins"]/nn*100,1) if nn else 0
+        by_strat[s]["avg_pnl"]  = round(by_strat[s]["total_pnl"]/nn,0) if nn else 0
+        by_strat[s]["total_pnl"]= round(by_strat[s]["total_pnl"],0)
+
+    day_map = {}
+    for t in trades:
+        d = t.trade_date
+        if d not in day_map: day_map[d] = {"date":d,"trades":0,"pnl":0,"wins":0,"live":0,"paper":0}
+        day_map[d]["trades"] += 1
+        day_map[d]["pnl"]    += t.net_pnl or 0
+        day_map[d]["live"]   += 1
+        if (t.net_pnl or 0) > 0: day_map[d]["wins"] += 1
+    by_day = sorted(day_map.values(), key=lambda x: x["date"])
+    for d in by_day: d["pnl"] = round(d["pnl"],0)
+
+    exit_reasons = {}
+    for t in trades:
+        r = (t.exit_reason or "UNKNOWN").split(" | ")[0].strip()
+        exit_reasons[r] = exit_reasons.get(r, 0) + 1
+
+    equity, equity_curve = 0, []
+    for d in by_day:
+        equity += d["pnl"]; equity_curve.append({"date":d["date"],"equity":round(equity,0)})
+
+    best_day  = max(by_day, key=lambda x: x["pnl"]) if by_day else None
+    worst_day = min(by_day, key=lambda x: x["pnl"]) if by_day else None
+
+    gross_profit = sum(t.net_pnl for t in wins)
+    gross_loss   = abs(sum(t.net_pnl for t in losses)) if losses else 0
+    profit_factor = round(gross_profit/gross_loss,2) if gross_loss else 99.0
+    avg_win  = round(gross_profit/len(wins),0) if wins else 0
+    avg_loss = round(-gross_loss/len(losses),0) if losses else 0
+    win_rate = len(wins)/n*100
+    reward_risk = round(avg_win/abs(avg_loss),2) if avg_loss else 99.0
+    expectancy = round((win_rate/100*avg_win) - ((1-win_rate/100)*abs(avg_loss)),0)
+
+    consec = max_consec = 0
+    for t in sorted(trades, key=lambda x: x.trade_date):
+        if (t.net_pnl or 0) <= 0: consec += 1; max_consec = max(max_consec, consec)
+        else: consec = 0
+
+    peak = max_dd = running = 0
+    for d in by_day:
+        running += d["pnl"]
+        peak = max(peak, running)
+        max_dd = max(max_dd, peak - running)
+
+    return {
+        "total_trades":n, "total_pnl":round(total_pnl,0),
+        "wins":len(wins), "losses":len(losses),
+        "win_rate":round(win_rate,1), "avg_pnl":round(total_pnl/n,0),
+        "profit_factor":profit_factor, "avg_win":avg_win, "avg_loss":avg_loss,
+        "reward_risk":reward_risk, "expectancy":expectancy,
+        "max_drawdown":round(max_dd,0), "max_consec_loss":max_consec,
+        "days_traded":len(by_day),
+        "by_strategy":by_strat, "by_day":by_day, "equity_curve":equity_curve,
+        "exit_reasons":exit_reasons, "best_day":best_day, "worst_day":worst_day,
+        "days":days,
     }
 
 
@@ -2344,21 +2492,32 @@ async def capital_check(
 
     if conn and conn.mode != "paper":
         try:
+            # Always refresh token before fetching funds — expired token returns empty
+            await conn.refresh_token()
             funds = await conn.get_funds()
-            # Fyers returns keys like "Available Balance", "Clear Balance" etc.
-            # Try common keys
-            for key in ["Available Balance", "Available cash", "Cash Available",
-                        "Clear Balance", "Net Balance", "Payin"]:
-                if key in funds and funds[key] > 0:
-                    available = funds[key]
-                    break
-            if not available:
-                available = max(funds.values()) if funds else 0
+            if not funds:
+                funds_error = "Fyers returned empty funds — token may be expired"
+            else:
+                # Try all known Fyers balance key names
+                for key in ["Available Balance", "Available cash", "Available Cash",
+                            "Cash Available", "Clear Balance", "Net Balance",
+                            "Payin", "Total Balance", "Equity Amount",
+                            "available_balance", "availableBalance"]:
+                    val = funds.get(key, 0)
+                    if val and float(val) > 0:
+                        available = float(val)
+                        break
+                # Fallback: largest positive numeric value
+                if not available:
+                    pos = {k: float(v) for k, v in funds.items()
+                           if isinstance(v, (int, float)) and float(v) > 0}
+                    if pos:
+                        available = max(pos.values())
         except Exception as e:
             funds_error = str(e)
     elif conn and conn.mode == "paper":
-        available = 999999  # Paper mode — unlimited
-        funds = {"Paper Mode": 999999}
+        available = 0   # Paper — show 0 so UI shows paper state correctly
+        funds = {}
 
     can_trade = available >= margin["net_required"]
     shortfall = max(0, margin["net_required"] - available)
@@ -2894,7 +3053,9 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
 
     db = SessionLocal()
     try:
-        ist_now = datetime.now()
+        import pytz as _pytz
+        _ist = _pytz.timezone("Asia/Kolkata")
+        ist_now = datetime.now(_ist).replace(tzinfo=None)  # Store as IST naive for consistency
         trade_mode = state.config.get("mode", "paper")
 
         if trade_mode == "paper":
@@ -3028,7 +3189,8 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
                 t = db.query(ShadowTrade).filter(ShadowTrade.id == trade_id).first()
                 if t and t.is_open:
                     t.exit_combined  = exit_combined
-                    t.exit_time      = datetime.now()
+                    import pytz as _ptz2; _i2 = _ptz2.timezone("Asia/Kolkata")
+                    t.exit_time      = datetime.now(_i2).replace(tzinfo=None)
                     t.exit_spot      = state.spot_history[-1] if state.spot_history else 0
                     t.exit_reason    = reason
                     t.gross_pnl      = round(pnl, 2)
