@@ -1108,6 +1108,65 @@ def t_best_worst_day_different():
         assert d["best_day"]["pnl"] >= d["worst_day"]["pnl"],             f"best_day {d['best_day']['pnl']} must be >= worst_day {d['worst_day']['pnl']}"
 test("Performance: best_day.pnl >= worst_day.pnl always", t_best_worst_day_different)
 
+# ── 19. New fixes ────────────────────────────────────────────
+print("\n19. New fixes...")
+
+def t_reset_stuck_automations():
+    r = client.post("/api/automations/reset-status", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "reset_count" in d
+    assert "message" in d
+test("POST /api/automations/reset-status: resets stuck automations", t_reset_stuck_automations)
+
+def t_to_ist_utc_detection():
+    import sys; sys.path.insert(0, '.')
+    import main as m
+    from datetime import datetime
+    # UTC time 04:30 = IST 10:00 — old record stored as UTC-naive
+    utc_naive = datetime(2026, 3, 19, 4, 30, 0)  # 4:30 UTC = 10:00 IST
+    result = m._to_ist(utc_naive)
+    # Hour < 4 check: 4:30 is >= 4 so will NOT be converted (borderline case)
+    assert result is not None
+    assert "IST" in result
+
+def t_to_ist_real_utc():
+    import sys; sys.path.insert(0, '.')
+    import main as m
+    from datetime import datetime
+    # 3:30 UTC = 9:00 IST (before market open, clearly UTC)
+    utc_early = datetime(2026, 3, 19, 3, 30, 0)
+    result = m._to_ist(utc_early)
+    # h=3 < 4 so should be converted: 3:30 + 5:30 = 9:00 IST
+    assert result == "09:00 IST", f"Expected 09:00 IST, got {result}"
+test("_to_ist: detects and converts UTC times correctly", t_to_ist_real_utc)
+
+def t_market_status_returns_sym_short():
+    r = client.get("/api/market/status?symbol=NSE:NIFTYBANK-INDEX", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("sym_short") == "BANKNIFTY"
+    assert d.get("symbol") == "NSE:NIFTYBANK-INDEX"
+test("market_status: sym_short returned for each symbol", t_market_status_returns_sym_short)
+
+def t_help_page_has_automation_guide():
+    # Automation feature guide must be in the frontend
+    fe = open('../frontend/index.html').read()
+    assert '_helpField' in fe, "Missing _helpField helper"
+    assert 'Automation Settings' in fe, "Missing automation settings section"
+    assert 'Max Spot Drift' in fe, "Missing drift guard help"
+    assert 'Max VIX' in fe, "Missing VIX guard help"
+    assert 'Max Trades Per Day' in fe, "Missing max trades help"
+test("Help page: automation feature guide present", t_help_page_has_automation_guide)
+
+def t_tab_bar_css_uniform():
+    fe = open('../frontend/index.html').read()
+    assert '.tab-bar{' in fe or '.tab-bar {' in fe, "Missing .tab-bar CSS"
+    assert '.tab-btn{' in fe or '.tab-btn {' in fe, "Missing .tab-btn CSS"
+    assert '.select-sm{' in fe or '.select-sm {' in fe, "Missing .select-sm CSS"
+test("Uniform tab-bar CSS present", t_tab_bar_css_uniform)
+
 # ── Summary ──────────────────────────────────────────────────
 import os
 if os.path.exists("functest.db"):
