@@ -479,7 +479,18 @@ def _save_tokens(user_id: str, conn: FyersConnection,
 
 
 def _to_ist(dt) -> str:
+    """Format datetime as HH:MM IST.
+    New records (post Jan 2026 fix) are stored as IST-naive.
+    Old records were stored as UTC-naive. Heuristic: if the hour is
+    < 3 it is almost certainly UTC (market opens 9:15 IST = 3:45 UTC).
+    In that case add 5h30m offset to convert to IST.
+    """
     if dt is None: return None
+    h = dt.hour
+    # If hour < 4 it is very likely UTC — add IST offset (5h30m)
+    if h < 4:
+        from datetime import timedelta
+        dt = dt + timedelta(hours=5, minutes=30)
     return dt.strftime("%H:%M IST")
 
 @app.on_event("startup")
@@ -510,11 +521,53 @@ async def _market_data_service():
             is_mkt = dtime(9,15) <= t <= dtime(15,30) and now.weekday() < 5
 
             if not is_mkt:
-                # Update all user caches to closed
-                for uid in list(user_market_cache.keys()):
-                    user_market_cache[uid]["status"]  = "closed"
-                    user_market_cache[uid]["message"] = "Market closed · Opens 9:15 AM IST Mon-Fri"
-                await asyncio.sleep(60)
+                # Market closed — but still refresh tokens for all connected users
+                # so that at 9:15 the token is valid and data flows immediately
+                db_tok = SessionLocal()
+                try:
+                    bcs_tok = db_tok.query(BrokerConnection).filter(
+                        BrokerConnection.broker_id == "fyers",
+                        BrokerConnection.is_connected == True
+                    ).all()
+                    for bc_tok in bcs_tok:
+                        user_tok = db_tok.query(User).filter(
+                            User.id == bc_tok.user_id,
+                            User.is_active == True).first()
+                        if not user_tok or not bc_tok.refresh_token_enc:
+                            continue
+                        try:
+                            fields_tok = {k.replace("_enc",""):decrypt(user_tok.id,v)
+                                      for k,v in (bc_tok.encrypted_fields or {}).items()}
+                            conn_tok = FyersConnection(
+                                user_id=user_tok.id,
+                                client_id=fields_tok.get("client_id",""),
+                                secret_key=fields_tok.get("secret_key",""),
+                                pin=fields_tok.get("pin",""),
+                                redirect_uri=fields_tok.get("redirect_uri",""),
+                                access_token_enc=bc_tok.access_token_enc,
+                                refresh_token_enc=bc_tok.refresh_token_enc,
+                            )
+                            refresh_result = await conn_tok.refresh_token()
+                            if refresh_result.get("ok"):
+                                if refresh_result.get("access_token_enc"):
+                                    bc_tok.access_token_enc = refresh_result["access_token_enc"]
+                                if refresh_result.get("refresh_token_enc"):
+                                    bc_tok.refresh_token_enc = refresh_result["refresh_token_enc"]
+                                bc_tok.last_token_refresh = datetime.utcnow()
+                                db_tok.commit()
+                            # Update cache status to closed
+                            user_market_cache[user_tok.id] = {
+                                **user_market_cache.get(user_tok.id, {}),
+                                "status":  "closed",
+                                "message": "Market closed · Token refreshed · Opens 9:15 AM IST",
+                            }
+                        except Exception as tok_e:
+                            log.debug(f"Token refresh (closed): {user_tok.email}: {tok_e}")
+                except Exception as e:
+                    log.error(f"Token refresh service (closed): {e}")
+                finally:
+                    db_tok.close()
+                await asyncio.sleep(300)  # refresh every 5 min when closed
                 continue
 
             db = SessionLocal()
@@ -1768,6 +1821,27 @@ def activate_user(user_id: str, admin: User = Depends(require_admin),
     u = db.query(User).filter(User.id == user_id).first()
     if u: u.is_active = True; db.commit()
     return {"ok": True}
+
+@app.post("/api/automations/reset-status")
+async def reset_all_automation_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Force-reset all RUNNING automations to IDLE for this user.
+    Safe to call any time — only affects DB status, not running engines.
+    Use when automations are stuck in RUNNING state after a server restart.
+    """
+    updated = db.query(Automation).filter(
+        Automation.user_id == user.id,
+        Automation.status == "RUNNING"
+    ).update({"status": "IDLE"}, synchronize_session=False)
+    db.commit()
+    # Also stop any active engine for this user
+    eng = active_engines.get(user.id)
+    if eng: eng.is_running = False
+    return {"ok": True, "reset_count": updated,
+            "message": f"{updated} automation(s) reset to IDLE"}
+
 
 @app.post("/api/admin/users/{user_id}/set-plan")
 def admin_set_plan(user_id: str, req: dict,
