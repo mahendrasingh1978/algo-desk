@@ -542,9 +542,14 @@ var _tickerTimer = null;
 
 // ── API ────────────────────────────────────────────────────
 async function api(method, path, body) {
-  var opts = {method:method, headers:{'Content-Type':'application/json'}};
+  var opts = {method:method, headers:{}};
+  // Only set Content-Type when there is a body — bodyless DELETE with
+  // Content-Type causes "string did not match expected pattern" in some browsers
+  if (body !== undefined && body !== null) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
   if (session.token) opts.headers['Authorization'] = 'Bearer ' + session.token;
-  if (body) opts.body = JSON.stringify(body);
   var r = await fetch(path, opts);
   var d = await r.json();
   if (!r.ok) {
@@ -878,49 +883,49 @@ async function _loadDashFunds() {
     return;
   }
 
-  // Paper mode
-  if (_accountFunds.message === 'Paper mode') {
-    fr.innerHTML = '';
-    return;
-  }
-
+  // Always show margin estimates — paper mode shows what funds would be needed
   try {
     var d = await api('GET', '/api/capital/check?symbol='+encodeURIComponent(_dashSymbol)+'&lots=1&strategies=S1,S8');
-    if (!d || d.mode === 'paper') {
-      fr.innerHTML = '';
-      return;
-    }
-    // Use live balance from API if better than cached
-    if (d.available > 0) avail = d.available;
     var m = d.margin || {};
-    var canTrade = avail >= (m.net_required || 0);
-    var maxLots = d.buffer_lots || 0;
+    var isPaper = (d.mode === 'paper') || (_accountFunds.message === 'Paper mode') || (avail === 0);
+    if (d.available > 0) avail = d.available;
+    var canTrade = !isPaper && avail > 0 && avail >= (m.net_required || 0);
+    var maxLots  = d.buffer_lots || 0;
 
     fr.innerHTML = '<div class="card" style="margin-bottom:12px">'
-      + '<div class="card-header"><div class="card-title">Account Funds — '+esc(info.label)+'</div>'
-      + '<button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">+ New Automation</button></div>'
-      + '<div class="card-body">'
+      + '<div class="card-header"><div class="card-title">Funds — '+esc(info.label)+'</div>'
+      + (isPaper ? '<span class="badge paper">Paper Mode</span>' : '<span class="badge '+(canTrade?'running':'idle')+'">'+(canTrade?'\u2705 Can Trade':'\u274c Low Funds')+'</span>')
+      + '</div><div class="card-body">'
       + '<div class="kpi-grid" style="margin-bottom:0">'
-      + '<div class="kpi green"><div class="kpi-label">Available Balance</div>'
-      + '<div class="kpi-value pos" style="font-size:20px">₹'+Number(avail).toLocaleString('en-IN')+'</div>'
-      + '<div class="kpi-sub">Fyers account</div></div>'
-      + '<div class="kpi '+(canTrade?'blue':'red')+'"><div class="kpi-label">1 Lot Margin</div>'
-      + '<div class="kpi-value neutral" style="font-size:20px">₹'+Number(m.net_required||0).toLocaleString('en-IN')+'</div>'
-      + '<div class="kpi-sub">'+esc(info.label)+' Iron Fly ±2</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Lot Size</div>'
+      + '<div class="kpi"><div class="kpi-label">Account Balance</div>'
+      + '<div class="kpi-value" style="font-size:18px;color:'+(isPaper?'var(--amber)':'var(--green)')+'">'
+      + (isPaper ? '\u2014' : '\u20b9'+Number(avail).toLocaleString('en-IN'))
+      + '</div><div class="kpi-sub">'+(isPaper?'No broker (paper mode)':'Fyers account')+'</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">1 Lot Margin Est.</div>'
+      + '<div class="kpi-value neutral" style="font-size:18px">\u20b9'+Number(m.net_required||0).toLocaleString('en-IN')+'</div>'
+      + '<div class="kpi-sub">'+esc(info.label)+' Iron Fly \u00b12</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Lot Size (2026)</div>'
       + '<div class="kpi-value neutral">'+info.lot+'</div>'
       + '<div class="kpi-sub">units per contract</div></div>'
-      + '<div class="kpi '+(canTrade?'green':'red')+'"><div class="kpi-label">Max Lots Possible</div>'
-      + '<div class="kpi-value '+(canTrade?'pos':'neg')+'">'+(canTrade ? maxLots+1 : 0)+'</div>'
-      + '<div class="kpi-sub">'+(canTrade?'with current balance':'insufficient funds')+'</div></div>'
+      + '<div class="kpi"><div class="kpi-label">'+(isPaper?'Paper Capacity':'Max Lots')+'</div>'
+      + '<div class="kpi-value" style="font-size:14px;color:'+(isPaper?'var(--amber)':canTrade?'var(--green)':'var(--red)')+'">'
+      + (isPaper ? 'Unlimited' : canTrade ? (maxLots+1)+' lots' : 'Low funds')
+      + '</div><div class="kpi-sub">'+(isPaper?'No margin needed':'based on balance')+'</div></div>'
       + '</div>'
       + (m.net_premium ? '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'
-        + '<span>Est. premium collected: <strong style="color:var(--green)">₹'+Number(m.net_premium).toLocaleString('en-IN')+'</strong></span>'
-        + '<span>Max profit (50% target): <strong style="color:var(--green)">₹'+Number(m.profit_at_50pct||0).toLocaleString('en-IN')+'</strong></span>'
-        + '<span>Max loss: <strong style="color:var(--red)">₹'+Number(m.max_loss||0).toLocaleString('en-IN')+'</strong></span>'
+        + '<span>Est. premium: <strong style="color:var(--green)">\u20b9'+Number(m.net_premium).toLocaleString('en-IN')+'</strong></span>'
+        + '<span>50% profit target: <strong style="color:var(--green)">\u20b9'+Number(m.profit_at_50pct||0).toLocaleString('en-IN')+'</strong></span>'
+        + '<span>Max loss (defined): <strong style="color:var(--red)">\u20b9'+Number(m.max_loss||0).toLocaleString('en-IN')+'</strong></span>'
         + '</div>' : '')
+      + (isPaper ? '<div style="font-size:11px;color:var(--amber);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Paper mode \u2014 no real funds needed. <span style="color:var(--blue);cursor:pointer" onclick="nav(\'brokers\')">Connect Fyers</span> to see real balance and capacity.</div>' : '')
       + '</div></div>';
-  } catch(e) {}
+  } catch(e) {
+    fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<div style="font-size:12px;color:var(--text2)">&#128179; <span style="color:var(--blue);cursor:pointer" onclick="nav(\'brokers\')">Connect Fyers</span> to see your funds and margin estimates.</div>'
+      + '</div></div>';
+  }
+
+
 }
 
 async function renderDashboard() {
@@ -940,22 +945,31 @@ async function renderDashboard() {
     // Auto cards
     var autoCards = '';
     (s.automations||[]).forEach(function(a) {
-      var pnl = a.mode==='live' ? (a.today_pnl||0) : (a.today_shadow_pnl||0);
-      var trades = a.mode==='live' ? (a.today_trades||0) : (a.today_shadow_trades||0);
-      var modeBadge = a.mode==='live' ? '<span class="badge live">Live</span>' : '<span class="badge paper">Paper</span>';
-      var statusDot = a.status==='RUNNING' ? '<div class="dot green pulse"></div>' : '<div class="dot gray"></div>';
-      var stratBadges = (a.strategies||[]).slice(0,4).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join(' ');
-      // P&L colour and paper note
-      var pnlNote = a.mode!=='live' ? '<span style="font-size:9px;color:var(--amber)">(paper)</span>' : '';
+      var livePnl    = a.today_pnl||0;
+      var paperPnl   = a.today_shadow_pnl||0;
+      var liveTrades = a.today_trades||0;
+      var paperTrades= a.today_shadow_trades||0;
+      var isLive     = a.mode==='live';
+      var modeBadge  = isLive ? '<span class="badge live">Live</span>' : '<span class="badge paper">Paper</span>';
+      var statusDot  = a.status==='RUNNING' ? '<div class="dot green pulse"></div>' : '<div class="dot gray"></div>';
+      var stratBadges= (a.strategies||[]).slice(0,3).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join(' ');
+      // Show live P&L if live mode, paper P&L if paper mode
+      var displayPnl    = isLive ? livePnl : paperPnl;
+      var displayTrades = isLive ? liveTrades : paperTrades;
+      // If live mode also has shadow running, show both
+      var bothRow = (isLive && a.shadow_mode && paperTrades > 0)
+        ? '<div style="font-size:10px;color:var(--amber);margin-top:2px">Paper sim: '+pnlFmt(paperPnl)+' ('+paperTrades+' trades)</div>'
+        : '';
       autoCards += '<div class="trade-item" style="cursor:pointer" onclick="nav(\'live\')">'
         + '<div class="trade-icon" style="background:var(--bg3)">'+statusDot+'</div>'
         + '<div class="trade-info">'
         + '<div class="trade-name">'+esc(a.name)+'</div>'
         + '<div class="trade-meta" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+' '+stratBadges+'</div>'
+        + bothRow
         + '</div>'
         + '<div class="trade-pnl">'
-        + '<div class="trade-pnl-val '+pnlClass(pnl)+'">'+pnlFmt(pnl)+' '+pnlNote+'</div>'
-        + '<div class="trade-pnl-sub">'+trades+' trade'+(trades!==1?'s':'')+'</div>'
+        + '<div class="trade-pnl-val '+pnlClass(displayPnl)+'">'+pnlFmt(displayPnl)+'</div>'
+        + '<div class="trade-pnl-sub">'+displayTrades+' trade'+(displayTrades!==1?'s':'')+(isLive?' live':' paper')+'</div>'
         + '</div></div>';
     });
 
@@ -979,13 +993,42 @@ async function renderDashboard() {
       + '<div class="kpi-grid">'
       + '<div class="kpi '+(ml>=0?'green':'red')+'"><div class="kpi-label">Month Live P&amp;L</div><div class="kpi-value '+pnlClass(ml)+'">'+pnlFmt(ml)+'</div><div class="kpi-sub">Last 30 days</div></div>'
       + '<div class="kpi '+(mp>=0?'amber':'red')+'"><div class="kpi-label">Month Paper P&amp;L</div><div class="kpi-value '+pnlClass(mp)+'">'+pnlFmt(mp)+'</div><div class="kpi-sub">Last 30 days</div></div>'
-      + '<div class="kpi '+(s.open_positions>0?'blue':'')+'"><div class="kpi-label">Open Positions</div><div class="kpi-value neutral">'+(s.open_positions||0)+'</div><div class="kpi-sub">'+(s.open_positions>0?'In market now':'No open trades')+'</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Total Trades</div><div class="kpi-value neutral">'+((s.today_live_trades||0)+(s.today_paper_trades||0))+'</div><div class="kpi-sub">Today</div></div>'
+      + '<div class="kpi '+(s.open_positions>0?'blue':'')+'"><div class="kpi-label">Open Positions</div><div class="kpi-value neutral">'+(s.open_positions||0)+'</div><div class="kpi-sub">'+(s.open_live>0?'<span style="color:var(--red)">'+s.open_live+' live</span>':'')+(s.open_live>0&&s.open_paper>0?' &bull; ':'')+(s.open_paper>0?'<span style="color:var(--amber)">'+s.open_paper+' paper</span>':'')+(s.open_positions===0?'No open trades':'')+'</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Today Trades</div><div class="kpi-value neutral">'+((s.today_live_trades||0)+(s.today_paper_trades||0))+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.today_live_trades||0)+' live</span> &bull; <span style="color:var(--amber)">'+(s.today_paper_trades||0)+' paper</span></div></div>'
       + '</div>'
       + '<div id="dash-funds-row"></div>'
       + '<div id="dash-quick-actions" style="margin-bottom:12px"></div>'
 
       + (s.automations && s.automations.length > 0 ? '<div class="card"><div class="card-header"><div class="card-title">Automations Today</div><button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">Manage</button></div><div class="card-body" style="padding:0 16px">'+ autoCards +'</div></div>' : '<div class="card"><div class="card-body"><div class="empty"><div class="empty-icon">&#9881;</div><div class="empty-title">No automations yet</div><div class="empty-sub">Create an automation to start trading</div><button class="btn btn-primary" style="margin-top:12px" onclick="nav(\'automate\')">Create Automation</button></div></div></div>');
+
+    // Fill quick-action cards
+    var qa = document.getElementById('dash-quick-actions');
+    if (qa) {
+      var hasRunning = (s.running_automations||0) > 0;
+      var todayCount = (s.today_live_trades||0) + (s.today_paper_trades||0);
+      qa.innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
+        + '<div class="card" style="cursor:pointer;border-color:'+(hasRunning?'rgba(0,230,118,.3)':'var(--border)')+'" onclick="nav(\'live\')"><div class="card-body" style="padding:12px">'
+        + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Engine Status</div>'
+        + '<div style="font-size:13px;font-weight:600;color:'+(hasRunning?'var(--green)':'var(--text2)')+'">'+(hasRunning?'&#9679; Running':'&#9675; Idle')+'</div>'
+        + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+(hasRunning?(s.running_automations)+' active &bull; Tap to monitor':'Tap to monitor')+'</div>'
+        + '</div></div>'
+        + '<div class="card" style="cursor:pointer" onclick="nav(\'automate\')"><div class="card-body" style="padding:12px">'
+        + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Automations</div>'
+        + '<div style="font-size:13px;font-weight:600">'+(s.total_automations?s.total_automations+' set up':'None yet')+'</div>'
+        + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+(s.total_automations?'Tap to manage':'Tap to create')+'</div>'
+        + '</div></div>'
+        + '<div class="card" style="cursor:pointer" onclick="nav(\'trades\')"><div class="card-body" style="padding:12px">'
+        + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Today Trades</div>'
+        + '<div style="font-size:13px;font-weight:600;color:'+(todayCount>0?'var(--text)':'var(--text2)')+'">'+(todayCount||0)+' total</div>'
+        + '<div style="font-size:10px;color:var(--text2);margin-top:2px)">'+(s.today_live_trades||0)+' live &bull; '+(s.today_paper_trades||0)+' paper</div>'
+        + '</div></div>'
+        + '<div class="card" style="cursor:pointer" onclick="nav(\'performance\')"><div class="card-body" style="padding:12px">'
+        + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Paper Results</div>'
+        + '<div style="font-size:13px;font-weight:600;color:'+(+(s.today_paper_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(s.today_paper_pnl||0)+'</div>'
+        + '<div style="font-size:10px;color:var(--text2);margin-top:2px">Today &bull; Tap for full report</div>'
+        + '</div></div>'
+        + '</div>';
+    }
 
     // Fetch account funds (non-blocking)
     api('GET', '/api/capital/check?symbol=NSE:NIFTY50-INDEX&lots=1').then(function(funds) {
@@ -1260,6 +1303,9 @@ function showAutoForm() {
     + '<div class="field"><label>Max Loss %</label><select id="af-maxloss"><option value="20">20% tight</option><option value="25">25% conservative</option><option value="30" selected>30% standard</option><option value="40">40% relaxed</option></select></div>'
     + '</div>'
     + '<div class="field-row">'
+    + '<div class="field"><label>Max Trades Per Day</label><select id="af-maxtrades"><option value="1" selected>1 (recommended)</option><option value="2">2</option><option value="3">3</option><option value="0">Unlimited</option></select><div class="field-hint">Industry standard: 1 trade per automation per day</div></div>'
+    + '</div>'
+    + '<div class="field-row">'
     + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30% quick exit</option><option value="40">40%</option><option value="50" selected>50% standard</option><option value="60">60% hold longer</option></select></div>'
     + '</div>'
     + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px">'
@@ -1487,52 +1533,223 @@ async function forceExit() {
 }
 
 // ── TRADES ───────────────────────────────────────────────────
+var _tradesTab = 'all';
+var _tradesDays = 30;
+var _expandedTrades = new Set();
+
 async function renderTrades() {
   var el = document.getElementById('pg-trades');
-  el.innerHTML = '<div class="page-header"><div class="page-title">Trade History</div></div>'
-    + '<div style="display:flex;gap:8px;margin-bottom:12px">'
-    + '<button class="btn btn-ghost btn-sm" id="tt-live" onclick="loadTradesTab(\'live\')" style="border-color:var(--green);color:var(--green)">Live Trades</button>'
-    + '<button class="btn btn-ghost btn-sm" id="tt-paper" onclick="loadTradesTab(\'paper\')">Paper Trades</button>'
+  el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+    + '<div><div class="page-title">Trade History</div><div class="page-sub">All trades grouped by automation</div></div>'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    + '<select id="td-days" onchange="_tradesDays=parseInt(this.value);loadUnifiedTrades()" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 8px;font-size:12px">'
+    + '<option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>'
+    + '</select>'
+    + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="showResetModal()">&#128465; Reset Data</button>'
+    + '</div></div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'
+    + '<button class="btn btn-ghost btn-sm" id="tt-all" onclick="loadTradesTab(\'all\')" style="border-color:var(--green);color:var(--green)">All</button>'
+    + '<button class="btn btn-ghost btn-sm" id="tt-live" onclick="loadTradesTab(\'live\')">Live Only</button>'
+    + '<button class="btn btn-ghost btn-sm" id="tt-paper" onclick="loadTradesTab(\'paper\')">Paper Only</button>'
     + '</div>'
-    + '<div id="trades-content"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div>';
-  loadTradesTab('live');
+    + '<div id="trades-content"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div>'
+    + '<div id="reset-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;display:none;align-items:center;justify-content:center;padding:20px">'
+    + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;max-width:380px;width:100%">'
+    + '<div style="font-size:16px;font-weight:600;margin-bottom:8px">Reset Trade History</div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-bottom:16px">This permanently deletes trade records. No orders or account data are affected.</div>'
+    + '<div class="field"><label>What to reset</label>'
+    + '<select id="reset-type" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:8px 10px">'
+    + '<option value="paper">Paper trades only</option>'
+    + '<option value="live">Live trades only</option>'
+    + '<option value="all">All trades (paper + live)</option>'
+    + '</select></div>'
+    + '<div id="reset-err" class="alert alert-error" style="display:none;margin-bottom:10px"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + '<button class="btn btn-danger" style="flex:1" onclick="confirmReset()">Delete Records</button>'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="document.getElementById(\'reset-modal\').style.display=\'none\'">Cancel</button>'
+    + '</div></div></div>';
+  loadUnifiedTrades();
 }
 
-async function loadTradesTab(tab) {
-  document.getElementById('tt-live').style.borderColor = tab==='live' ? 'var(--green)' : 'var(--border)';
-  document.getElementById('tt-live').style.color = tab==='live' ? 'var(--green)' : 'var(--text2)';
-  document.getElementById('tt-paper').style.borderColor = tab==='paper' ? 'var(--amber)' : 'var(--border)';
-  document.getElementById('tt-paper').style.color = tab==='paper' ? 'var(--amber)' : 'var(--text2)';
+function loadTradesTab(tab) {
+  _tradesTab = tab;
+  var tabs = ['all','live','paper'];
+  var colors = {all:'var(--green)', live:'var(--green)', paper:'var(--amber)'};
+  tabs.forEach(function(t) {
+    var btn = document.getElementById('tt-'+t);
+    if (!btn) return;
+    btn.style.borderColor = t===tab ? (colors[t]||'var(--green)') : 'var(--border)';
+    btn.style.color       = t===tab ? (colors[t]||'var(--green)') : 'var(--text2)';
+  });
+  loadUnifiedTrades();
+}
+
+function showResetModal() {
+  var m = document.getElementById('reset-modal');
+  if (m) { m.style.display='flex'; document.getElementById('reset-err').style.display='none'; }
+}
+
+async function confirmReset() {
+  var type = document.getElementById('reset-type').value;
+  var errEl = document.getElementById('reset-err');
+  if (!confirm('Permanently delete '+type+' trade records? This cannot be undone.')) return;
+  try {
+    var r = await api('DELETE', '/api/trades/reset?trade_type='+type);
+    toast(r.message || 'Reset complete', 'success');
+    document.getElementById('reset-modal').style.display='none';
+    loadUnifiedTrades();
+  } catch(e) {
+    if (errEl) { errEl.style.display='flex'; errEl.textContent=e.message; }
+  }
+}
+
+async function loadUnifiedTrades() {
   var el = document.getElementById('trades-content');
+  if (!el) return;
   el.innerHTML = '<div class="empty"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>';
   try {
-    var endpoint = tab==='live' ? '/api/trades' : '/api/shadow/trades?days=30';
-    var d = await api('GET', endpoint);
+    var d = await api('GET', '/api/trades/unified?days='+_tradesDays);
     var trades = d.trades||[];
-    if (!trades.length) {
-      el.innerHTML = '<div class="empty"><div class="empty-icon">'+(tab==='live'?'&#128200;':'&#128203;')+'</div><div class="empty-title">No '+tab+' trades yet</div><div class="empty-sub">'+(tab==='paper'?'Run automations in shadow mode to see paper results':'Start an automation in live mode')+'</div></div>';
+    var byAuto = d.by_auto||[];
+
+    // Filter by tab
+    var filtered = trades.filter(function(t) {
+      if (_tradesTab==='live')  return t.type==='live';
+      if (_tradesTab==='paper') return t.type==='paper';
+      return true;
+    });
+
+    if (!filtered.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">&#128200;</div><div class="empty-title">No trades in last '+_tradesDays+' days</div><div class="empty-sub">Start an automation to see results here</div></div>';
       return;
     }
-    el.innerHTML = '<div class="card"><div class="card-body" style="padding:0 16px">'
-      + trades.map(function(t) {
-          var pnl = t.net_pnl||t.pnl||0;
-          var isOpen = t.is_open;
-          var modeBadge = tab==='paper' ? '<span class="badge paper" style="font-size:9px">Paper</span>' : '<span class="badge live" style="font-size:9px">Live</span>';
-          return '<div class="trade-item">'
-            + '<div class="trade-icon" style="background:'+(isOpen?'var(--amber-bg)':pnl>0?'var(--green-bg)':'var(--red-bg)')+';font-size:12px;font-weight:700;color:'+(isOpen?'var(--amber)':pnl>0?'var(--green)':'var(--red)')+';">'+(isOpen?'~':pnl>0?'+':'&#8722;')+'</div>'
-            + '<div class="trade-info">'
-            + '<div class="trade-name" style="display:flex;gap:6px;align-items:center"><span class="badge strategy">'+esc(t.strategy_code||t.strategy||'')+'</span> '+modeBadge+'</div>'
-            + '<div class="trade-meta">'+esc(t.trade_date||t.date||'') + ' &bull; ATM ' + esc(t.atm_strike||t.atm||'') + (t.exit_reason ? ' &bull; '+esc(t.exit_reason) : '') + '</div>'
+
+    // Build by-automation groups
+    var html = '';
+    byAuto.forEach(function(group) {
+      var groupTrades = filtered.filter(function(t){ return t.automation_id === group.automation_id; });
+      if (!groupTrades.length) return;
+
+      var livePnl  = groupTrades.filter(function(t){ return t.type==='live' && !t.is_open; }).reduce(function(s,t){ return s+(t.net_pnl||0); },0);
+      var paperPnl = groupTrades.filter(function(t){ return t.type==='paper' && !t.is_open; }).reduce(function(s,t){ return s+(t.net_pnl||0); },0);
+      var totalPnl = livePnl + paperPnl;
+
+      html += '<div class="card" style="margin-bottom:12px">'
+        + '<div class="card-header" style="flex-wrap:wrap;gap:6px">'
+        + '<div><div style="font-size:13px;font-weight:600">'+esc(group.automation_name||'Manual')+'</div>'
+        + '<div style="font-size:11px;color:var(--text2);margin-top:2px">'
+        + groupTrades.length+' trade(s) &bull; '
+        + 'Win rate '+group.win_rate+'%'
+        + (livePnl  ? ' &bull; Live: <span style="color:'+(livePnl>=0?'var(--green)':'var(--red)')+'">'+(livePnl>=0?'+':'')+'&#8377;'+Math.abs(livePnl).toLocaleString('en-IN')+'</span>' : '')
+        + (paperPnl ? ' &bull; Paper: <span style="color:'+(paperPnl>=0?'var(--amber)':'var(--red)')+'">'+(paperPnl>=0?'+':'')+'&#8377;'+Math.abs(paperPnl).toLocaleString('en-IN')+'</span>' : '')
+        + '</div></div>'
+        + '<div style="font-family:var(--mono);font-size:18px;font-weight:700;color:'+(totalPnl>=0?'var(--green)':'var(--red)')+'">'
+        + pnlFmt(totalPnl)+'</div>'
+        + '</div>'
+        + '<div style="padding:0 16px">';
+
+      groupTrades.forEach(function(t) {
+        var tid = t.id;
+        var expanded = _expandedTrades.has(tid);
+        var pnl = t.net_pnl||0;
+        var isOpen = t.is_open;
+        var ep = t.exit_parsed||{};
+        var typeBadge = t.type==='live'
+          ? '<span class="badge live" style="font-size:9px">Live</span>'
+          : '<span class="badge paper" style="font-size:9px">Paper</span>';
+        var outcomeIcon = isOpen ? '&#128993;' : pnl>0 ? '&#9989;' : '&#10060;';
+
+        html += '<div style="border-bottom:1px solid var(--border)">'
+          // Summary row — always visible
+          + '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;cursor:pointer" onclick="toggleTrade(\''+tid+'\')">'          + '<div style="font-size:14px;min-width:20px;text-align:center">'+outcomeIcon+'</div>'
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+          + '<span class="badge strategy">'+esc(t.strategy)+'</span>'+typeBadge
+          + '<span style="font-size:11px;color:var(--text2)">'+esc(t.date)+' '+esc(t.entry_time||'')+'</span>'
+          + '</div>'
+          + '<div style="font-size:11px;color:var(--text2);margin-top:3px">'
+          + 'ATM '+esc(String(t.atm_strike||'—'))+' &bull; '
+          + 'Entry &#8377;'+esc(String(t.entry_combined))+' &rarr; '
+          + (isOpen ? '<span style="color:var(--amber)">OPEN</span>' : 'Exit &#8377;'+esc(String(t.exit_combined||'—')))
+          + '</div>'
+          + '</div>'
+          + '<div style="text-align:right;flex-shrink:0">'
+          + '<div style="font-size:13px;font-weight:600;font-family:var(--mono);color:'+(isOpen?'var(--amber)':pnl>=0?'var(--green)':'var(--red)')+'">'
+          + (isOpen ? 'OPEN' : pnlFmt(pnl))+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'
+          + (t.decay_pct ? (t.decay_pct>0?'+':'')+t.decay_pct+'% decay' : '')
+          + '</div>'
+          + '</div>'
+          + '<div style="font-size:10px;color:var(--text2);padding-left:4px">'+(expanded?'&#9650;':'&#9660;')+'</div>'
+          + '</div>'
+
+          // Detail panel — toggle
+          + '<div id="td-'+tid+'" style="display:'+(expanded?'block':'none')+';background:var(--bg3);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">'
+          // Entry section
+          + '<div style="margin-bottom:10px">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#9654; Entry</div>'
+          + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'
+          + '<div><span style="color:var(--text2)">Strategy: </span>'+esc(t.signal_name||t.strategy)+'</div>'
+          + '<div><span style="color:var(--text2)">Strike: </span>ATM '+esc(String(t.atm_strike||'—'))+'</div>'
+          + '<div><span style="color:var(--text2)">Combined: </span><strong>&#8377;'+esc(String(t.entry_combined))+'</strong></div>'
+          + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.entry_time||'—')+'</div>'
+          + '<div style="grid-column:span 2"><span style="color:var(--text2)">Why entered: </span>'+esc(t.entry_reason||'ORB condition met')+'</div>'
+          + '</div></div>'
+
+          // Exit section
+          + (isOpen ? '' :
+            '<div style="margin-bottom:10px;padding-top:10px;border-top:1px solid var(--border)">'
+            + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#9632; Exit</div>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'
+            + '<div><span style="color:var(--text2)">Combined: </span><strong>&#8377;'+esc(String(t.exit_combined||'—'))+'</strong></div>'
+            + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.exit_time||'—')+'</div>'
+            + '<div style="grid-column:span 2">'
+            + '<span style="color:var(--text2)">Why exited: </span>'
+            + '<span style="color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'—')+'</span>'
             + '</div>'
-            + '<div class="trade-pnl">'
-            + '<div class="trade-pnl-val '+(isOpen?'':''+pnlClass(pnl))+'">'+(isOpen?'OPEN':pnlFmt(pnl))+'</div>'
-            + '<div class="trade-pnl-sub">Entry \u20b9'+(t.entry_combined||t.entry||0).toFixed(1)+'</div>'
-            + '</div></div>';
-        }).join('')
-      + '</div></div>';
+            + '</div></div>'
+            // SL state at exit (paper only)
+            + (t.sl_at_exit && t.sl_at_exit.candles > 0 ?
+              '<div style="margin-bottom:10px;padding-top:10px;border-top:1px solid var(--border)">'
+              + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">SL State at Exit</div>'
+              + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px">'
+              + '<span>VWAP &#8377;'+((t.sl_at_exit.vwap||0).toFixed(1))+'</span>'
+              + '<span>EMA75 &#8377;'+((t.sl_at_exit.ema75||0).toFixed(1))+'</span>'
+              + '<span>Trail low &#8377;'+((t.sl_at_exit.trailing_low||0).toFixed(1))+'</span>'
+              + '<span>Candles: '+(t.sl_at_exit.candles||0)+'</span>'
+              + '</div></div>' : '')
+          )
+
+          // P&L breakdown
+          + '<div style="padding-top:10px;border-top:1px solid var(--border)">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">P&amp;L Breakdown</div>'
+          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Qty ('+esc(String(t.lots))+'lot × '+esc(String(t.lot_size))+')</span><span>'+esc(String(t.qty||'—'))+' units</span></div>'
+          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Gross P&amp;L</span><span style="color:'+(isOpen?'var(--text2)':(t.gross_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.gross_pnl||0)+'</span></div>'
+          + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--text2)">Charges</span><span style="color:var(--red)">-&#8377;'+(t.brokerage||0).toLocaleString('en-IN')+'</span></div>'
+          + '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;padding-top:4px;border-top:1px solid var(--border)">'
+          + '<span>Net P&amp;L</span>'
+          + '<span style="font-family:var(--mono);color:'+(isOpen?'var(--text)':(t.net_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.net_pnl||0)+'</span>'
+          + '</div></div>'
+          + '</div>'  // end detail panel
+          + '</div>'; // end trade row
+      });
+
+      html += '</div></div>';
+    });
+
+    el.innerHTML = html || '<div class="empty"><div class="empty-sub">No trades found</div></div>';
   } catch(e) {
     el.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
+}
+
+function toggleTrade(tid) {
+  if (_expandedTrades.has(tid)) {
+    _expandedTrades.delete(tid);
+  } else {
+    _expandedTrades.add(tid);
+  }
+  loadUnifiedTrades();
 }
 
 // ── PERFORMANCE ──────────────────────────────────────────────
@@ -1619,7 +1836,7 @@ async function renderPerformance() {
       + '</div>';
 
     // Equity curve
-    var chartHtml = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Equity Curve</div></div><div class="card-body" style="padding:12px"><canvas id="equity-chart" style="max-height:180px"></canvas></div></div>';
+    var chartHtml = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Daily P&amp;L + Cumulative Equity</div><div style="font-size:11px;color:var(--text2)"><span style="color:var(--green)">&#9632;</span> profit day &nbsp;<span style="color:var(--red)">&#9632;</span> loss day &nbsp;<span style="color:var(--text2)">&#8212;</span> cumulative</div></div><div class="card-body" style="padding:12px"><canvas id="equity-chart" style="max-height:200px"></canvas></div></div>';
 
     // By strategy
     var stratHtml = '<div class="section-title">By Strategy</div><div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0 16px">';
@@ -1657,31 +1874,90 @@ async function renderPerformance() {
 
     el2.innerHTML = goLiveHtml + kpiHtml + riskHtml + extremesHtml + chartHtml + stratHtml + exitHtml + dailyHtml;
 
-    // Draw equity chart
+    // Draw dual chart: daily bars (green/red) + cumulative equity line
     var curve = p.equity_curve||[];
-    if (curve.length > 1) {
+    var byDay = p.by_day||[];
+    if (byDay.length > 0) {
       var loadChart = function() {
         var canvas = document.getElementById('equity-chart');
         if (!canvas) return;
         var ctx = canvas.getContext('2d');
         if (_equityChart) { try{ _equityChart.destroy(); }catch(e){} }
-        var lastVal = curve[curve.length-1].equity||0;
-        var color = lastVal >= 0 ? '#00e676' : '#ff5252';
+
+        // Bar colours: green for profit day, red for loss day
+        var barColors = byDay.map(function(d){ return d.pnl >= 0 ? 'rgba(0,230,118,.7)' : 'rgba(255,82,82,.7)'; });
+        var barBorder = byDay.map(function(d){ return d.pnl >= 0 ? '#00e676' : '#ff5252'; });
+        var labels    = byDay.map(function(d){ return d.date.slice(5); });
+        var dailyPnl  = byDay.map(function(d){ return d.pnl; });
+        // Cumulative line
+        var cumPnl = [];
+        var running = 0;
+        byDay.forEach(function(d){ running += d.pnl; cumPnl.push(running); });
+        var finalEq = cumPnl[cumPnl.length-1] || 0;
+        var lineColor = finalEq >= 0 ? '#00e676' : '#ff5252';
+
         _equityChart = new Chart(ctx, {
-          type:'line',
-          data:{
-            labels: curve.map(function(c){ return c.date.slice(5); }),
-            datasets:[{data:curve.map(function(c){ return c.equity; }),borderColor:color,backgroundColor:color+'15',fill:true,tension:.3,pointRadius:2,borderWidth:2}]
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                type: 'bar',
+                label: 'Daily P&L',
+                data: dailyPnl,
+                backgroundColor: barColors,
+                borderColor: barBorder,
+                borderWidth: 1,
+                borderRadius: 3,
+                yAxisID: 'y',
+              },
+              {
+                type: 'line',
+                label: 'Cumulative',
+                data: cumPnl,
+                borderColor: lineColor,
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 2,
+                tension: 0.3,
+                yAxisID: 'y',
+              }
+            ]
           },
-          options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10},maxTicksLimit:8}},y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{font:{size:10},callback:function(v){ return '\u20b9'+v.toLocaleString('en-IN'); }}}},responsive:true,maintainAspectRatio:false}
+          options: {
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    var v = ctx.parsed.y;
+                    return (v >= 0 ? '+' : '') + '\u20b9' + Math.abs(v).toLocaleString('en-IN');
+                  }
+                }
+              }
+            },
+            scales: {
+              x: { grid:{display:false}, ticks:{font:{size:10},maxTicksLimit:10} },
+              y: {
+                grid: { color:'rgba(255,255,255,.05)' },
+                ticks: {
+                  font: {size:10},
+                  callback: function(v) {
+                    return (v>=0?'+':'')+Math.round(v/1000)+'K';
+                  }
+                }
+              }
+            },
+            responsive: true,
+            maintainAspectRatio: false
+          }
         });
       };
       if (window.Chart) { loadChart(); }
       else {
-        var s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
-        s.onload = loadChart;
-        document.head.appendChild(s);
+        var chartScript = document.createElement('script');
+        chartScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
+        chartScript.onload = loadChart;
+        document.head.appendChild(chartScript);
       }
     }
   } catch(e) {
