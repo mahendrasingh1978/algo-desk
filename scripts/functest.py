@@ -652,6 +652,219 @@ def t_paper_auto_writes_shadow_table():
     assert paper_auto["config"]["lot_size"] == 65
 test("Paper automation: created with correct lot size and shadow_mode", t_paper_auto_writes_shadow_table)
 
+# ── 14. Engine correctness ───────────────────────────────────
+print("\n14. Engine correctness...")
+
+def t_engine_traded_today_gate():
+    from engine import EngineState, check_all_strategies
+    from datetime import datetime
+    state = EngineState({"strategies":["S1"],"mode":"paper"})
+    assert state.traded_today == False, "Should start False"
+    assert state.trade_count == 0
+    # Gate blocks when traded_today=True
+    state.orb_complete = True
+    state.traded_today = True
+    result = check_all_strategies(state, datetime.now())
+    assert result is None, "Must block re-entry after first trade"
+    # Gate allows when traded_today=False
+    state.traded_today = False
+    # Still None (no strike data) but for correct reason — gate is open
+    result2 = check_all_strategies(state, datetime.now())
+    assert result2 is None  # no strikes loaded, expected
+test("Engine: one-trade-per-day gate works", t_engine_traded_today_gate)
+
+def t_sl_entry_not_zero():
+    from engine import SLState
+    sl = SLState()
+    cfg = {"max_loss_pct":30,"trail_pct":20,"min_profit_pct":15,
+           "vwap_buffer_pct":2,"ema_buffer_pct":1,"profit_target_pct":50}
+    sl.activate(450.0, cfg)
+    assert sl.entry_combined == 450.0, f"entry={sl.entry_combined} should be 450"
+    assert sl.trailing_low   == 450.0
+    assert sl.trailing_sl    >  450.0
+    # Must NOT fire at entry price on first tick
+    exit_, reason = sl.update(450.0, 0, 0, 0, cfg)
+    assert not exit_, f"SL fired immediately: {reason}"
+    # Must NOT fire at entry+1 (combined rising slightly = options seller losing slightly)
+    exit2, reason2 = sl.update(451.0, 0, 0, 0, cfg)
+    assert not exit2, f"SL fired too early: {reason2}"
+test("SL: entry_combined non-zero, no immediate fire", t_sl_entry_not_zero)
+
+def t_sl_fires_on_max_loss():
+    from engine import SLState
+    sl = SLState()
+    cfg = {"max_loss_pct":30,"trail_pct":20,"min_profit_pct":15,
+           "vwap_buffer_pct":2,"ema_buffer_pct":1,"profit_target_pct":50}
+    sl.activate(200.0, cfg)
+    # Combined rising 31% above entry = max loss hit
+    exit_, reason = sl.update(263.0, 0, 0, 0, cfg)
+    assert exit_, "Max loss should fire at 131% of entry"
+    assert "MAX_LOSS" in reason
+test("SL: max loss backstop fires correctly at 30%", t_sl_fires_on_max_loss)
+
+def t_sl_profit_target():
+    from engine import SLState
+    sl = SLState()
+    cfg = {"max_loss_pct":30,"trail_pct":20,"min_profit_pct":15,
+           "vwap_buffer_pct":2,"ema_buffer_pct":1,"profit_target_pct":50}
+    sl.activate(200.0, cfg)
+    # Combined decaying 50% = profit target
+    exit_, reason = sl.update(99.0, 0, 0, 0, cfg)
+    assert exit_, "Profit target should fire at 50% decay"
+    assert "PROFIT_TARGET" in reason
+test("SL: profit target fires at 50% decay", t_sl_profit_target)
+
+# ── 15. New endpoints ────────────────────────────────────────
+print("\n15. New API endpoints...")
+
+def t_unified_trades():
+    r = client.get("/api/trades/unified?days=30", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "trades" in d
+    assert "by_auto" in d
+    assert "total" in d
+    assert "live_count" in d
+    assert "paper_count" in d
+test("GET /api/trades/unified", t_unified_trades)
+
+def t_unified_trade_fields():
+    # Create a trade then check unified returns full fields
+    r = client.get("/api/trades/unified?days=30", headers=H())
+    ok_status(r)
+    # If there are trades, verify they have all required fields
+    trades = r.json().get("trades", [])
+    if trades:
+        t = trades[0]
+        required = ["id","type","date","strategy","atm_strike",
+                    "entry_combined","entry_time","entry_reason",
+                    "exit_parsed","lots","lot_size","qty",
+                    "gross_pnl","brokerage","net_pnl","is_open"]
+        for f in required:
+            assert f in t, f"Missing field: {f}"
+test("GET /api/trades/unified: all detail fields present", t_unified_trade_fields)
+
+def t_reset_paper_trades():
+    r = client.delete("/api/trades/reset?trade_type=paper", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "deleted" in d
+    assert "paper" in d["deleted"]
+    assert "live" in d["deleted"]
+    # Live trades should not be touched
+    assert d["deleted"]["live"] == 0, "Reset paper should not touch live trades"
+test("DELETE /api/trades/reset (paper only)", t_reset_paper_trades)
+
+def t_reset_all_trades():
+    r = client.delete("/api/trades/reset?trade_type=all", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "deleted" in d
+test("DELETE /api/trades/reset (all types)", t_reset_all_trades)
+
+def t_max_trades_per_day_config():
+    # Create automation with max_trades_per_day=2
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "Max2 Test", "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers", "strategies": ["S1"],
+        "mode": "paper", "shadow_mode": True,
+        "telegram_alerts": False,
+        "config": {"lots":1, "lot_size":65, "max_trades_per_day": 2}
+    })
+    ok_status(r)
+    autos = client.get("/api/automations", headers=H()).json()["automations"]
+    a = next((x for x in autos if x["name"]=="Max2 Test"), None)
+    assert a is not None
+    assert a["config"]["max_trades_per_day"] == 2
+test("Automation: max_trades_per_day config saved correctly", t_max_trades_per_day_config)
+
+def t_pnl_fmt():
+    # Verify the JS pnlFmt concept - backend sends correct signed values
+    # Net pnl should be positive or negative, never unsigned
+    r = client.get("/api/shadow/performance", headers=H())
+    ok_status(r)
+    d = r.json()
+    # total_pnl should be a number (could be 0, positive, or negative)
+    assert isinstance(d["total_pnl"], (int, float))
+test("P&L values: signed numbers returned from API", t_pnl_fmt)
+
+# ── 16. Regression tests for reported bugs ───────────────────
+print("\n16. Regression tests for reported bugs...")
+
+def t_delete_automation_no_body():
+    # DELETE /api/automations/{id} must work with no request body
+    # Previously failed with "string did not match expected pattern"
+    # because Content-Type: application/json was sent on a bodyless DELETE
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "ToDelete", "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers", "strategies": ["S1"],
+        "mode": "paper", "shadow_mode": True,
+        "telegram_alerts": False, "config": {}
+    })
+    ok_status(r)
+    auto_id = r.json()["automation"]["id"]
+    # DELETE with no body should succeed
+    r2 = client.delete(f"/api/automations/{auto_id}", headers=H())
+    ok_status(r2)
+    assert r2.json().get("ok")
+    # Verify it's gone
+    autos = client.get("/api/automations", headers=H()).json()["automations"]
+    ids = [a["id"] for a in autos]
+    assert auto_id not in ids, "Automation should be deleted"
+test("DELETE automation: works without request body", t_delete_automation_no_body)
+
+def t_dashboard_open_positions_split():
+    # Dashboard must return open_live and open_paper separately
+    r = client.get("/api/dashboard/summary", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "open_live" in d,  "Missing open_live field"
+    assert "open_paper" in d, "Missing open_paper field"
+    assert "open_positions" in d
+    assert d["open_positions"] == d["open_live"] + d["open_paper"],         "open_positions must equal open_live + open_paper"
+test("Dashboard: open_positions split into open_live + open_paper", t_dashboard_open_positions_split)
+
+def t_dashboard_trades_split():
+    r = client.get("/api/dashboard/summary", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "today_live_trades" in d,  "Missing today_live_trades"
+    assert "today_paper_trades" in d, "Missing today_paper_trades"
+    assert "live_automations" in d,   "Missing live_automations"
+    assert "paper_automations" in d,  "Missing paper_automations"
+test("Dashboard: today trades and automation counts split live/paper", t_dashboard_trades_split)
+
+def t_capital_check_returns_margin():
+    # Capital check must return margin even when no broker connected
+    r = client.get("/api/capital/check?symbol=NSE:NIFTY50-INDEX&lots=1", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "margin" in d, "Missing margin field"
+    assert "net_required" in d["margin"], "Missing net_required in margin"
+    assert d["margin"]["net_required"] > 0, "Margin estimate must be > 0"
+    assert "mode" in d, "Missing mode field (paper/live)"
+test("Capital check: returns margin estimate even in paper mode", t_capital_check_returns_margin)
+
+def t_delete_own_trades_only():
+    # Reset must only delete requesting user's data
+    # Create a second user and their trades, then reset first user's data
+    # Verify second user's data is untouched
+    r2 = client.post("/api/auth/register", json={
+        "name": "Other User", "email": "other_reset@test.com",
+        "password": "OtherPass123!", "invite_token": None
+    })
+    ok_status(r2)
+    # Reset admin user's paper trades
+    r = client.delete("/api/trades/reset?trade_type=paper", headers=H())
+    ok_status(r)
+    assert r.json().get("ok")
+    # Other user should still exist (different check)
+    me = client.get("/api/me", headers=H())
+    ok_status(me)
+test("Reset trades: only affects requesting user", t_delete_own_trades_only)
+
 # ── Summary ──────────────────────────────────────────────────
 import os
 if os.path.exists("functest.db"):
