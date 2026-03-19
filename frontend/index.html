@@ -242,6 +242,16 @@ details[open] summary{color:var(--text)}
 .more-item .more-badge{margin-left:auto;font-size:10px;padding:2px 8px;border-radius:99px;background:var(--green-bg);color:var(--green);font-weight:600}
 .more-handle{width:36px;height:4px;background:var(--border2);border-radius:2px;margin:0 auto 12px}
 
+/* ── Uniform tab bar ── */
+.tab-bar{display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;flex-shrink:0}
+.tab-btn{padding:6px 14px;font-size:12px;font-weight:500;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .15s;white-space:nowrap;min-height:32px}
+.tab-btn.active{background:var(--green);color:#000}
+.tab-btn.active-amber{background:var(--amber);color:#000}
+.tab-btn.active-blue{background:var(--blue);color:#fff}
+.tab-btn:hover:not(.active):not(.active-amber):not(.active-blue){color:var(--text);background:var(--bg2)}
+.page-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.select-sm{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 8px;font-size:12px;min-height:32px}
+
 /* ── Toast ── */
 #toast{position:fixed;bottom:72px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--bg4);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px 18px;font-size:13px;opacity:0;transition:all .25s;pointer-events:none;z-index:999;white-space:nowrap;max-width:90vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -797,6 +807,18 @@ async function updateTicker() {
       // Update spot cache for this symbol
       if (!_symSpotCache) _symSpotCache = {};
       _symSpotCache[sym] = {spot: d.spot, atm: d.atm||0};
+      // Update dashboard spot KPI if dashboard is showing this symbol
+      if (sym === _dashSymbol) {
+        var sv = document.getElementById('dash-spot-val');
+        var av = document.getElementById('dash-atm-val');
+        var sl = document.getElementById('dash-spot-label');
+        if (sv) sv.textContent = '\u20b9' + Number(d.spot).toLocaleString('en-IN', {minimumFractionDigits:1, maximumFractionDigits:1});
+        if (av) av.textContent = 'ATM ' + (d.atm > 0 ? d.atm.toLocaleString('en-IN') : '\u2014');
+        if (sl) {
+          var symInfo2 = (_dashSymbols||[]).find(function(s){ return s.value===sym; });
+          if (symInfo2) sl.textContent = symInfo2.label;
+        }
+      }
     } else {
       el.textContent = d.status==='waiting' ? 'No broker' : '—';
       el.className = 'tb-price waiting';
@@ -890,6 +912,8 @@ function setDashSymbol(sym) {
 
   // Reload funds card for new symbol
   _loadDashFunds();
+  // Refresh ticker immediately for this symbol
+  updateTicker();
 }
 
 async function _loadDashFunds() {
@@ -1446,6 +1470,14 @@ async function stopAuto(autoId) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+async function fixStuckAutomations() {
+  try {
+    var r = await api('POST', '/api/automations/reset-status');
+    toast(r.message || 'Done', 'success');
+    renderAutomate();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 async function deleteAuto(autoId) {
   if (!confirm('Delete this automation? This cannot be undone.')) return;
   try {
@@ -1491,7 +1523,7 @@ async function _refreshLive() {
     }
 
     // Market status
-    var mktHtml = '<div class="kpi-grid" style="margin-bottom:12px">'
+    var mktHtml = '<div class="kpi-grid" style="margin-bottom:6px">'
       + '<div class="kpi '+(mktStatus==='live'?'green':'')+'">'
       + '<div class="kpi-label">NIFTY Spot</div>'
       + '<div class="kpi-value mono">'+(spot>0?'\u20b9'+Number(spot).toLocaleString('en-IN',{minimumFractionDigits:1}):'—')+'</div>'
@@ -1603,15 +1635,20 @@ async function renderTrades() {
   el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">'
     + '<div><div class="page-title">Trade History</div><div class="page-sub">All trades grouped by automation</div></div>'
     + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-    + '<select id="td-days" onchange="_tradesDays=parseInt(this.value);loadUnifiedTrades()" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 8px;font-size:12px">'
-    + '<option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>'
-    + '</select>'
-    + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="showResetModal()">&#128465; Reset Data</button>'
+
     + '</div></div>'
-    + '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'
-    + '<button class="btn btn-ghost btn-sm" id="tt-all" onclick="loadTradesTab(\'all\')" style="border-color:var(--green);color:var(--green)">All</button>'
-    + '<button class="btn btn-ghost btn-sm" id="tt-live" onclick="loadTradesTab(\'live\')">Live Only</button>'
-    + '<button class="btn btn-ghost btn-sm" id="tt-paper" onclick="loadTradesTab(\'paper\')">Paper Only</button>'
+    + '<div class="page-controls" style="margin-bottom:12px">'
+    + '<div class="tab-bar">'
+    + '<button class="tab-btn '+(_tradesTab==='all'?'active':'')+'" id="tt-all" onclick="loadTradesTab(\'all\')">All</button>'
+    + '<button class="tab-btn '+(_tradesTab==='live'?'active':'')+'" id="tt-live" onclick="loadTradesTab(\'live\')">Live</button>'
+    + '<button class="tab-btn '+(_tradesTab==='paper'?'active-amber':'')+'" id="tt-paper" onclick="loadTradesTab(\'paper\')">Paper</button>'
+    + '</div>'
+    + '<select class="select-sm" id="td-days" onchange="_tradesDays=parseInt(this.value);loadUnifiedTrades()">'
+    + '<option value="7"'  +(_tradesDays===7?' selected':'')+'>7 days</option>'
+    + '<option value="30"' +(_tradesDays===30?' selected':'')+'>30 days</option>'
+    + '<option value="90"' +(_tradesDays===90?' selected':'')+'>90 days</option>'
+    + '</select>'
+    + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="showResetModal()">&#128465; Reset</button>'
     + '</div>'
     + '<div id="trades-content"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div>'
     + '<div id="reset-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;display:none;align-items:center;justify-content:center;padding:20px">'
@@ -1816,6 +1853,17 @@ async function loadUnifiedTrades() {
     });
 
     el.innerHTML = html || '<div class="empty"><div class="empty-sub">No trades found</div></div>';
+
+    // Restore expanded state after re-render
+    _expandedGroups.forEach(function(key) {
+      var groupEl = document.getElementById('ag-'+key);
+      if (groupEl) groupEl.style.display = 'block';
+    });
+    _expandedTrades.forEach(function(tid) {
+      var tradeEl = document.getElementById('td-'+tid);
+      if (tradeEl) tradeEl.style.display = 'block';
+    });
+
   } catch(e) {
     el.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
@@ -1849,17 +1897,33 @@ function _buildLegsHtml(t) {
     + '</div>';
 }
 
+var _expandedGroups = new Set();
 function toggleAutoGroup(key) {
   var el = document.getElementById('ag-'+key);
-  if (el) el.style.display = el.style.display==='none' ? 'block' : 'none';
+  if (!el) return;
+  if (_expandedGroups.has(key)) {
+    _expandedGroups.delete(key);
+    el.style.display = 'none';
+  } else {
+    _expandedGroups.add(key);
+    el.style.display = 'block';
+  }
 }
 function toggleTrade(tid) {
+  var el = document.getElementById('td-'+tid);
+  if (!el) return;
   if (_expandedTrades.has(tid)) {
     _expandedTrades.delete(tid);
+    el.style.display = 'none';
+    // Update chevron
+    var row = el.previousElementSibling;
+    if (row) { var chev = row.querySelector('.trade-chev'); if (chev) chev.textContent = '\u25bc'; }
   } else {
     _expandedTrades.add(tid);
+    el.style.display = 'block';
+    var row = el.previousElementSibling;
+    if (row) { var chev = row.querySelector('.trade-chev'); if (chev) chev.textContent = '\u25b2'; }
   }
-  loadUnifiedTrades();
 }
 
 // ── PERFORMANCE ──────────────────────────────────────────────
@@ -1959,7 +2023,7 @@ async function loadPerformance() {
     }
 
     // ── Core KPIs ─────────────────────────────────────────────
-    var kpiHtml = '<div class="kpi-grid" style="margin-bottom:8px">'
+    var kpiHtml = '<div class="kpi-grid" style="margin-bottom:6px">'
       + '<div class="kpi '+(p.total_pnl>=0?'green':'red')+'"><div class="kpi-label">Total P&L '+modeBadge+'</div>'
       + '<div class="kpi-value '+pnlClass(p.total_pnl)+'">'+pnlFmt(p.total_pnl)+'</div>'
       + '<div class="kpi-sub">Last '+_perfDays+' days</div></div>'
@@ -1975,7 +2039,7 @@ async function loadPerformance() {
       + '</div>';
 
     // ── Risk + best/worst ─────────────────────────────────────
-    var riskHtml = '<div class="kpi-grid" style="margin-bottom:12px">'
+    var riskHtml = '<div class="kpi-grid" style="margin-bottom:6px">'
       + '<div class="kpi '+(p.reward_risk>=1?'green':'red')+'"><div class="kpi-label">Reward:Risk</div>'
       + '<div class="kpi-value neutral">'+p.reward_risk+'x</div>'
       + '<div class="kpi-sub">Avg win / avg loss</div></div>'
@@ -2005,7 +2069,7 @@ async function loadPerformance() {
       + '</div></div>';
 
     // ── By strategy ───────────────────────────────────────────
-    var stratHtml = '<div class="section-title">By Strategy</div>'
+    var stratHtml = '<div class="section-title" style="margin-top:4px">By Strategy</div>'
       + '<div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0 16px">';
     var strats = p.by_strategy || {};
     if (Object.keys(strats).length) {
@@ -2291,7 +2355,7 @@ async function renderAdmin() {
 
     el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div>'
       // Stats
-      + '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi-grid" style="margin-bottom:6px">'
       + '<div class="kpi blue"><div class="kpi-label">Total Users</div><div class="kpi-value neutral">'+(stats.total_users||0)+'</div></div>'
       + '<div class="kpi green"><div class="kpi-label">Active</div><div class="kpi-value neutral">'+(stats.active_users||0)+'</div></div>'
       + '<div class="kpi amber"><div class="kpi-label">Trades Today</div><div class="kpi-value neutral">'+(stats.trades_today||0)+'</div></div>'
@@ -2415,6 +2479,16 @@ var HEDGES = {
   4:{label:'\u00b14 Wide Iron Condor',desc:'Sell 1 strike OTM CE+PE. Buy 4 strikes out. Maximum premium collected. Widest profit zone. Best on high IV days.',strikes:[-5,-4,-3,-2,-1,0,1,2,3,4,5],sell:[-1,1],buy:[-4,4],premium:'\u20b980-130',margin:'~\u20b930-40K',best:'S6 Theta Strangle',maxloss:'\u00b1300 pts \u00d7 lots'},
 };
 
+function _helpField(name, desc, tip) {
+  return '<div style="padding:10px 0;border-bottom:1px solid var(--border)">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">'
+    + '<span style="font-size:12px;font-weight:600;min-width:120px;color:var(--text)">'+esc(name)+'</span>'
+    + '</div>'
+    + '<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:4px">'+esc(desc)+'</div>'
+    + '<div style="font-size:11px;color:var(--blue);padding:4px 8px;background:rgba(33,150,243,.1);border-radius:4px">💡 '+esc(tip)+'</div>'
+    + '</div>';
+}
+
 function buildHelpPage() {
   var stratButtons = Object.entries(STRATS).map(function(kv) {
     var code=kv[0], s=kv[1];
@@ -2483,6 +2557,26 @@ function buildHelpPage() {
   + '<tr><td style="color:var(--green)">Iron Condor \u00b13</td><td>Wider hedge</td><td style="color:var(--green)">~\u20b935-45K</td><td style="color:var(--green)">Defined</td></tr>'
   + '</tbody></table>'
   + '<div class="alert alert-warn" style="margin-top:10px">NIFTY lot size is 65 (effective Jan 2026). Margins are approximate \u2014 use your broker SPAN calculator before going live.</div>'
+
+
+  // ── Automation Feature Guide ──────────────────────────────
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header">'
+  + '<div class="card-title">Automation Settings — What Each Field Does</div></div>'
+  + '<div class="card-body">'
+  + '<div style="display:grid;gap:10px">'
+  + _helpField('Symbol','Which index to trade. NIFTY = NSE large-cap index. BankNifty = banking sector. Choose based on which you have margin for.','Always NIFTY 50 for beginners — tightest spreads, lowest slippage.')
+  + _helpField('Strategies','Which signal to look for. Multiple can be selected — engine tries in priority order every 60s and takes the first one that fires.','Start with S1 (ORB Breakdown) alone. Add S8 (Gap Fade) for gap days.')
+  + _helpField('Mode','Paper = simulate only, no real orders. Live = real orders placed via your broker.','Always run Paper for at least 20 trading days before going Live.')
+  + _helpField('Lots','Number of contracts per trade. 1 lot NIFTY = 65 units. More lots = more profit and more risk proportionally.','Start with 1 lot. Only increase after consistent paper profit.')
+  + _helpField('Lot Size','Units per contract set by SEBI. NIFTY=65, BankNifty=30, FinNifty=60 (Jan 2026 values). Never change unless SEBI revises.','Leave at default. Updated automatically when SEBI changes it.')
+  + _helpField('Max Loss %','Stop-loss level as % above entry combined premium. 30% standard = exit if premium rises 30% above entry.','30% is industry standard for Iron Fly. 20% for tight risk. 40% for more breathing room.')
+  + _helpField('Profit Target %','Exit when combined premium decays by this %. 50% standard = exit when you have captured half the premium.','50% is optimal — balances capture vs holding risk. Never go below 40%.')
+  + _helpField('Auto Exit Time','Force-close any open position at this time regardless of P&L. Prevents overnight risk.','14:00 is safe. 14:30 captures more theta but more risk near close.')
+  + _helpField('Max Trades Per Day','How many times the engine can enter per day. Industry standard is 1.','Keep at 1. Re-entry after a loss compounds risk on a bad day.')
+  + _helpField('Max Spot Drift %','Guard: if NIFTY moves more than this % from the opening price, all signals are suspended for the day.','1.5% is standard. On 19 Mar NIFTY fell 3.26% — drift guard would have prevented all losing trades.')
+  + _helpField('Max VIX','Guard: if India VIX is above this at open, all signals are suspended. High VIX = expensive to buy back options.','17 is standard. Above 17 the premium collected is rarely worth the risk of adverse moves.')
+  + '</div></div></div>'
+
   + '</div></div>';
 }
 
@@ -2740,7 +2834,7 @@ async function runReconcile() {
       + '<span style="font-size:13px;font-weight:600;color:'+statusColor+'">'+(reconOk?'All positions reconciled':'Check required')+'</span>'
       + '<span style="font-size:11px;color:var(--text2)">'+esc(d.timestamp||'')+'</span>'
       + '</div>'
-      + '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi-grid" style="margin-bottom:6px">'
       + '<div class="kpi '+(s.filled===s.total_orders&&s.total_orders>0?'green':'')+'"><div class="kpi-label">Orders Filled</div><div class="kpi-value neutral">'+s.filled+' / '+s.total_orders+'</div></div>'
       + '<div class="kpi '+(s.rejected>0?'red':'')+'"><div class="kpi-label">Rejected</div><div class="kpi-value '+(s.rejected>0?'neg':'neutral')+'">'+s.rejected+'</div></div>'
       + '<div class="kpi '+(s.pending>0?'amber':'')+'"><div class="kpi-label">Pending</div><div class="kpi-value neutral">'+s.pending+'</div></div>'
