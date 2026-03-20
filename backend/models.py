@@ -32,9 +32,11 @@ class User(Base):
     is_active      = Column(Boolean, default=True)
     is_verified    = Column(Boolean, default=False)
     timezone       = Column(String(50), default="Asia/Kolkata")
-    # AI configuration — per user
-    # {"api_key_enc":"...","model":"claude-sonnet-4-6","enabled":true,
-    #  "use_for_trading":true,"use_for_analysis":true}
+    # AI configuration — per user (Gemini)
+    # {"api_key_enc":"...","model":"gemini-1.5-flash","enabled":true,
+    #  "use_for_trading":true,"use_for_analysis":true,
+    #  "news_suspend_enabled":true,  <- suspend if AI flags high-risk event
+    #  "news_risk_threshold":"high"} <- "high"|"medium"|"any"
     ai_config      = Column(JSON, default=dict)
     # Single Telegram (legacy)
     telegram_token = Column(String(255), nullable=True)
@@ -200,6 +202,7 @@ class ShadowTrade(Base):
     gross_pnl        = Column(Float, nullable=True)
     net_pnl          = Column(Float, nullable=True)
     is_open          = Column(Boolean, default=True)
+    ai_insight       = Column(Text, nullable=True)    # Gemini post-trade insight
     # Signal details
     signal_data      = Column(JSON, default=dict)
     # SL tracking

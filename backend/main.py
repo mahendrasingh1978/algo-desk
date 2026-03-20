@@ -53,15 +53,17 @@ SYMBOL_REGISTRY = {
     "NSE:NIFTYNXT50-INDEX": {"lot_size": 25,  "label": "NIFTY NEXT 50","strike_gap": 50},
 }
 
-# -- Anthropic Claude -- per-user API key support
+# -- Google Gemini AI -- per-user API key support
+# Uses google-generativeai SDK (pip install google-generativeai)
 try:
-    import anthropic as _anthropic
-    _ANTHROPIC_AVAILABLE = True
+    import google.generativeai as _genai
+    _GENAI_AVAILABLE = True
 except ImportError:
-    _anthropic = None
-    _ANTHROPIC_AVAILABLE = False
+    _genai = None
+    _GENAI_AVAILABLE = False
 
-_CLAUDE_MODEL = "claude-sonnet-4-6"
+_GEMINI_MODEL = "gemini-1.5-flash"   # free tier: 15 rpm, 1500 rpd — plenty for AlgoDesk
+_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
 
 def _simple_encrypt(text: str) -> str:
     """Base64 encode API key for storage."""
@@ -72,9 +74,9 @@ def _simple_decrypt(encoded: str) -> str:
     import base64
     return base64.b64decode(encoded.encode()).decode()
 
-def _get_claude_client(user_ai_config: dict):
-    """Return (client, enabled). Uses per-user key or server env key."""
-    if not _ANTHROPIC_AVAILABLE:
+def _get_gemini_client(user_ai_config: dict):
+    """Return (model, enabled). Uses per-user Gemini key or server env key."""
+    if not _GENAI_AVAILABLE:
         return None, False
     key_enc = (user_ai_config or {}).get("api_key_enc", "")
     key = ""
@@ -84,10 +86,19 @@ def _get_claude_client(user_ai_config: dict):
         except Exception:
             pass
     if not key:
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         return None, False
-    return _anthropic.Anthropic(api_key=key), True
+    try:
+        _genai.configure(api_key=key)
+        model_name = (user_ai_config or {}).get("model", _GEMINI_MODEL)
+        return _genai.GenerativeModel(model_name), True
+    except Exception:
+        return None, False
+
+# Legacy alias so engine gate code still works
+def _get_claude_client(user_ai_config: dict):
+    return _get_gemini_client(user_ai_config)
 
 
 def calc_brokerage(lots: int, lot_size: int, 
@@ -523,17 +534,6 @@ async def _run_claude_assessment(user_id: str, db_session) -> dict:
     Called at 9:10 AM before market opens.
     Returns structured JSON with trading recommendation.
     """
-    user = db_session.query(User).filter(User.id == user_id).first()
-    ai_cfg = (user.ai_config or {}) if user else {}
-    claude, enabled = _get_claude_client(ai_cfg)
-    if not enabled:
-        return {"trade_today": True, "confidence": "medium",
-                "risk_level": "medium", "reason": "Claude not configured",
-                "recommended_strategies": [], "avoid_strategies": [],
-                "suggested_hedge": 2, "vix_assessment": "",
-                "gap_assessment": "", "event_warning": "",
-                "claude_enabled": False}
-
     import pytz
     ist = pytz.timezone("Asia/Kolkata")
     today = datetime.now(ist).strftime("%Y-%m-%d")
@@ -615,14 +615,23 @@ Respond with this exact JSON structure:
   "event_warning": "empty string or warning about events"
 }}"""
 
+    # Get Gemini client using the same user object already fetched
+    user_obj = db_session.query(User).filter(User.id == user_id).first()
+    ai_cfg   = (user_obj.ai_config or {}) if user_obj else {}
+    gemini, enabled = _get_gemini_client(ai_cfg)
+    if not enabled or not gemini:
+        return {
+            "trade_today": True, "confidence": "low",
+            "risk_level": "medium",
+            "reason": "AI not configured — add Gemini API key in Profile → AI Settings.",
+            "recommended_strategies": [], "avoid_strategies": [],
+            "suggested_hedge": 2, "vix_assessment": "",
+            "gap_assessment": "", "event_warning": ""
+        }
     try:
-        msg = _claude.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=600,
-            messages=[{"role":"user","content":prompt}]
-        )
-        raw = msg.content[0].text.strip()
-        # Strip any markdown fences
+        response = gemini.generate_content(prompt)
+        raw = response.text.strip()
+        # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -631,7 +640,7 @@ Respond with this exact JSON structure:
         result["raw_response"] = raw
         return result
     except Exception as e:
-        log.error(f"Claude assessment failed: {e}")
+        log.error(f"Gemini assessment failed: {e}")
         return {
             "trade_today": True, "confidence": "low",
             "risk_level": "medium", "reason": f"AI assessment unavailable: {str(e)}",
@@ -642,9 +651,11 @@ Respond with this exact JSON structure:
 
 
 async def _analyse_closed_trade(trade, user_ai_config: dict) -> str:
-    """Quick one-line AI insight after a trade closes."""
-    claude, enabled = _get_claude_client(user_ai_config)
-    if not enabled or not (user_ai_config or {}).get("use_for_analysis", True):
+    """Quick one-line Gemini insight after a trade closes."""
+    gemini, enabled = _get_gemini_client(user_ai_config)
+    if not enabled or not gemini:
+        return ""
+    if not (user_ai_config or {}).get("use_for_analysis", True):
         return ""
     try:
         sig = trade.signal_data or {}
@@ -657,12 +668,8 @@ async def _analyse_closed_trade(trade, user_ai_config: dict) -> str:
                   f"Signal: {sig.get('reason','?')} | "
                   f"Entry time: {trade.entry_time}\n"
                   f"In exactly one sentence, what caused this outcome?")
-        msg = claude.messages.create(
-            model=_CLAUDE_MODEL,
-            max_tokens=100,
-            messages=[{"role":"user","content":prompt}]
-        )
-        return msg.content[0].text.strip()
+        response = gemini.generate_content(prompt)
+        return response.text.strip()
     except Exception:
         return ""
 
@@ -1056,7 +1063,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         BrokerConnection.user_id == user.id,
         BrokerConnection.is_connected == True).first()
     ai_cfg = user.ai_config or {}
-    _, ai_on = _get_claude_client(ai_cfg)
+    _, ai_on = _get_gemini_client(ai_cfg)
     return {
         "id": user.id, "email": user.email, "name": user.name,
         "role": user.role, "plan": user.plan,
@@ -1066,8 +1073,8 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         "broker_name": bc.broker_name if bc else None,
         "broker_mode": bc.mode if bc else None,
         "ai_enabled": ai_on,
-        "ai_model": ai_cfg.get("model", _CLAUDE_MODEL),
-        "ai_use_trading": ai_cfg.get("use_for_trading", True),
+        "ai_model": ai_cfg.get("model", _GEMINI_MODEL),
+        "use_for_trading": ai_cfg.get("use_for_trading", True),
         "ai_use_analysis": ai_cfg.get("use_for_analysis", True),
         "ai_key_set": bool(ai_cfg.get("api_key_enc", "")),
         "is_verified": user.is_verified,
@@ -2020,68 +2027,62 @@ def activate_user(user_id: str, admin: User = Depends(require_admin),
     if u: u.is_active = True; db.commit()
     return {"ok": True}
 
-# ── AI Settings ──────────────────────────────────────────────────
-
-class AIConfigReq(BaseModel):
-    api_key: str = ""         # raw key — will be encrypted
-    model: str = "claude-sonnet-4-6"
-    use_for_trading: bool = True    # gate: apply to engine decisions
-    use_for_analysis: bool = True   # gate: post-trade insights
+# ── AI (Gemini) Settings ──────────────────────────────────────────
 
 @app.post("/api/ai/config")
-async def save_ai_config(
-    req: AIConfigReq,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Save user AI configuration. API key stored encrypted."""
-    existing = user.ai_config or {}
-    new_cfg = {
-        "model": req.model or _CLAUDE_MODEL,
-        "use_for_trading": req.use_for_trading,
-        "use_for_analysis": req.use_for_analysis,
-    }
-    # Only update key if provided (non-empty)
-    if req.api_key.strip():
-        new_cfg["api_key_enc"] = _simple_encrypt(req.api_key.strip())
-    elif existing.get("api_key_enc"):
-        new_cfg["api_key_enc"] = existing["api_key_enc"]  # keep existing
-
-    user.ai_config = new_cfg
+async def save_ai_config(req: dict, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """Save Gemini API key and AI preferences."""
+    ai_cfg = dict(user.ai_config or {})
+    key = req.get("api_key", "").strip()
+    if key:
+        ai_cfg["api_key_enc"] = _simple_encrypt(key)
+    model = req.get("model", "").strip()
+    if model:
+        ai_cfg["model"] = model
+    if "use_for_trading" in req:
+        ai_cfg["use_for_trading"] = bool(req["use_for_trading"])
+    if "use_for_analysis" in req:
+        ai_cfg["use_for_analysis"] = bool(req["use_for_analysis"])
+    if "news_suspend_enabled" in req:
+        ai_cfg["news_suspend_enabled"] = bool(req["news_suspend_enabled"])
+    if "news_risk_threshold" in req:
+        ai_cfg["news_risk_threshold"] = req["news_risk_threshold"]
+    user.ai_config = ai_cfg
     db.commit()
-    _, enabled = _get_claude_client(new_cfg)
-    return {"ok": True, "enabled": enabled,
-            "key_set": bool(new_cfg.get("api_key_enc",""))}
+    return {"ok": True, "message": "AI settings saved",
+            "key_set": bool(ai_cfg.get("api_key_enc", ""))}
 
 @app.delete("/api/ai/config/key")
-async def remove_ai_key(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Remove the stored API key."""
-    cfg = user.ai_config or {}
+async def remove_ai_key(user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Remove stored Gemini API key."""
+    cfg = dict(user.ai_config or {})
     cfg.pop("api_key_enc", None)
     user.ai_config = cfg
     db.commit()
     return {"ok": True}
 
 @app.get("/api/ai/test")
-async def test_ai_connection(
-    user: User = Depends(get_current_user)
-):
-    """Test Claude connection with user key."""
-    claude, enabled = _get_claude_client(user.ai_config or {})
-    if not enabled:
+async def test_ai_connection(user: User = Depends(get_current_user)):
+    """Test Gemini API key — makes a minimal API call."""
+    gemini, enabled = _get_gemini_client(user.ai_config or {})
+    if not enabled or not gemini:
         return {"ok": False, "message": "No API key configured"}
     try:
-        msg = claude.messages.create(
-            model=_CLAUDE_MODEL,
-            max_tokens=20,
-            messages=[{"role":"user","content":"Reply with just: OK"}]
-        )
-        return {"ok": True, "message": "Connected — " + msg.content[0].text.strip()}
+        response = gemini.generate_content("Reply with exactly: OK")
+        return {"ok": True, "message": "Gemini connected \u2713 (" + response.text.strip()[:30] + ")"}
     except Exception as e:
         return {"ok": False, "message": str(e)}
+
+@app.get("/api/ai/models")
+def get_ai_models(user: User = Depends(get_current_user)):
+    """Return available Gemini model options."""
+    return {"models": [
+        {"id": "gemini-1.5-flash",     "label": "Gemini 1.5 Flash",       "note": "Free tier \u00b7 Fast \u00b7 Recommended"},
+        {"id": "gemini-2.0-flash-exp", "label": "Gemini 2.0 Flash (Exp)", "note": "Free \u00b7 Latest experimental"},
+        {"id": "gemini-1.5-pro",       "label": "Gemini 1.5 Pro",         "note": "Paid \u00b7 Highest quality"},
+    ]}
 
 
 @app.post("/api/automations/reset-status")
@@ -3001,7 +3002,7 @@ def seed_default_events(user: User = Depends(get_current_user),
     return {"ok": True, "added": added}
 
 
-# ── Claude AI Assessment ──────────────────────────────────────────
+# ── AI Morning Assessment ─────────────────────────────────────────
 
 @app.get("/api/claude/assessment")
 async def get_claude_assessment(
@@ -3028,7 +3029,7 @@ async def get_claude_assessment(
             "gap_assessment": existing.gap_assessment,
             "reason": existing.reason,
             "event_warning": existing.event_warning,
-            "claude_enabled": True,
+            "ai_enabled": True,
             "generated_at": existing.created_at.strftime("%H:%M IST") if existing.created_at else "",
         }}
     # Generate fresh
@@ -3052,9 +3053,9 @@ async def get_claude_assessment(
     except Exception:
         db.rollback()  # unique constraint if already exists
     user_ai2 = user.ai_config or {}
-    _, enabled2 = _get_claude_client(user_ai2)
+    _, enabled2 = _get_gemini_client(user_ai2)
     return {"ok": True, "assessment": {**result,
-            "date": today, "claude_enabled": enabled2,
+            "date": today, "ai_enabled": enabled2,
             "generated_at": datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M IST")}}
 
 @app.post("/api/claude/assessment/refresh")
@@ -3080,9 +3081,9 @@ async def claude_ask(
 ):
     """Free-form question to Claude with user's trading context."""
     user_ai = user.ai_config or {}
-    claude, enabled = _get_claude_client(user_ai)
+    gemini, enabled = _get_gemini_client(user_ai)
     if not enabled:
-        raise HTTPException(503, "Claude not configured. Add your API key in Profile → AI Settings.")
+        raise HTTPException(503, "Gemini AI not configured. Add your Google AI API key in Profile → AI Settings.")
     question = req.get("question", "").strip()
     if not question:
         raise HTTPException(400, "Question is required")
@@ -3107,15 +3108,29 @@ async def claude_ask(
                f"Platform: AlgoDesk (NIFTY options, Iron Fly/Condor, short premium). ")
 
     try:
-        msg = claude.messages.create(
-            model=_CLAUDE_MODEL,
-            max_tokens=400,
-            messages=[{"role":"user",
-                       "content": context + "\n\nQuestion: " + question}]
-        )
-        return {"ok": True, "answer": msg.content[0].text.strip()}
+        response = gemini.generate_content(context + "\n\nQuestion: " + question)
+        return {"ok": True, "answer": response.text.strip()}
     except Exception as e:
-        raise HTTPException(500, f"Claude error: {str(e)}")
+        raise HTTPException(500, f"Gemini error: {str(e)}")
+
+
+# ── /api/ai/* route aliases (frontend uses these) ───────────────
+# These forward to the same handlers as /api/claude/*
+
+@app.get("/api/ai/assessment")
+async def get_ai_assessment(user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    return await get_claude_assessment(user=user, db=db)
+
+@app.post("/api/ai/assessment/refresh")
+async def refresh_ai_assessment(user: User = Depends(get_current_user),
+                                 db: Session = Depends(get_db)):
+    return await refresh_claude_assessment(user=user, db=db)
+
+@app.post("/api/ai/ask")
+async def ai_ask(req: dict, user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    return await claude_ask(req=req, user=user, db=db)
 
 
 @app.get("/api/capital/symbols")
@@ -3354,9 +3369,9 @@ async def _run_engine(user_id: str, auto: Automation,
                 await asyncio.sleep(60)
                 continue
 
-            # ── Claude assessment gate (once per day at 9:10–9:15) ──
-            if t >= dtime(9, 15) and not state.claude_checked:
-                state.claude_checked = True
+            # ── AI assessment gate (once per day at 9:15) ──────────
+            if t >= dtime(9, 15) and not state.ai_checked:
+                state.ai_checked = True
                 db_cl = SessionLocal()
                 try:
                     user_cl = db_cl.query(User).filter(User.id == user_id).first()
@@ -3368,31 +3383,53 @@ async def _run_engine(user_id: str, auto: Automation,
                             ClaudeAssessment.assess_date == today_str
                         ).first()
                         if assess:
-                            state.claude_avoid = assess.avoid_strategies or []
+                            state.ai_avoid = assess.avoid_strategies or []
+                            risk_lvl = assess.risk_level or "medium"
+                            news_suspend = ai_cfg.get("news_suspend_enabled", True)
+                            news_threshold = ai_cfg.get("news_risk_threshold", "high")
+                            # Determine if news/risk gate should block trading
+                            risk_blocks = {
+                                "any":    True,
+                                "medium": risk_lvl in ("medium","high"),
+                                "high":   risk_lvl == "high",
+                            }.get(news_threshold, risk_lvl == "high")
                             if not assess.trade_today:
+                                reason_msg = assess.reason or "AI assessment"
                                 state.emit(
-                                    f"🤖 AI says skip today ({assess.reason}). "                                    f"Confidence: {assess.confidence}. "                                    f"Signals suspended. Disable AI trading gate in Profile to override.",
+                                    f"🤖 AI GATE: Skip today — {reason_msg} | "
+                                    f"Risk={risk_lvl} | Confidence={assess.confidence}. "
+                                    f"Disable AI trading gate in Profile to override.",
                                     "WARN")
-                                state.claude_suspended = True
+                                state.ai_suspended = True
+                            elif news_suspend and risk_blocks and assess.event_warning:
+                                # News/event override — high risk day with a warning
+                                state.emit(
+                                    f"📰 AI NEWS GATE: Suspended — {assess.event_warning} | "
+                                    f"Risk={risk_lvl}. Toggle 'Suspend on high-risk days' in Profile to override.",
+                                    "WARN")
+                                state.ai_suspended = True
                             else:
-                                state.claude_suspended = False
-                                if state.claude_avoid:
+                                state.ai_suspended = False
+                                if state.ai_avoid:
                                     state.emit(
-                                        f"🤖 AI assessment: Trade ✅ | Avoid: {state.claude_avoid} | "                                        f"{assess.reason}", "INFO")
+                                        f"🤖 AI: Trade ✅ | Avoid: {state.ai_avoid} | "
+                                        f"Risk={risk_lvl} | {assess.reason}", "INFO")
+                                elif assess.event_warning:
+                                    state.emit(f"📰 AI: {assess.event_warning} | Risk={risk_lvl} (within threshold, continuing)", "INFO")
                         else:
-                            state.claude_avoid = []
-                            state.claude_suspended = False
+                            state.ai_avoid = []
+                            state.ai_suspended = False
                     else:
-                        state.claude_avoid = []
-                        state.claude_suspended = False
+                        state.ai_avoid = []
+                        state.ai_suspended = False
                 except Exception as e:
-                    log.error(f"Claude gate error: {e}")
-                    state.claude_avoid = []
-                    state.claude_suspended = False
+                    log.error(f"AI gate error: {e}")
+                    state.ai_avoid = []
+                    state.ai_suspended = False
                 finally:
                     db_cl.close()
 
-            if getattr(state, 'claude_suspended', False):
+            if getattr(state, 'ai_suspended', False):
                 await asyncio.sleep(60)
                 continue
 

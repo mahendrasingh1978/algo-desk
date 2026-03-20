@@ -150,9 +150,9 @@ class EngineState:
         self.spot_locked:  Optional[float] = None
         self.event_checked:   bool = False    # event calendar checked today
         self.events_suspended: bool = False   # trading suspended by event
-        self.claude_checked:   bool = False   # Claude assessment checked today
-        self.claude_suspended: bool = False   # trading suspended by Claude
-        self.claude_avoid:     list = []      # strategies to skip per Claude
+        self.ai_checked:    bool = False   # AI assessment checked today
+        self.ai_suspended:  bool = False   # trading suspended by AI
+        self.ai_avoid:      list = []      # strategies to skip per AI assessment
         self.strikes:      List[StrikeState] = []
         self.orb_complete: bool = False
         self.position:     Optional[dict] = None
@@ -273,9 +273,13 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
     Guard 4 — Previous day move: if yesterday moved >2%, restrict strategies.
               Only S9 allowed on post-big-move days (via individual strategy checks).
 
-    PROFESSIONAL 15-MINUTE RULE:
-    Individual strategies enforce 9:30 minimum (not 9:22).
-    First 15 minutes are price discovery — not tradeable for premium selling.
+    FIRE WINDOW RULES (per strategy):
+    S1: 9:22 — ORB-only, no VWAP/EMA needed. Fire as soon as ORB complete.
+    S7: 9:30 — needs all strikes settled.
+    S2/S3: 9:35 — needs 20+ candles for meaningful VWAP.
+    S4/S8: 9:30 — needs price discovery to settle.
+    S6: 9:45 — IV confirmation needs more time.
+    S9: 11:00 — expiry theta crush window.
     """
     # Gate: one trade per automation per day
     if not state.orb_complete or state.position or state.traded_today:
@@ -305,10 +309,10 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
             return None
 
     enabled = set(state.config.get("strategies", ["S1", "S8"]))
-    # Claude avoid list — skip strategies AI flagged for today
-    claude_avoid = set(getattr(state, 'claude_avoid', []))
-    if claude_avoid:
-        enabled = enabled - claude_avoid
+    # AI avoid list — strategies flagged by morning assessment
+    ai_avoid = set(getattr(state, 'ai_avoid', []))
+    if ai_avoid:
+        enabled = enabled - ai_avoid
     for code, fn in [
         ("S7",_s7),("S1",_s1),("S8",_s8),
         ("S2",_s2),("S3",_s3),("S4",_s4),
@@ -414,7 +418,7 @@ def _s1(state, t, now):
     Example: morning ATM=23100, spot now=23130 (+30pts = 0.6 strikes)
     → Valid. Fire at 23100 if its ORB low was broken.
     """
-    if not (dtime(9,30) <= t <= dtime(14,0)): return None  # 15-min rule
+    if not (dtime(9,22) <= t <= dtime(14,0)): return None  # ORB complete at 9:22 — fire immediately
 
     if not state.atm_strike: return None
 
@@ -591,9 +595,9 @@ def _s3(state, t, now):
     Industry insight: Breakout failures are high probability setups.
     Selling at reversal point captures inflated IV from the spike.
     """
-    if not (dtime(9,22) <= t <= dtime(14,0)): return None
+    if not (dtime(9,35) <= t <= dtime(14,0)): return None  # needs 20+ candles for VWAP spike pattern
     atm = state.atm
-    if not atm or len(atm.combined_history) < 15: return None  # need 15 for meaningful high
+    if not atm or len(atm.combined_history) < 20: return None  # 20 candles minimum for S3
     recent_high = max(atm.combined_history[-15:])  # 15 candles (was 5 — too short)
     if recent_high < atm.vwap_val * 1.05 or atm.current >= atm.vwap_val: return None
     sb = _sb(state)
@@ -695,23 +699,23 @@ def _s9(state, t, now):
     atm = state.atm
     if not atm: return None
 
-    # Yesterday move filter — expiry day is risky after a big move
+    # Yesterday move filter — big move = unpredictable IV on expiry
     prev_move = _prev_day_move_pct(state)
+    hedge = 2  # standard expiry hedge
     if prev_move > 2.0:
         state.emit(
-            f"S9 skipped — yesterday moved {prev_move:.1f}%. "
-            f"Post-crash expiry days have unpredictable IV. "
-            f"Using wider hedge if you choose to override.", "INFO")
-        # Allow but widen hedge — don't block entirely on expiry day
+            f"S9: yesterday moved {prev_move:.1f}% — widening hedge to ±3 for safety. "
+            f"Post-big-move expiry has unpredictable IV crush timing.", "INFO")
+        hedge = 3  # wider hedge after big move day
     sb = _sb(state)
-    legs = _build_legs("S9", atm, sb, hedge_width=2)  # ±2 on expiry (safer — ±1 too tight if VIX elevated)
+    legs = _build_legs("S9", atm, sb, hedge_width=hedge)
     return {
         "code":"S9", "name":"Pre-Expiry Theta Crush",
-        "structure":"Iron Fly (ATM sell, ±1 tight hedge — expiry day)",
+        "structure":f"Iron Fly (ATM sell, ±{hedge} hedge — expiry day)",
         "strike": atm.strike,
         "combined": atm.current,
-        "reason": "Expiry day — rapid ATM theta decay 11:00-12:00",
-        "margin_note": "Tight hedge — low risk on expiry",
+        "reason": f"Expiry day — rapid ATM theta decay 11:00-12:00 | hedge=±{hedge}",
+        "margin_note": f"Hedge ±{hedge} — {"wider after big move" if hedge > 2 else "tight expiry hedge"}",
         **legs,
     }
 
