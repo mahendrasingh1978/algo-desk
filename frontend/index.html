@@ -900,12 +900,17 @@ function removeSkipDate(d) {
 function _renderSkipDates() {
   var el = document.getElementById('af-skip-list');
   if (!el) return;
-  el.innerHTML = _skipDates.map(function(d) {
-    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:99px;font-size:11px">'
-      + esc(d)
-      + '<button onclick="removeSkipDate('' + esc(d) + '')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;line-height:1;padding:0 2px">×</button>'
-      + '</span>';
-  }).join('');
+  var html = '';
+  _skipDates.forEach(function(d) {
+    html += '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;'
+          + 'background:var(--bg3);border:1px solid var(--border);border-radius:99px;font-size:11px">'
+          + esc(d)
+          + '<button data-date="' + esc(d) + '" onclick="removeSkipDate(this.dataset.date)" '
+          + 'style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;'
+          + 'line-height:1;padding:0 2px">×</button>'
+          + '</span>';
+  });
+  el.innerHTML = html;
 }
 
 function _loadAutoFormSchedule(cfg) {
