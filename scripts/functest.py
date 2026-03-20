@@ -1292,11 +1292,16 @@ def t_frontend_ai_day_features():
     assert 'cal-grid' in fe,             "Missing cal-grid CSS"
     assert 'showDayEvents' in fe,        "Missing showDayEvents"
     assert 'ai_insight' in fe,           "Missing ai_insight in trade detail"
-    # Gemini-specific
     assert 'gemini' in fe.lower(),       "Missing Gemini AI references in frontend"
-    assert 'news_suspend' in fe,         "Missing news_suspend toggle in frontend"
-    assert 'automation-name' in fe or 'af-name' in fe, "Missing automation name field"
-test("Frontend: day picker, skip dates, AI config (Gemini), calendar, news gate all present", t_frontend_ai_day_features)
+    assert 'news_suspend' in fe,         "Missing news_suspend toggle"
+    assert 'af-name' in fe,              "Missing automation name field"
+    assert 'bn-events' in fe,            "Calendar must be in bottom nav (bn-events)"
+    assert 'id="af-days"' in fe,         "Day picker must be in automation form"
+    assert 'af-skip-date' in fe,         "Skip dates input must be in automation form"
+    assert 'AI News Gate' in fe or 'News Gate' in fe, "Help page must have AI News Gate section"
+    assert 'Event Calendar' in fe,       "Help page must have Event Calendar section"
+    assert 'gemini-2.0-flash' in fe,     "Correct default Gemini model in frontend"
+test("Frontend: day picker, skip dates, Gemini AI, calendar in nav, day form, help updated", t_frontend_ai_day_features)
 
 def t_engine_state_has_gates():
     from engine import EngineState
@@ -1486,8 +1491,14 @@ def t_ai_models_endpoint():
     d = r.json()
     assert "models" in d
     ids = [m["id"] for m in d["models"]]
-    assert "gemini-1.5-flash" in ids, "gemini-1.5-flash should be listed"
-test("GET /api/ai/models — returns Gemini model list", t_ai_models_endpoint)
+    assert "gemini-2.0-flash" in ids,  "gemini-2.0-flash should be listed"
+    assert "gemini-1.5-flash" in ids,  "gemini-1.5-flash should be listed"
+    assert "gemini-1.5-pro" in ids,    "gemini-1.5-pro should be listed"
+    # No -latest or -exp suffixes
+    for mid in ids:
+        assert 'latest' not in mid, f"Model id should not have -latest suffix: {mid}"
+        assert mid not in ['gemini-1.5-flash-latest','gemini-2.0-flash-exp','gemini-1.5-pro-latest']
+test("GET /api/ai/models — correct Gemini model names (no -latest/-exp suffixes)", t_ai_models_endpoint)
 
 def t_ai_config_save():
     r = client.post("/api/ai/config", headers=H(), json={
