@@ -32,6 +32,10 @@ class User(Base):
     is_active      = Column(Boolean, default=True)
     is_verified    = Column(Boolean, default=False)
     timezone       = Column(String(50), default="Asia/Kolkata")
+    # AI configuration — per user
+    # {"api_key_enc":"...","model":"claude-sonnet-4-6","enabled":true,
+    #  "use_for_trading":true,"use_for_analysis":true}
+    ai_config      = Column(JSON, default=dict)
     # Single Telegram (legacy)
     telegram_token = Column(String(255), nullable=True)
     telegram_chat  = Column(String(100), nullable=True)
@@ -213,6 +217,48 @@ class ShadowTrade(Base):
     __table_args__   = (Index("idx_shadow_user_date", "user_id", "trade_date"),)
 
 # ── Auto-migrations ───────────────────────────────────────────────
+# ── Trading Events (user-managed calendar) ───────────────────────
+class TradingEvent(Base):
+    """User-managed event calendar. Engine suspends signals on event dates."""
+    __tablename__  = "trading_events"
+    id             = Column(String, primary_key=True, default=_uuid)
+    user_id        = Column(String, ForeignKey("users.id"), nullable=False)
+    event_date     = Column(String(10), nullable=False)   # YYYY-MM-DD
+    event_name     = Column(String(200), nullable=False)
+    category       = Column(String(50), default="other")  # rbi|fed|budget|expiry|other
+    suspend_trading = Column(Boolean, default=True)       # user toggle
+    notes          = Column(String(500), nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    user           = relationship("User", backref="trading_events")
+    __table_args__  = (Index("idx_events_user_date", "user_id", "event_date"),)
+
+
+# ── Claude Daily Assessment ───────────────────────────────────────
+class ClaudeAssessment(Base):
+    """Stores Claude's morning assessment for each user per trading day."""
+    __tablename__  = "claude_assessments"
+    id             = Column(String, primary_key=True, default=_uuid)
+    user_id        = Column(String, ForeignKey("users.id"), nullable=False)
+    assess_date    = Column(String(10), nullable=False)   # YYYY-MM-DD
+    trade_today    = Column(Boolean, default=True)
+    confidence     = Column(String(20), default="medium")  # high|medium|low
+    risk_level     = Column(String(20), default="medium")  # low|medium|high
+    recommended_strategies = Column(JSON, default=list)
+    avoid_strategies       = Column(JSON, default=list)
+    suggested_hedge        = Column(Integer, default=2)
+    vix_assessment         = Column(String(300), nullable=True)
+    gap_assessment         = Column(String(300), nullable=True)
+    reason                 = Column(String(500), nullable=True)
+    event_warning          = Column(String(300), nullable=True)
+    raw_response           = Column(Text, nullable=True)
+    created_at             = Column(DateTime, default=datetime.utcnow)
+    user                   = relationship("User", backref="claude_assessments")
+    __table_args__          = (
+        Index("idx_assess_user_date", "user_id", "assess_date"),
+        UniqueConstraint("user_id", "assess_date", name="uq_user_assess_date"),
+    )
+
+
 MIGRATIONS = [
     # Broker connections
     "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS refresh_token_enc TEXT",
@@ -240,6 +286,27 @@ MIGRATIONS = [
     "ALTER TABLE shadow_trades ALTER COLUMN lot_size SET DEFAULT 65",
     "ALTER TABLE trades ALTER COLUMN lot_size SET DEFAULT 65",
     "ALTER TABLE trades ALTER COLUMN brokerage SET DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_config JSON DEFAULT '{}'",
+    "ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS ai_insight TEXT",
+    "ALTER TABLE trades ADD COLUMN IF NOT EXISTS ai_insight TEXT",
+    # Trading events calendar
+    """CREATE TABLE IF NOT EXISTS trading_events (
+        id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+        event_date VARCHAR(10) NOT NULL, event_name VARCHAR(200) NOT NULL,
+        category VARCHAR(50) DEFAULT 'other', suspend_trading BOOLEAN DEFAULT TRUE,
+        notes VARCHAR(500), created_at TIMESTAMP DEFAULT NOW())""",
+    "CREATE INDEX IF NOT EXISTS idx_events_user_date ON trading_events(user_id, event_date)",
+    # Claude assessments
+    """CREATE TABLE IF NOT EXISTS claude_assessments (
+        id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+        assess_date VARCHAR(10) NOT NULL, trade_today BOOLEAN DEFAULT TRUE,
+        confidence VARCHAR(20) DEFAULT 'medium', risk_level VARCHAR(20) DEFAULT 'medium',
+        recommended_strategies JSON DEFAULT '[]', avoid_strategies JSON DEFAULT '[]',
+        suggested_hedge INTEGER DEFAULT 2, vix_assessment VARCHAR(300),
+        gap_assessment VARCHAR(300), reason VARCHAR(500), event_warning VARCHAR(300),
+        raw_response TEXT, created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, assess_date))""",
+    "CREATE INDEX IF NOT EXISTS idx_assess_user_date ON claude_assessments(user_id, assess_date)",
 ]
 
 def run_migrations(engine):

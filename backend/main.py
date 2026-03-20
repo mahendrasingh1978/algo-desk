@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
-from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, run_migrations
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, TradingEvent, ClaudeAssessment, run_migrations
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
 
@@ -52,6 +52,43 @@ SYMBOL_REGISTRY = {
     "BSE:SENSEX-INDEX":     {"lot_size": 20,  "label": "SENSEX",      "strike_gap": 100},
     "NSE:NIFTYNXT50-INDEX": {"lot_size": 25,  "label": "NIFTY NEXT 50","strike_gap": 50},
 }
+
+# -- Anthropic Claude -- per-user API key support
+try:
+    import anthropic as _anthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _anthropic = None
+    _ANTHROPIC_AVAILABLE = False
+
+_CLAUDE_MODEL = "claude-sonnet-4-6"
+
+def _simple_encrypt(text: str) -> str:
+    """Base64 encode API key for storage."""
+    import base64
+    return base64.b64encode(text.encode()).decode()
+
+def _simple_decrypt(encoded: str) -> str:
+    import base64
+    return base64.b64decode(encoded.encode()).decode()
+
+def _get_claude_client(user_ai_config: dict):
+    """Return (client, enabled). Uses per-user key or server env key."""
+    if not _ANTHROPIC_AVAILABLE:
+        return None, False
+    key_enc = (user_ai_config or {}).get("api_key_enc", "")
+    key = ""
+    if key_enc:
+        try:
+            key = _simple_decrypt(key_enc)
+        except Exception:
+            pass
+    if not key:
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return None, False
+    return _anthropic.Anthropic(api_key=key), True
+
 
 def calc_brokerage(lots: int, lot_size: int, 
                    entry_combined: float, exit_combined: float) -> dict:
@@ -478,6 +515,158 @@ def _save_tokens(user_id: str, conn: FyersConnection,
 # ── Startup ───────────────────────────────────────────────────
 
 
+# ── Claude AI Integration ─────────────────────────────────────────
+
+async def _run_claude_assessment(user_id: str, db_session) -> dict:
+    """
+    Run Claude's morning assessment for a user.
+    Called at 9:10 AM before market opens.
+    Returns structured JSON with trading recommendation.
+    """
+    user = db_session.query(User).filter(User.id == user_id).first()
+    ai_cfg = (user.ai_config or {}) if user else {}
+    claude, enabled = _get_claude_client(ai_cfg)
+    if not enabled:
+        return {"trade_today": True, "confidence": "medium",
+                "risk_level": "medium", "reason": "Claude not configured",
+                "recommended_strategies": [], "avoid_strategies": [],
+                "suggested_hedge": 2, "vix_assessment": "",
+                "gap_assessment": "", "event_warning": "",
+                "claude_enabled": False}
+
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).strftime("%Y-%m-%d")
+    dow   = datetime.now(ist).strftime("%A")  # Monday, Tuesday...
+    is_thursday = datetime.now(ist).weekday() == 3
+
+    # Gather context
+    cache  = _user_cache(user_id)
+    vix    = cache.get("vix", 0)
+    spot   = cache.get("spot", 0)
+    prev_close = cache.get("prev_close", 0)
+    gap_pct = ((spot - prev_close) / prev_close * 100) if prev_close else 0
+
+    # Get user's recent performance
+    from datetime import timedelta
+    since = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+    recent_trades = db_session.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user_id,
+        ShadowTrade.trade_date >= since,
+        ShadowTrade.is_open == False
+    ).all()
+    n = len(recent_trades)
+    wins = sum(1 for t in recent_trades if (t.net_pnl or 0) > 0)
+    win_rate = round(wins/n*100, 1) if n else 0
+
+    # Strategy-level win rates
+    strat_stats = {}
+    for t in recent_trades:
+        s = t.strategy_code
+        if s not in strat_stats:
+            strat_stats[s] = {"n":0, "wins":0}
+        strat_stats[s]["n"] += 1
+        if (t.net_pnl or 0) > 0:
+            strat_stats[s]["wins"] += 1
+    strat_summary = ", ".join(
+        f"{s}: {round(v['wins']/v['n']*100)}% win ({v['n']} trades)"
+        for s,v in strat_stats.items() if v["n"] >= 3
+    ) or "insufficient data"
+
+    # Check event calendar
+    events_today = db_session.query(TradingEvent).filter(
+        TradingEvent.user_id == user_id,
+        TradingEvent.event_date == today,
+        TradingEvent.suspend_trading == True
+    ).all()
+    event_str = ", ".join(e.event_name for e in events_today)
+
+    prompt = f"""You are an expert NIFTY 50 options trading risk advisor for an Indian retail algo trader.
+Respond ONLY with valid JSON — no markdown, no explanation outside the JSON.
+
+MARKET DATA TODAY ({dow} {today}):
+- India VIX: {vix if vix else 'unknown'}
+- NIFTY spot: {spot if spot else 'unknown'}
+- Previous close: {prev_close if prev_close else 'unknown'}
+- Gap from prev close: {gap_pct:.2f}%
+- Day of week: {dow}{' (EXPIRY DAY)' if is_thursday else ''}
+- Events today: {event_str if event_str else 'None'}
+
+USER PERFORMANCE (last 30 days):
+- Total paper trades: {n}
+- Overall win rate: {win_rate}%
+- By strategy: {strat_summary}
+
+AVAILABLE STRATEGIES: S1 (ORB Breakdown), S2 (VWAP Squeeze), S3 (Breakout Reversal),
+S4 (Iron Condor range-bound), S6 (Theta Strangle high IV), S7 (All-Strike Butterfly),
+S8 (Gap Fade), S9 (Expiry Day Theta - Thursdays only), S5 (Ratio Spread advanced)
+
+Respond with this exact JSON structure:
+{{
+  "trade_today": true or false,
+  "confidence": "high" or "medium" or "low",
+  "risk_level": "low" or "medium" or "high",
+  "recommended_strategies": ["S1", "S9"],
+  "avoid_strategies": ["S2"],
+  "suggested_hedge": 2,
+  "vix_assessment": "one concise line about VIX conditions",
+  "gap_assessment": "one concise line about gap and what it means",
+  "reason": "2-3 sentences explaining today recommendation",
+  "event_warning": "empty string or warning about events"
+}}"""
+
+    try:
+        msg = _claude.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            messages=[{"role":"user","content":prompt}]
+        )
+        raw = msg.content[0].text.strip()
+        # Strip any markdown fences
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw.strip())
+        result["raw_response"] = raw
+        return result
+    except Exception as e:
+        log.error(f"Claude assessment failed: {e}")
+        return {
+            "trade_today": True, "confidence": "low",
+            "risk_level": "medium", "reason": f"AI assessment unavailable: {str(e)}",
+            "recommended_strategies": [], "avoid_strategies": [],
+            "suggested_hedge": 2, "vix_assessment": "",
+            "gap_assessment": "", "event_warning": ""
+        }
+
+
+async def _analyse_closed_trade(trade, user_ai_config: dict) -> str:
+    """Quick one-line AI insight after a trade closes."""
+    claude, enabled = _get_claude_client(user_ai_config)
+    if not enabled or not (user_ai_config or {}).get("use_for_analysis", True):
+        return ""
+    try:
+        sig = trade.signal_data or {}
+        prompt = (f"NIFTY options trade result (one sentence insight only):\n"
+                  f"Strategy: {trade.strategy_code} | "
+                  f"Entry: Rs{trade.entry_combined} | "
+                  f"Exit: Rs{trade.exit_combined} | "
+                  f"Reason: {trade.exit_reason} | "
+                  f"Net PnL: Rs{trade.net_pnl} | "
+                  f"Signal: {sig.get('reason','?')} | "
+                  f"Entry time: {trade.entry_time}\n"
+                  f"In exactly one sentence, what caused this outcome?")
+        msg = claude.messages.create(
+            model=_CLAUDE_MODEL,
+            max_tokens=100,
+            messages=[{"role":"user","content":prompt}]
+        )
+        return msg.content[0].text.strip()
+    except Exception:
+        return ""
+
+
 def _to_ist(dt) -> str:
     """Format datetime as HH:MM IST.
     New records (post Jan 2026 fix) are stored as IST-naive.
@@ -866,6 +1055,8 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     bc = db.query(BrokerConnection).filter(
         BrokerConnection.user_id == user.id,
         BrokerConnection.is_connected == True).first()
+    ai_cfg = user.ai_config or {}
+    _, ai_on = _get_claude_client(ai_cfg)
     return {
         "id": user.id, "email": user.email, "name": user.name,
         "role": user.role, "plan": user.plan,
@@ -874,6 +1065,12 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         "broker_connected": bool(bc),
         "broker_name": bc.broker_name if bc else None,
         "broker_mode": bc.mode if bc else None,
+        "ai_enabled": ai_on,
+        "ai_model": ai_cfg.get("model", _CLAUDE_MODEL),
+        "ai_use_trading": ai_cfg.get("use_for_trading", True),
+        "ai_use_analysis": ai_cfg.get("use_for_analysis", True),
+        "ai_key_set": bool(ai_cfg.get("api_key_enc", "")),
+        "is_verified": user.is_verified,
     }
 
 class UpdateProfileReq(BaseModel):
@@ -1314,7 +1511,7 @@ def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
                    telegram_alerts=req.telegram_alerts,
                    config=req.config, status="IDLE")
     db.add(a); db.commit(); db.refresh(a)
-    return {"ok": True, "automation": {"id": a.id, "name": a.name}}
+    return {"ok": True, "id": a.id, "automation": {"id": a.id, "name": a.name}}
 
 @app.delete("/api/automations/{auto_id}")
 async def delete_automation(auto_id: str, user: User = Depends(get_current_user),
@@ -1821,6 +2018,70 @@ def activate_user(user_id: str, admin: User = Depends(require_admin),
     u = db.query(User).filter(User.id == user_id).first()
     if u: u.is_active = True; db.commit()
     return {"ok": True}
+
+# ── AI Settings ──────────────────────────────────────────────────
+
+class AIConfigReq(BaseModel):
+    api_key: str = ""         # raw key — will be encrypted
+    model: str = "claude-sonnet-4-6"
+    use_for_trading: bool = True    # gate: apply to engine decisions
+    use_for_analysis: bool = True   # gate: post-trade insights
+
+@app.post("/api/ai/config")
+async def save_ai_config(
+    req: AIConfigReq,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Save user AI configuration. API key stored encrypted."""
+    existing = user.ai_config or {}
+    new_cfg = {
+        "model": req.model or _CLAUDE_MODEL,
+        "use_for_trading": req.use_for_trading,
+        "use_for_analysis": req.use_for_analysis,
+    }
+    # Only update key if provided (non-empty)
+    if req.api_key.strip():
+        new_cfg["api_key_enc"] = _simple_encrypt(req.api_key.strip())
+    elif existing.get("api_key_enc"):
+        new_cfg["api_key_enc"] = existing["api_key_enc"]  # keep existing
+
+    user.ai_config = new_cfg
+    db.commit()
+    _, enabled = _get_claude_client(new_cfg)
+    return {"ok": True, "enabled": enabled,
+            "key_set": bool(new_cfg.get("api_key_enc",""))}
+
+@app.delete("/api/ai/config/key")
+async def remove_ai_key(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Remove the stored API key."""
+    cfg = user.ai_config or {}
+    cfg.pop("api_key_enc", None)
+    user.ai_config = cfg
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/ai/test")
+async def test_ai_connection(
+    user: User = Depends(get_current_user)
+):
+    """Test Claude connection with user key."""
+    claude, enabled = _get_claude_client(user.ai_config or {})
+    if not enabled:
+        return {"ok": False, "message": "No API key configured"}
+    try:
+        msg = claude.messages.create(
+            model=_CLAUDE_MODEL,
+            max_tokens=20,
+            messages=[{"role":"user","content":"Reply with just: OK"}]
+        )
+        return {"ok": True, "message": "Connected — " + msg.content[0].text.strip()}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
 
 @app.post("/api/automations/reset-status")
 async def reset_all_automation_status(
@@ -2652,6 +2913,210 @@ async def capital_check(
     }
 
 
+# ── Trading Events Calendar ──────────────────────────────────────
+
+@app.get("/api/events")
+def list_events(user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    events = db.query(TradingEvent).filter(
+        TradingEvent.user_id == user.id
+    ).order_by(TradingEvent.event_date).all()
+    return {"events": [
+        {"id": e.id, "date": e.event_date, "name": e.event_name,
+         "category": e.category, "suspend": e.suspend_trading,
+         "notes": e.notes}
+        for e in events
+    ]}
+
+class EventReq(BaseModel):
+    event_date: str
+    event_name: str
+    category: str = "other"
+    suspend_trading: bool = True
+    notes: str = ""
+
+@app.post("/api/events")
+def create_event(req: EventReq, user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    e = TradingEvent(user_id=user.id, event_date=req.event_date,
+                     event_name=req.event_name, category=req.category,
+                     suspend_trading=req.suspend_trading, notes=req.notes)
+    db.add(e); db.commit(); db.refresh(e)
+    return {"ok": True, "id": e.id}
+
+@app.put("/api/events/{event_id}")
+def update_event(event_id: str, req: EventReq,
+                 user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    e = db.query(TradingEvent).filter(
+        TradingEvent.id == event_id, TradingEvent.user_id == user.id).first()
+    if not e: raise HTTPException(404, "Event not found")
+    e.event_name = req.event_name; e.event_date = req.event_date
+    e.category = req.category; e.suspend_trading = req.suspend_trading
+    e.notes = req.notes; db.commit()
+    return {"ok": True}
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: str, user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    db.query(TradingEvent).filter(
+        TradingEvent.id == event_id,
+        TradingEvent.user_id == user.id).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True}
+
+@app.post("/api/events/seed-defaults")
+def seed_default_events(user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Pre-populate with known 2026 Indian market events."""
+    defaults = [
+        # RBI Policy dates 2026 (approximate — user should verify)
+        {"date":"2026-04-09","name":"RBI Monetary Policy","cat":"rbi"},
+        {"date":"2026-06-05","name":"RBI Monetary Policy","cat":"rbi"},
+        {"date":"2026-08-07","name":"RBI Monetary Policy","cat":"rbi"},
+        {"date":"2026-10-09","name":"RBI Monetary Policy","cat":"rbi"},
+        {"date":"2026-12-04","name":"RBI Monetary Policy","cat":"rbi"},
+        # US Fed 2026 (remaining)
+        {"date":"2026-03-18","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-05-07","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-06-17","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-07-29","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-09-16","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-11-05","name":"US Fed Rate Decision","cat":"fed"},
+        {"date":"2026-12-16","name":"US Fed Rate Decision","cat":"fed"},
+    ]
+    added = 0
+    for d in defaults:
+        existing = db.query(TradingEvent).filter(
+            TradingEvent.user_id == user.id,
+            TradingEvent.event_date == d["date"],
+            TradingEvent.event_name == d["name"]).first()
+        if not existing:
+            db.add(TradingEvent(user_id=user.id, event_date=d["date"],
+                                event_name=d["name"], category=d["cat"],
+                                suspend_trading=True))
+            added += 1
+    db.commit()
+    return {"ok": True, "added": added}
+
+
+# ── Claude AI Assessment ──────────────────────────────────────────
+
+@app.get("/api/claude/assessment")
+async def get_claude_assessment(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get today's Claude assessment. Triggers generation if not yet done."""
+    import pytz
+    today = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+    existing = db.query(ClaudeAssessment).filter(
+        ClaudeAssessment.user_id == user.id,
+        ClaudeAssessment.assess_date == today
+    ).first()
+    if existing:
+        return {"ok": True, "assessment": {
+            "date": existing.assess_date,
+            "trade_today": existing.trade_today,
+            "confidence": existing.confidence,
+            "risk_level": existing.risk_level,
+            "recommended_strategies": existing.recommended_strategies,
+            "avoid_strategies": existing.avoid_strategies,
+            "suggested_hedge": existing.suggested_hedge,
+            "vix_assessment": existing.vix_assessment,
+            "gap_assessment": existing.gap_assessment,
+            "reason": existing.reason,
+            "event_warning": existing.event_warning,
+            "claude_enabled": True,
+            "generated_at": existing.created_at.strftime("%H:%M IST") if existing.created_at else "",
+        }}
+    # Generate fresh
+    result = await _run_claude_assessment(user.id, db)
+    assess = ClaudeAssessment(
+        user_id=user.id, assess_date=today,
+        trade_today=result.get("trade_today", True),
+        confidence=result.get("confidence", "medium"),
+        risk_level=result.get("risk_level", "medium"),
+        recommended_strategies=result.get("recommended_strategies", []),
+        avoid_strategies=result.get("avoid_strategies", []),
+        suggested_hedge=result.get("suggested_hedge", 2),
+        vix_assessment=result.get("vix_assessment", ""),
+        gap_assessment=result.get("gap_assessment", ""),
+        reason=result.get("reason", ""),
+        event_warning=result.get("event_warning", ""),
+        raw_response=result.get("raw_response", "")
+    )
+    try:
+        db.add(assess); db.commit()
+    except Exception:
+        db.rollback()  # unique constraint if already exists
+    user_ai2 = user.ai_config or {}
+    _, enabled2 = _get_claude_client(user_ai2)
+    return {"ok": True, "assessment": {**result,
+            "date": today, "claude_enabled": enabled2,
+            "generated_at": datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M IST")}}
+
+@app.post("/api/claude/assessment/refresh")
+async def refresh_claude_assessment(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Force refresh today's assessment."""
+    import pytz
+    today = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+    db.query(ClaudeAssessment).filter(
+        ClaudeAssessment.user_id == user.id,
+        ClaudeAssessment.assess_date == today
+    ).delete(synchronize_session=False)
+    db.commit()
+    return await get_claude_assessment(user=user, db=db)
+
+@app.post("/api/claude/ask")
+async def claude_ask(
+    req: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Free-form question to Claude with user's trading context."""
+    user_ai = user.ai_config or {}
+    claude, enabled = _get_claude_client(user_ai)
+    if not enabled:
+        raise HTTPException(503, "Claude not configured. Add your API key in Profile → AI Settings.")
+    question = req.get("question", "").strip()
+    if not question:
+        raise HTTPException(400, "Question is required")
+
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    from datetime import timedelta
+    since = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.trade_date >= since,
+        ShadowTrade.is_open == False
+    ).all()
+    n = len(trades)
+    wins = sum(1 for t in trades if (t.net_pnl or 0) > 0)
+    total_pnl = sum(t.net_pnl or 0 for t in trades)
+
+    context = (f"Trader context: {n} paper trades last 30 days, "
+               f"{round(wins/n*100,1) if n else 0}% win rate, "
+               f"total P&L Rs{round(total_pnl,0)}. "
+               f"Platform: AlgoDesk (NIFTY options, Iron Fly/Condor, short premium). ")
+
+    try:
+        msg = claude.messages.create(
+            model=_CLAUDE_MODEL,
+            max_tokens=400,
+            messages=[{"role":"user",
+                       "content": context + "\n\nQuestion: " + question}]
+        )
+        return {"ok": True, "answer": msg.content[0].text.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Claude error: {str(e)}")
+
+
 @app.get("/api/capital/symbols")
 def capital_symbols(user: User = Depends(get_current_user)):
     """Returns full symbol registry with current lot sizes."""
@@ -2842,6 +3307,91 @@ async def _run_engine(user_id: str, auto: Automation,
             # Only run during market hours (9:15–15:30 Mon–Fri)
             if not (dtime(9, 15) <= t <= dtime(15, 30) and now.weekday() < 5):
                 state.emit("Outside market hours. Waiting...", "INFO")
+                await asyncio.sleep(60)
+                continue
+
+            # ── Day-of-week gate ──────────────────────────────────
+            # run_days: list of weekday ints 0=Mon … 4=Fri, default all
+            run_days = state.config.get("run_days", [0,1,2,3,4])
+            if run_days and now.weekday() not in run_days:
+                state.emit(
+                    f"Skipping today ({now.strftime('%A')}) — not in run_days {run_days}", "INFO")
+                await asyncio.sleep(3600)  # sleep 1hr, recheck
+                continue
+
+            # ── Skip-dates gate ───────────────────────────────────
+            today_str = now.strftime("%Y-%m-%d")
+            skip_dates = state.config.get("skip_dates", [])
+            if today_str in skip_dates:
+                state.emit(f"Skipping {today_str} — in skip_dates list", "INFO")
+                await asyncio.sleep(3600)
+                continue
+
+            # ── Event calendar gate (once per day at 9:15) ────────
+            if t >= dtime(9, 15) and not state.event_checked:
+                state.event_checked = True
+                db_ev = SessionLocal()
+                try:
+                    events_sus = db_ev.query(TradingEvent).filter(
+                        TradingEvent.user_id == user_id,
+                        TradingEvent.event_date == today_str,
+                        TradingEvent.suspend_trading == True
+                    ).all()
+                    if events_sus:
+                        names = ", ".join(e.event_name for e in events_sus)
+                        state.emit(
+                            f"⚠️ Trading suspended today — Event: {names}. "                            f"To trade anyway, toggle suspend off in Event Calendar.", "WARN")
+                        state.events_suspended = True
+                    else:
+                        state.events_suspended = False
+                except Exception:
+                    state.events_suspended = False
+                finally:
+                    db_ev.close()
+
+            if getattr(state, 'events_suspended', False):
+                await asyncio.sleep(60)
+                continue
+
+            # ── Claude assessment gate (once per day at 9:10–9:15) ──
+            if t >= dtime(9, 15) and not state.claude_checked:
+                state.claude_checked = True
+                db_cl = SessionLocal()
+                try:
+                    user_cl = db_cl.query(User).filter(User.id == user_id).first()
+                    ai_cfg  = (user_cl.ai_config or {}) if user_cl else {}
+                    use_trading = ai_cfg.get("use_for_trading", False)
+                    if use_trading:
+                        assess = db_cl.query(ClaudeAssessment).filter(
+                            ClaudeAssessment.user_id == user_id,
+                            ClaudeAssessment.assess_date == today_str
+                        ).first()
+                        if assess:
+                            state.claude_avoid = assess.avoid_strategies or []
+                            if not assess.trade_today:
+                                state.emit(
+                                    f"🤖 AI says skip today ({assess.reason}). "                                    f"Confidence: {assess.confidence}. "                                    f"Signals suspended. Disable AI trading gate in Profile to override.",
+                                    "WARN")
+                                state.claude_suspended = True
+                            else:
+                                state.claude_suspended = False
+                                if state.claude_avoid:
+                                    state.emit(
+                                        f"🤖 AI assessment: Trade ✅ | Avoid: {state.claude_avoid} | "                                        f"{assess.reason}", "INFO")
+                        else:
+                            state.claude_avoid = []
+                            state.claude_suspended = False
+                    else:
+                        state.claude_avoid = []
+                        state.claude_suspended = False
+                except Exception as e:
+                    log.error(f"Claude gate error: {e}")
+                    state.claude_avoid = []
+                    state.claude_suspended = False
+                finally:
+                    db_cl.close()
+
+            if getattr(state, 'claude_suspended', False):
                 await asyncio.sleep(60)
                 continue
 

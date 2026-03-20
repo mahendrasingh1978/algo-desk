@@ -148,6 +148,11 @@ class EngineState:
         self.spot_history: List[float] = []
         self.atm_strike:   Optional[int] = None
         self.spot_locked:  Optional[float] = None
+        self.event_checked:   bool = False    # event calendar checked today
+        self.events_suspended: bool = False   # trading suspended by event
+        self.claude_checked:   bool = False   # Claude assessment checked today
+        self.claude_suspended: bool = False   # trading suspended by Claude
+        self.claude_avoid:     list = []      # strategies to skip per Claude
         self.strikes:      List[StrikeState] = []
         self.orb_complete: bool = False
         self.position:     Optional[dict] = None
@@ -276,6 +281,10 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
             return None
 
     enabled = set(state.config.get("strategies", ["S1", "S8"]))
+    # Claude avoid list — skip strategies AI flagged for today
+    claude_avoid = set(getattr(state, 'claude_avoid', []))
+    if claude_avoid:
+        enabled = enabled - claude_avoid
     for code, fn in [
         ("S7",_s7),("S1",_s1),("S8",_s8),
         ("S2",_s2),("S3",_s3),("S4",_s4),
