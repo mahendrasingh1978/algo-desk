@@ -62,8 +62,8 @@ except ImportError:
     _genai = None
     _GENAI_AVAILABLE = False
 
-_GEMINI_MODEL = "gemini-1.5-flash"   # free tier: 15 rpm, 1500 rpd — plenty for AlgoDesk
-_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+_GEMINI_MODEL = "gemini-1.5-flash-latest"   # free tier: 15 rpm, 1500 rpd — plenty for AlgoDesk
+_GEMINI_MODELS = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-2.0-flash"]
 
 def _simple_encrypt(text: str) -> str:
     """Base64 encode API key for storage."""
@@ -2079,9 +2079,9 @@ async def test_ai_connection(user: User = Depends(get_current_user)):
 def get_ai_models(user: User = Depends(get_current_user)):
     """Return available Gemini model options."""
     return {"models": [
-        {"id": "gemini-1.5-flash",     "label": "Gemini 1.5 Flash",       "note": "Free tier \u00b7 Fast \u00b7 Recommended"},
-        {"id": "gemini-2.0-flash-exp", "label": "Gemini 2.0 Flash (Exp)", "note": "Free \u00b7 Latest experimental"},
-        {"id": "gemini-1.5-pro",       "label": "Gemini 1.5 Pro",         "note": "Paid \u00b7 Highest quality"},
+        {"id": "gemini-2.0-flash",        "label": "Gemini 2.0 Flash",     "note": "Free · Latest · Recommended"},
+        {"id": "gemini-1.5-flash-latest", "label": "Gemini 1.5 Flash",     "note": "Free tier · Fast · Stable"},
+        {"id": "gemini-1.5-pro-latest",   "label": "Gemini 1.5 Pro",       "note": "Paid · Highest quality"},
     ]}
 
 
