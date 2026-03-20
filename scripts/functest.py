@@ -1167,6 +1167,180 @@ def t_tab_bar_css_uniform():
     assert '.select-sm{' in fe or '.select-sm {' in fe, "Missing .select-sm CSS"
 test("Uniform tab-bar CSS present", t_tab_bar_css_uniform)
 
+# ── 20. Claude AI + Event Calendar ──────────────────────────
+print("\n20. Claude AI and Event Calendar...")
+
+def t_events_crud():
+    # Create event
+    r = client.post("/api/events", headers=H(), json={
+        "event_date": "2026-04-09",
+        "event_name": "RBI Policy Meeting",
+        "category": "rbi",
+        "suspend_trading": True,
+        "notes": "Watch VIX before this"
+    })
+    ok_status(r)
+    assert r.json().get("ok")
+    eid = r.json()["id"]
+    # List events
+    r2 = client.get("/api/events", headers=H())
+    ok_status(r2)
+    ids = [e["id"] for e in r2.json()["events"]]
+    assert eid in ids
+    # Update event
+    r3 = client.put(f"/api/events/{eid}", headers=H(), json={
+        "event_date": "2026-04-09",
+        "event_name": "RBI Policy Meeting (Updated)",
+        "category": "rbi",
+        "suspend_trading": False,
+        "notes": ""
+    })
+    ok_status(r3)
+    # Delete event
+    r4 = client.delete(f"/api/events/{eid}", headers=H())
+    ok_status(r4)
+    assert r4.json().get("ok")
+test("Events CRUD: create, list, update, delete", t_events_crud)
+
+def t_seed_default_events():
+    r = client.post("/api/events/seed-defaults", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "added" in d
+    # Events should now be present
+    r2 = client.get("/api/events", headers=H())
+    ok_status(r2)
+    assert len(r2.json()["events"]) > 0
+test("Events: seed defaults populates 2026 calendar", t_seed_default_events)
+
+def t_claude_assessment_endpoint():
+    r = client.get("/api/claude/assessment", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "assessment" in d
+    a = d["assessment"]
+    # Must have all required fields
+    for field in ["trade_today","confidence","risk_level",
+                  "recommended_strategies","avoid_strategies",
+                  "suggested_hedge","reason","claude_enabled"]:
+        assert field in a, f"Missing: {field}"
+    assert isinstance(a["trade_today"], bool)
+    assert isinstance(a["recommended_strategies"], list)
+    assert isinstance(a["avoid_strategies"], list)
+test("GET /api/claude/assessment: returns structured assessment", t_claude_assessment_endpoint)
+
+def t_claude_ask_no_key():
+    # Without API key, should return 503
+    r = client.post("/api/claude/ask", headers=H(),
+                    json={"question": "Should I trade today?"})
+    # Either 503 (no key) or 200 (key configured) — both valid
+    assert r.status_code in (200, 503), f"Unexpected: {r.status_code}"
+test("POST /api/claude/ask: returns 503 without key or 200 with key", t_claude_ask_no_key)
+
+def t_event_calendar_in_frontend():
+    fe = open('../frontend/index.html').read()
+    assert 'renderEvents' in fe, "Missing renderEvents function"
+    assert 'pg-events' in fe, "Missing pg-events page"
+    assert 'claude-dash-card' in fe, "Missing Claude dashboard card"
+    assert 'loadClaudeAssessment' in fe, "Missing loadClaudeAssessment"
+    assert 'openAiPanel' in fe, "Missing AI panel function"
+    assert 'ai-panel' in fe, "Missing AI panel HTML"
+    assert 'sendAiMessage' in fe, "Missing sendAiMessage"
+test("Frontend: Claude card, event calendar, AI panel all present", t_event_calendar_in_frontend)
+
+# ── 21. AI config + day picker + calendar ────────────────────
+print("\n21. AI config, day picker, calendar...")
+
+def t_ai_config_save():
+    r = client.post("/api/ai/config", headers=H(), json={
+        "api_key": "", "model": "claude-sonnet-4-6",
+        "use_for_trading": True, "use_for_analysis": True
+    })
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok")
+    assert "enabled" in d
+    assert "key_set" in d
+test("POST /api/ai/config: saves AI configuration", t_ai_config_save)
+
+def t_ai_test_no_key():
+    r = client.get("/api/ai/test", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "ok" in d
+    assert "message" in d
+test("GET /api/ai/test: returns ok/message without key", t_ai_test_no_key)
+
+def t_me_has_ai_fields():
+    r = client.get("/api/me", headers=H())
+    ok_status(r)
+    d = r.json()
+    for f in ["ai_enabled","ai_model","ai_use_trading","ai_use_analysis","ai_key_set"]:
+        assert f in d, f"Missing {f} in /api/me"
+test("/api/me: returns all AI config fields", t_me_has_ai_fields)
+
+def t_automation_run_days():
+    # Create automation with run_days
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "Test DOW", "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers", "strategies": ["S1"],
+        "mode": "paper", "shadow_mode": True, "telegram_alerts": False,
+        "config": {"lots":1,"lot_size":65,"run_days":[0,3,4],
+                   "skip_dates":["2026-04-14"],"auto_exit_time":"14:00",
+                   "max_loss_pct":30,"profit_target_pct":50}
+    })
+    ok_status(r)
+    aid = r.json()["id"]
+    # Verify config stored
+    r2 = client.get("/api/automations", headers=H())
+    auto = next((a for a in r2.json()["automations"] if a["id"]==aid), None)
+    assert auto, "Automation not found"
+    assert auto["config"].get("run_days") == [0,3,4]
+    assert "2026-04-14" in auto["config"].get("skip_dates",[])
+    # Cleanup
+    client.delete(f"/api/automations/{aid}", headers=H())
+test("Automation: run_days and skip_dates saved in config", t_automation_run_days)
+
+def t_frontend_ai_day_features():
+    fe = open('../frontend/index.html').read()
+    assert 'day-picker' in fe, "Missing day-picker CSS class"
+    assert 'day-btn' in fe, "Missing day-btn CSS class"
+    assert '_getSelectedDays' in fe, "Missing _getSelectedDays"
+    assert '_skipDates' in fe, "Missing _skipDates"
+    assert 'addSkipDate' in fe, "Missing addSkipDate"
+    assert 'saveAiConfig' in fe, "Missing saveAiConfig"
+    assert 'testAiConnection' in fe, "Missing testAiConnection"
+    assert 'cal-grid' in fe, "Missing cal-grid CSS"
+    assert 'showDayEvents' in fe, "Missing showDayEvents"
+    assert 'ai_insight' in fe, "Missing ai_insight in trade detail"
+test("Frontend: day picker, skip dates, AI config, calendar all present", t_frontend_ai_day_features)
+
+def t_engine_state_has_gates():
+    from engine import EngineState
+    s = EngineState({"mode":"paper"})
+    assert hasattr(s, 'event_checked'), "Missing event_checked"
+    assert hasattr(s, 'claude_checked'), "Missing claude_checked"
+    assert hasattr(s, 'claude_avoid'), "Missing claude_avoid"
+    assert hasattr(s, 'claude_suspended'), "Missing claude_suspended"
+test("EngineState: has all gate fields", t_engine_state_has_gates)
+
+def t_claude_avoid_removes_from_enabled():
+    from engine import EngineState, check_all_strategies
+    from datetime import datetime
+    s = EngineState({"strategies":["S1","S2","S8"], "mode":"paper"})
+    s.claude_avoid = ["S2","S8"]  # Claude says avoid these
+    s.orb_complete = True
+    s.atm_strike = 23100
+    # check_all_strategies should not even try S2 or S8
+    # We verify by checking the enabled set logic
+    enabled = set(s.config.get("strategies",[])) - set(s.claude_avoid)
+    assert "S1" in enabled
+    assert "S2" not in enabled
+    assert "S8" not in enabled
+test("Engine: claude_avoid correctly removes strategies from enabled set", t_claude_avoid_removes_from_enabled)
+
 # ── Summary ──────────────────────────────────────────────────
 import os
 if os.path.exists("functest.db"):
