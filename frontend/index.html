@@ -2906,7 +2906,7 @@ function _renderEventsView() {
           + '<div style="font-size:10px;color:var(--text2)">'+esc(dow)+' '+esc(day)+' • '+esc(catLabels[e.category||'other']||'')+'</div>'
           + '</div>'
           + '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
-          + '<label class="toggle" title="'+(e.suspend?'Suspend trading':'Allow trading')+'"><input type="checkbox"'+(e.suspend?' checked':'')+' onchange="toggleEventSuspend(''+esc(e.id)+'',this.checked)"><div class="toggle-track"></div></label>'
+          + '<label class="toggle" title="'+(e.suspend?'Suspend trading':'Allow trading')+'"><input type="checkbox"'+(e.suspend?' checked':'')+' onchange="toggleEventSuspend(\''+esc(e.id)+'\'',this.checked)"><div class="toggle-track"></div></label>'
           + '<button class="btn btn-ghost btn-sm" onclick="editEvent('+_jsonAttr(e)+')">Edit</button>'
           + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteEvent(\''+esc(e.id)+'\')" >&#10005;</button>'
           + '</div></div>';
@@ -2950,7 +2950,7 @@ function _renderEventsView() {
       var suspended = dayEvents.some(function(ev){ return ev.suspend; });
       var hasEvent  = dayEvents.length > 0;
       var cls = 'cal-day' + (isToday?' today':'') + (suspended?' suspended':(hasEvent?' allowed':''));
-      html += '<div class="'+cls+'" onclick="showDayEvents(\''+dateStr+'\',''+_jsonAttr(dayEvents)+')" title="'+dateStr+(hasEvent?' — '+dayEvents.map(function(ev){return ev.name;}).join(', '):'')+'">';
+      html += '<div class="'+cls+'" onclick="showDayEvents(\''+dateStr+'\',' +_jsonAttr(dayEvents)+')" title="'+dateStr+(hasEvent?' — '+dayEvents.map(function(ev){return ev.name;}).join(', '):'')+'">';
       html += '<span>'+day+'</span>';
       if (hasEvent) {
         var dotColor = catColors[dayEvents[0].category||'other'];
