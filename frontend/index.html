@@ -759,7 +759,7 @@ async function sendAiMessage() {
   var sendBtn = document.getElementById('ai-send');
   if (sendBtn) sendBtn.disabled = true;
   try {
-    var r = await api('POST', '/api/claude/ask', {question: q});
+    var r = await api('POST', '/api/ai/ask', {question: q});
     var thinkEl = document.getElementById(thinkId);
     if (thinkEl) thinkEl.outerHTML = '<div class="ai-msg assistant">'+esc(r.answer||'')+'</div>';
   } catch(e) {
@@ -775,7 +775,7 @@ var _claudeAssessment = null;
 
 async function loadClaudeAssessment() {
   try {
-    var r = await api('GET', '/api/claude/assessment');
+    var r = await api('GET', '/api/ai/assessment');
     _claudeAssessment = r.assessment;
     _updateClaudeCards();
   } catch(e) {
@@ -787,7 +787,7 @@ async function refreshClaudeAssessment() {
   var btn = document.getElementById('claude-refresh-btn');
   if (btn) { btn.disabled=true; btn.textContent='Refreshing...'; }
   try {
-    var r = await api('POST', '/api/claude/assessment/refresh');
+    var r = await api('POST', '/api/ai/assessment/refresh');
     _claudeAssessment = r.assessment;
     _updateClaudeCards();
     toast('Assessment refreshed', 'success');
@@ -845,7 +845,7 @@ function _buildClaudeCard(a) {
     + (a.reason ? '<div style="font-size:12px;line-height:1.5;font-style:italic;color:var(--text)">“'+esc(a.reason)+'”</div>' : '')
     // Event warning
     + (a.event_warning ? '<div style="margin-top:8px;padding:6px 8px;background:rgba(255,171,64,.1);border-radius:4px;font-size:11px;color:var(--amber)">⚠️ '+esc(a.event_warning)+'</div>' : '')
-    + (!a.claude_enabled ? '<div style="margin-top:8px;font-size:10px;color:var(--text2)">Set ANTHROPIC_API_KEY on server to enable AI assessment.</div>' : '');
+    + (!a.ai_enabled ? '<div style="margin-top:8px;font-size:10px;color:var(--text2)">Set ANTHROPIC_API_KEY on server to enable AI assessment.</div>' : '');
 }
 
 function _applyClaudeBadges(a) {
@@ -937,16 +937,21 @@ function toggleAiKeyVisibility() {
 }
 
 async function saveAiConfig() {
-  var key      = (document.getElementById('ai-key-input').value||'').trim();
-  var model    = document.getElementById('ai-model').value||'claude-sonnet-4-6';
-  var trading  = document.getElementById('ai-use-trading').checked;
-  var analysis = document.getElementById('ai-use-analysis').checked;
+  var key       = (document.getElementById('ai-key-input').value||'').trim();
+  var model     = document.getElementById('ai-model').value||'gemini-1.5-flash';
+  var trading   = document.getElementById('ai-use-trading').checked;
+  var analysis  = document.getElementById('ai-use-analysis').checked;
+  var newsEl    = document.getElementById('ai-news-suspend');
+  var threshEl  = document.getElementById('ai-news-threshold');
+  var newsSusp  = newsEl  ? newsEl.checked  : true;
+  var newsThresh= threshEl? threshEl.value  : 'high';
   try {
     var r = await api('POST', '/api/ai/config', {
       api_key: key, model: model,
-      use_for_trading: trading, use_for_analysis: analysis
+      use_for_trading: trading, use_for_analysis: analysis,
+      news_suspend_enabled: newsSusp, news_risk_threshold: newsThresh
     });
-    toast(r.enabled ? 'AI settings saved ✅ — Claude connected' : 'Settings saved (no key)', 'success');
+    toast(r.ok ? 'AI settings saved ✅' : 'Settings saved (no key set)', 'success');
     renderProfile();
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -1688,6 +1693,7 @@ function showAutoForm() {
   el.style.display = 'block';
   el.innerHTML = '<hr class="divider"><div class="section-title">New Automation</div>'
     + '<div class="card"><div class="card-body">'
+    + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional — auto-generated if blank)</span></label><input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%"></div>'
     + '<div class="field"><label>Symbol</label><select id="af-sym">'+symOptions+'</select></div>'
     + '<div class="field"><label>Broker</label><select id="af-broker">'+brokerOptions+'</select></div>'
     + '<div class="field"><label>Strategies <span style="font-size:10px;color:var(--text2);font-weight:400">(select one or more — first match each day fires)</span></label>'
@@ -1765,19 +1771,27 @@ async function saveAuto(mode) {
   var symLabel = document.getElementById('af-sym');
   var symText = symLabel ? symLabel.options[symLabel.selectedIndex].text : sym.split(':')[1]||sym;
   var stratList = Array.from(selectedStrategies);
+  var _nameEl = document.getElementById('af-name');
+  var _customName = _nameEl ? (_nameEl.value||'').trim() : '';
+  var _autoName = _customName || (symText + ' \u2014 ' + stratList.join('+'));
   try {
     await api('POST', '/api/automations', {
-      name: symText + ' \u2014 ' + stratList.join('+'),
+      name: _autoName,
       symbol: sym, broker_id: broker,
       strategies: stratList, mode: mode,
       shadow_mode: document.getElementById('af-shadow').checked,
       telegram_alerts: document.getElementById('af-tg').checked,
       config: {
         lots: parseInt(document.getElementById('af-lots').value)||1,
-        lot_size: parseInt(document.getElementById('af-lotsize').value)||75,
+        lot_size: parseInt(document.getElementById('af-lotsize').value)||65,
         max_loss_pct: parseInt(document.getElementById('af-maxloss').value)||30,
         profit_target_pct: parseInt(document.getElementById('af-profit').value)||50,
         auto_exit_time: document.getElementById('af-exit').value||'14:00',
+        run_days: _getSelectedDays(),
+        skip_dates: _skipDates.slice(),
+        max_trades_per_day: parseInt(document.getElementById('af-maxtrades').value)||1,
+        drift_max_pct: parseFloat(document.getElementById('af-driftmax').value)||1.5,
+        vix_max: parseFloat(document.getElementById('af-vixmax').value)||17,
       }
     });
     toast('Automation saved', 'success');
@@ -2578,7 +2592,7 @@ async function renderProfile() {
       + '<button class="btn btn-primary btn-sm" onclick="addTg()">Add Account</button>'
       + '</div></div>'
 
-      + '<div class="section-title" style="margin-top:12px">AI Trading Assistant</div>'      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'      + '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.6">Connect your Anthropic API key to enable AI morning assessments, strategy recommendations and trade insights. <a href="https://console.anthropic.com" target="_blank" style="color:rgba(99,102,241,.9)">Get key at console.anthropic.com →</a></div>'      + '<div class="field"><label>API Key</label>'      + '<div style="display:flex;gap:8px">'      + '<input type="password" id="ai-key-input" class="ai-key-input" placeholder="sk-ant-api03-..." style="flex:1">'      + '<button class="btn btn-ghost btn-sm" onclick="toggleAiKeyVisibility()" id="ai-key-toggle">Show</button>'      + '</div>'      + (u.ai_key_set ? '<div style="font-size:10px;color:var(--green);margin-top:3px">✅ Key saved — leave blank to keep</div>' : '<div style="font-size:10px;color:var(--text2);margin-top:3px">No key saved</div>')      + '</div>'      + '<div class="field"><label>Model</label><select id="ai-model">'      + '<option value="claude-sonnet-4-6"'+(u.ai_model==='claude-sonnet-4-6'?' selected':'')+'>Claude Sonnet 4.6 — recommended</option>'      + '<option value="claude-haiku-4-5-20251001"'+(u.ai_model==='claude-haiku-4-5-20251001'?' selected':'')+'>Claude Haiku 4.5 — faster, cheaper</option>'      + '</select></div>'      + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Use AI for trading decisions</div><div style="font-size:10px;color:var(--text2)">Morning assessment gates engine signals</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-trading"'+(u.ai_use_trading?' checked':'')+'>'      + '<div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Use AI for trade analysis</div><div style="font-size:10px;color:var(--text2)">Post-trade insight stored per trade</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-analysis"'+(u.ai_use_analysis?' checked':'')+'>'      + '<div class="toggle-track"></div></label></div>'      + '</div>'      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'      + '<button class="btn btn-primary btn-sm" onclick="saveAiConfig()">Save AI Settings</button>'      + '<button class="btn btn-ghost btn-sm" onclick="testAiConnection()" id="ai-test-btn">Test Connection</button>'      + (u.ai_key_set ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeAiKey()">Remove Key</button>' : '')      + '</div>'      + '<div id="ai-test-result" style="margin-top:8px;font-size:11px"></div>'      + '</div></div>'      + '<div class="section-title" style="margin-top:12px">Change Password</div>'
+      + '<div class="section-title" style="margin-top:12px">&#129302; AI Trading Assistant (Gemini)</div>'      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'      + '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.6">Connect your Google Gemini API key to enable AI morning assessments, smart news gates, strategy recommendations and trade insights. <a href="https://aistudio.google.com/apikey" target="_blank" style="color:rgba(99,102,241,.9)">Get free key at aistudio.google.com →</a> (no credit card needed for Flash model)</div>'      + '<div class="field"><label>Gemini API Key</label>'      + '<div style="display:flex;gap:8px">'      + '<input type="password" id="ai-key-input" class="ai-key-input" placeholder="AIza..." style="flex:1">'      + '<button class="btn btn-ghost btn-sm" onclick="toggleAiKeyVisibility()" id="ai-key-toggle">Show</button>'      + '</div>'      + (u.ai_key_set ? '<div style="font-size:10px;color:var(--green);margin-top:3px">✅ Key saved — leave blank to keep existing</div>' : '<div style="font-size:10px;color:var(--amber);margin-top:3px">⚠️ No key saved — AI features disabled</div>')'      + '</div>'      + '<div class="field"><label>Model</label><select id="ai-model">'      + '<option value="gemini-1.5-flash"'+(u.ai_model==='gemini-1.5-flash'?' selected':'')+'>Gemini 1.5 Flash — free tier, recommended</option>'      + '<option value="gemini-2.0-flash-exp"'+(u.ai_model==='gemini-2.0-flash-exp'?' selected':'')+'>Gemini 2.0 Flash Exp — free, latest</option>'      + '<option value="gemini-1.5-pro"'+(u.ai_model==='gemini-1.5-pro'?' selected':'')+'>Gemini 1.5 Pro — paid, highest quality</option>'      + '</select><div class="field-hint">Flash model is free: 15 req/min, 1500/day — more than enough for AlgoDesk</div></div>'      + '<div class="section-title" style="font-size:11px;margin-top:8px;margin-bottom:6px">AI Feature Toggles</div>'      + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Morning assessment</div><div style="font-size:10px;color:var(--text2)">AI rates today\'s risk and recommends strategies at 9:15</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-trading"'+(u.ai_use_trading?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Post-trade insight</div><div style="font-size:10px;color:var(--text2)">One-line AI summary after each trade closes</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-analysis"'+(u.ai_use_analysis?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">&#128240; News &amp; Risk Gate</div><div style="font-size:10px;color:var(--text2)">Suspend trading if AI detects a high-risk event (RBI, Fed, geopolitical shock, VIX spike)</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-news-suspend" checked><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;gap:10px;padding-left:4px">'      + '<label style="font-size:11px;color:var(--text2);white-space:nowrap">Suspend when risk is:</label>'      + '<select id="ai-news-threshold" style="font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:3px 8px">'      + '<option value="high" selected>High only (conservative)</option>'      + '<option value="medium">Medium or above (strict)</option>'      + '<option value="any">Any flag (most cautious)</option>'      + '</select></div>'      + '</div>'      + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:11px;color:var(--text2);margin-bottom:12px">'      + '<strong style="color:var(--text)">How the News Gate works:</strong> Every morning at 9:15 the AI checks VIX, gap size, event calendar and any active market warnings. If it judges the day as high-risk (e.g. RBI decision, VIX spike, >2% gap after a crash) and you have this toggle ON, the engine suspends signals for the day with a log message. You can always override by toggling this off or manually starting the engine.</div>'      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'      + '<button class="btn btn-primary btn-sm" onclick="saveAiConfig()">Save AI Settings</button>'      + '<button class="btn btn-ghost btn-sm" onclick="testAiConnection()" id="ai-test-btn">Test Connection</button>'      + (u.ai_key_set ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeAiKey()">Remove Key</button>' : '')'      + '</div>'      + '<div id="ai-test-result" style="margin-top:8px;font-size:11px"></div>'      + '</div></div>'      + '<div class="section-title" style="margin-top:12px">Change Password</div>'
       + '<div class="card"><div class="card-body">'
       + '<div class="field"><label>Current Password</label><input id="pw-old" type="password"></div>'
       + '<div class="field-row">'
