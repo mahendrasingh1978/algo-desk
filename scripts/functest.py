@@ -1341,6 +1341,151 @@ def t_claude_avoid_removes_from_enabled():
     assert "S8" not in enabled
 test("Engine: claude_avoid correctly removes strategies from enabled set", t_claude_avoid_removes_from_enabled)
 
+# ── 22. Strategy professional fixes ─────────────────────────
+print("\n22. Strategy professional fixes...")
+
+def t_s1_morning_atm_only():
+    from engine import EngineState, StrikeState, _s1
+    from datetime import datetime, time as dtime
+    s = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
+    s.orb_complete = True
+    s.atm_strike   = 23100
+    s.spot_locked  = 23100.0
+    # Spot has drifted 80pts (>50pt gate) from morning ATM
+    s.spot_history = [23100, 23130, 23160, 23180]
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 480.0
+        sk.combined_history = [460.0]  # all below orb_low
+        s.strikes.append(sk)
+    sig = _s1(s, dtime(10,0), datetime.now())
+    assert sig is None, f"S1 should skip when spot >50pts from morning ATM, got: {sig}"
+test("S1: skips when spot moved >1 strike from morning ATM", t_s1_morning_atm_only)
+
+def t_s1_fires_at_morning_atm():
+    from engine import EngineState, StrikeState, _s1
+    from datetime import datetime, time as dtime
+    s = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
+    s.orb_complete = True
+    s.atm_strike   = 23100
+    s.spot_locked  = 23100.0
+    # Spot within 1 strike (30pts)
+    s.spot_history = [23100, 23110, 23120, 23130]
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 490.0  # range >0.3% so valid
+        if i == 0:
+            sk.combined_history = [460.0]  # ATM broke ORB low
+        else:
+            sk.combined_history = [480.0]
+        sk.ce_symbol = f"NIFTY{23100+i*50}CE"
+        sk.pe_symbol = f"NIFTY{23100+i*50}PE"
+        s.strikes.append(sk)
+    sig = _s1(s, dtime(10,0), datetime.now())
+    assert sig is not None, "S1 should fire at morning ATM when spot is close"
+    assert sig["strike"] == 23100, f"Should fire at morning ATM 23100, got {sig['strike']}"
+test("S1: fires at morning ATM when spot within 1 strike", t_s1_fires_at_morning_atm)
+
+def t_s1_respects_15min_rule():
+    from engine import EngineState, StrikeState, _s1
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper","strike_round":50})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    sig = _s1(s, dtime(9,25), datetime.now())  # before 9:30
+    assert sig is None, "S1 should not fire before 9:30"
+test("S1: 15-minute rule — no fire before 9:30", t_s1_respects_15min_rule)
+
+def t_s2_needs_20_candles():
+    from engine import EngineState, StrikeState, _s2
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]*10
+    for i in range(-3,4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.combined_history = [480.0]*8  # only 8 candles
+        s.strikes.append(sk)
+    sig = _s2(s, dtime(9,40), datetime.now())
+    assert sig is None, "S2 should not fire with <20 candles"
+test("S2: requires minimum 20 candles", t_s2_needs_20_candles)
+
+def t_s2_needs_spike_first():
+    from engine import EngineState, StrikeState, _s2
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0
+    s.spot_history = [23100]*25
+    for i in range(-3,4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        # Never above VWAP in last 10 candles (no spike = no squeeze)
+        vwap = 490.0
+        sk.combined_history = [480.0]*25  # always below VWAP
+        sk._ema_count = 25
+        sk.ema75 = 495.0  # bearish
+        sk._vwap_sum = vwap * 25
+        sk._vwap_count = 25
+        s.strikes.append(sk)
+    sig = _s2(s, dtime(10,0), datetime.now())
+    assert sig is None, "S2 should not fire without a prior spike above VWAP"
+test("S2: requires prior spike above VWAP (real squeeze pattern)", t_s2_needs_spike_first)
+
+def t_s6_logic_correct():
+    from engine import EngineState, StrikeState, _s6
+    from datetime import datetime, time as dtime
+    # S6 should fire when combined > orb_high * 1.05 (elevated IV)
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    for i in range(-4,5):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_high = 460.0
+        sk.combined_history = [490.0]  # 490 > 460*1.05=483 → elevated
+        sk.ce_symbol = f"NIFTY{23100+i*50}CE"
+        sk.pe_symbol = f"NIFTY{23100+i*50}PE"
+        s.strikes.append(sk)
+    sig = _s6(s, dtime(10,0), datetime.now())
+    assert sig is not None, "S6 should fire when combined > orb_high*1.05 (elevated IV)"
+test("S6: fires when IV elevated (combined > ORB high × 1.05)", t_s6_logic_correct)
+
+def t_s6_no_fire_low_iv():
+    from engine import EngineState, StrikeState, _s6
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    for i in range(-4,5):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_high = 480.0
+        sk.combined_history = [470.0]  # 470 < 480*1.05=504 → not elevated
+        s.strikes.append(sk)
+    sig = _s6(s, dtime(10,0), datetime.now())
+    assert sig is None, "S6 should NOT fire when IV is NOT elevated"
+test("S6: does not fire when IV not elevated", t_s6_no_fire_low_iv)
+
+def t_s8_prev_day_filter():
+    from engine import EngineState, StrikeState, _s8
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper","prev_close":23777,"prev_day_move_pct":3.26})
+    s.atm_strike = 23100; s.spot_locked = 23200.0
+    s.spot_history = [23200]
+    for i in range(-3,4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.combined_history = [500.0]
+        s.strikes.append(sk)
+    sig = _s8(s, dtime(9,35), datetime.now())
+    assert sig is None, "S8 should skip when yesterday moved >2% (3.26%)"
+test("S8: skips when yesterday moved >2% (today's scenario)", t_s8_prev_day_filter)
+
+def t_s7_15min_rule():
+    from engine import EngineState, StrikeState, _s7
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    for i in range(-3,4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.combined_history = [460.0]
+        s.strikes.append(sk)
+    sig = _s7(s, dtime(9,25), datetime.now())
+    assert sig is None, "S7 should not fire before 9:30"
+test("S7: 15-minute rule — no fire before 9:30", t_s7_15min_rule)
+
 # ── Summary ──────────────────────────────────────────────────
 import os
 if os.path.exists("functest.db"):
