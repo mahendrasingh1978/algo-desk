@@ -54,16 +54,16 @@ SYMBOL_REGISTRY = {
 }
 
 # -- Google Gemini AI -- per-user API key support
-# Uses google-generativeai SDK (pip install google-generativeai)
+# Uses google-genai SDK (new stable SDK, pip install google-genai)
 try:
-    import google.generativeai as _genai
+    from google import genai as _genai
     _GENAI_AVAILABLE = True
 except ImportError:
     _genai = None
     _GENAI_AVAILABLE = False
 
-_GEMINI_MODEL = "gemini-1.5-flash-latest"   # free tier: 15 rpm, 1500 rpd — plenty for AlgoDesk
-_GEMINI_MODELS = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-2.0-flash"]
+_GEMINI_MODEL  = "gemini-2.0-flash"   # free tier default — stable, fast, current
+_GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
 
 def _simple_encrypt(text: str) -> str:
     """Base64 encode API key for storage."""
@@ -75,7 +75,9 @@ def _simple_decrypt(encoded: str) -> str:
     return base64.b64decode(encoded.encode()).decode()
 
 def _get_gemini_client(user_ai_config: dict):
-    """Return (model, enabled). Uses per-user Gemini key or server env key."""
+    """Return (client, enabled). Uses per-user Gemini key or server env key.
+    Returns a google.genai.Client — use client.models.generate_content(model=..., contents=...)
+    """
     if not _GENAI_AVAILABLE:
         return None, False
     key_enc = (user_ai_config or {}).get("api_key_enc", "")
@@ -90,9 +92,8 @@ def _get_gemini_client(user_ai_config: dict):
     if not key:
         return None, False
     try:
-        _genai.configure(api_key=key)
-        model_name = (user_ai_config or {}).get("model", _GEMINI_MODEL)
-        return _genai.GenerativeModel(model_name), True
+        client = _genai.Client(api_key=key)
+        return client, True
     except Exception:
         return None, False
 
@@ -628,8 +629,9 @@ Respond with this exact JSON structure:
             "suggested_hedge": 2, "vix_assessment": "",
             "gap_assessment": "", "event_warning": ""
         }
+    model_name = ai_cfg.get("model", _GEMINI_MODEL)
     try:
-        response = gemini.generate_content(prompt)
+        response = gemini.models.generate_content(model=model_name, contents=prompt)
         raw = response.text.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -668,7 +670,8 @@ async def _analyse_closed_trade(trade, user_ai_config: dict) -> str:
                   f"Signal: {sig.get('reason','?')} | "
                   f"Entry time: {trade.entry_time}\n"
                   f"In exactly one sentence, what caused this outcome?")
-        response = gemini.generate_content(prompt)
+        model_name = (user_ai_config or {}).get("model", _GEMINI_MODEL)
+        response = gemini.models.generate_content(model=model_name, contents=prompt)
         return response.text.strip()
     except Exception:
         return ""
@@ -2070,7 +2073,9 @@ async def test_ai_connection(user: User = Depends(get_current_user)):
     if not enabled or not gemini:
         return {"ok": False, "message": "No API key configured"}
     try:
-        response = gemini.generate_content("Reply with exactly: OK")
+        ai_cfg2 = user.ai_config or {}
+        model_name = ai_cfg2.get("model", _GEMINI_MODEL)
+        response = gemini.models.generate_content(model=model_name, contents="Reply with exactly: OK")
         return {"ok": True, "message": "Gemini connected \u2713 (" + response.text.strip()[:30] + ")"}
     except Exception as e:
         return {"ok": False, "message": str(e)}
@@ -2079,9 +2084,9 @@ async def test_ai_connection(user: User = Depends(get_current_user)):
 def get_ai_models(user: User = Depends(get_current_user)):
     """Return available Gemini model options."""
     return {"models": [
-        {"id": "gemini-2.0-flash",        "label": "Gemini 2.0 Flash",     "note": "Free · Latest · Recommended"},
-        {"id": "gemini-1.5-flash-latest", "label": "Gemini 1.5 Flash",     "note": "Free tier · Fast · Stable"},
-        {"id": "gemini-1.5-pro-latest",   "label": "Gemini 1.5 Pro",       "note": "Paid · Highest quality"},
+        {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "note": "Free · Latest · Recommended"},
+        {"id": "gemini-1.5-flash", "label": "Gemini 1.5 Flash", "note": "Free tier · Fast · Stable"},
+        {"id": "gemini-1.5-pro",   "label": "Gemini 1.5 Pro",   "note": "Paid · Highest quality"},
     ]}
 
 
@@ -3108,7 +3113,8 @@ async def claude_ask(
                f"Platform: AlgoDesk (NIFTY options, Iron Fly/Condor, short premium). ")
 
     try:
-        response = gemini.generate_content(context + "\n\nQuestion: " + question)
+        model_name = user_ai.get("model", _GEMINI_MODEL)
+        response = gemini.models.generate_content(model=model_name, contents=context + "\n\nQuestion: " + question)
         return {"ok": True, "answer": response.text.strip()}
     except Exception as e:
         raise HTTPException(500, f"Gemini error: {str(e)}")

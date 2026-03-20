@@ -16,5 +16,5 @@ python-multipart==0.0.9
 websockets==12.0
 alembic==1.13.1
 pydantic[email]==2.7.1
-google-generativeai==0.8.3
+google-genai>=1.0.0
 pytz==2024.1
