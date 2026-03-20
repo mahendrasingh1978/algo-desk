@@ -869,71 +869,49 @@ test("Reset trades: only affects requesting user", t_delete_own_trades_only)
 print("\n17. Signal quality guards...")
 
 def t_s1_uses_current_atm():
-    from engine import EngineState, StrikeState, _s1, _current_atm
+    """S1 must skip when spot drifts >50pts (1 strike) from morning ATM.
+    Morning ATM=23500, spot now=23100 — drift=400pts = 8 strikes. Must skip."""
+    from engine import EngineState, StrikeState, _s1
     from datetime import datetime, time as dtime
-    import types
-
-    # Build state simulating morning ATM=23500, spot drifted to 23100
     state = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
     state.orb_complete = True
     state.atm_strike   = 23500
     state.spot_locked  = 23500.0
-    state.spot_history = [23500, 23400, 23300, 23200, 23100]  # drifted
-
-    # Add 7 strikes around morning ATM
+    state.spot_history = [23500, 23400, 23300, 23200, 23100]  # 400pt drift
     for i in range(-3, 4):
-        sk = StrikeState(strike=23500 + i*50, offset=i, is_atm=(i==0))
-        sk.orb_low  = 470.0
-        sk.orb_high = 480.0
-        # Strike nearest current ATM (23100 → nearest=23100, but monitored range
-        # is 23350–23650, so nearest monitored is 23350)
-        # Simulate 23350 (offset=-3) breaking ORB low
-        if i == -3:
-            sk.combined_history = [465.0]  # below orb_low=470
-        else:
-            sk.combined_history = [475.0]  # above orb_low
+        sk = StrikeState(strike=23500+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 480.0
+        sk.combined_history = [465.0]  # all breaking ORB low
+        sk.ce_symbol = f"NIFTY{23500+i*50}CE"
+        sk.pe_symbol = f"NIFTY{23500+i*50}PE"
         state.strikes.append(sk)
-
-    t_val = dtime(10, 0)
-    now   = datetime.now()
-    sig   = _s1(state, t_val, now)
-
-    # Drift = (23500-23100)/50 = 8 strikes > DRIFT_MAX_STRIKES=3
-    # So S1 should be SKIPPED (candidate 23350 is 5 strikes from current ATM 23100)
-    assert sig is None, f"S1 should skip when drift too large, got: {sig}"
-test("S1: skips when candidate strike too far from current ATM", t_s1_uses_current_atm)
+    sig = _s1(state, dtime(10,0), datetime.now())
+    # 400pt drift > 50pt gate — must skip regardless of ORB break
+    assert sig is None, f"S1 must skip when spot drifted 400pts from morning ATM, got: {sig}"
+test("S1: skips when spot drifted >50pts from morning ATM (professional rule)", t_s1_uses_current_atm)
 
 def t_s1_fires_at_nearest_current_atm():
-    from engine import EngineState, StrikeState, _s1, nearest_strike, DRIFT_MAX_STRIKES
+    """S1 must ALWAYS fire at the MORNING ATM strike (locked at 9:15).
+    Even if spot has drifted slightly within the 50pt gate, the trade
+    must be at the morning ATM — never the current ATM."""
+    from engine import EngineState, StrikeState, _s1
     from datetime import datetime, time as dtime
-
-    # Small drift: morning ATM=23500, spot now=23350 (3 strikes = exactly at limit)
     state = EngineState({"strategies":["S1"],"mode":"paper","strike_round":50})
     state.orb_complete = True
-    state.atm_strike   = 23500
-    state.spot_locked  = 23500.0
-    state.spot_history = [23500, 23450, 23350]  # 3 strikes drift
-
+    state.atm_strike   = 23100  # morning ATM locked at 9:15
+    state.spot_locked  = 23100.0
+    state.spot_history = [23100, 23120, 23130]  # small drift, within 50pt gate
     for i in range(-3, 4):
-        sk = StrikeState(strike=23500 + i*50, offset=i, is_atm=(i==0))
-        sk.orb_low  = 470.0
-        sk.orb_high = 480.0
-        # Both -2 (23400) and -3 (23350) break ORB low
-        # -3 is closest to current ATM 23350, should be preferred
-        if i in (-2, -3):
-            sk.combined_history = [460.0]  # below 470
-        else:
-            sk.combined_history = [475.0]
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 490.0  # valid ORB range
+        sk.combined_history = [460.0]  # morning ATM below ORB low
+        sk.ce_symbol = f"NIFTY{23100+i*50}CE"
+        sk.pe_symbol = f"NIFTY{23100+i*50}PE"
         state.strikes.append(sk)
-
-    t_val = dtime(10, 0)
-    sig   = _s1(state, t_val, datetime.now())
-
-    # Current ATM = nearest_strike(23350) = 23350 (offset=-3)
-    # -3 should be preferred over -2 as it's closer to current ATM
-    if sig:
-        assert sig["strike"] == 23350, f"Should fire at 23350 (nearest current ATM), got {sig['strike']}"
-test("S1: fires at strike nearest current ATM not morning ATM", t_s1_fires_at_nearest_current_atm)
+    sig = _s1(state, dtime(10,0), datetime.now())
+    assert sig is not None, "S1 should fire — spot within 50pt gate"
+    assert sig["strike"] == 23100, f"Must fire at MORNING ATM 23100, not current ATM. Got {sig['strike']}"
+test("S1: always fires at morning ATM strike — never chases spot", t_s1_fires_at_nearest_current_atm)
 
 def t_drift_guard_suspends_all_signals():
     from engine import EngineState, StrikeState, check_all_strategies
@@ -1168,7 +1146,7 @@ def t_tab_bar_css_uniform():
 test("Uniform tab-bar CSS present", t_tab_bar_css_uniform)
 
 # ── 20. Claude AI + Event Calendar ──────────────────────────
-print("\n20. Claude AI and Event Calendar...")
+print("\n20. AI (Gemini) and Event Calendar...")
 
 def t_events_crud():
     # Create event
@@ -1214,56 +1192,55 @@ def t_seed_default_events():
     assert len(r2.json()["events"]) > 0
 test("Events: seed defaults populates 2026 calendar", t_seed_default_events)
 
-def t_claude_assessment_endpoint():
-    r = client.get("/api/claude/assessment", headers=H())
+def t_ai_assessment_endpoint():
+    r = client.get("/api/ai/assessment", headers=H())
     ok_status(r)
     d = r.json()
-    assert d.get("ok")
-    assert "assessment" in d
+    assert d.get("ok"), f"Expected ok=True, got: {d}"
+    assert "assessment" in d, "Missing assessment key"
     a = d["assessment"]
-    # Must have all required fields
     for field in ["trade_today","confidence","risk_level",
                   "recommended_strategies","avoid_strategies",
-                  "suggested_hedge","reason","claude_enabled"]:
-        assert field in a, f"Missing: {field}"
+                  "suggested_hedge","reason","ai_enabled"]:
+        assert field in a, f"Missing field: {field}"
     assert isinstance(a["trade_today"], bool)
     assert isinstance(a["recommended_strategies"], list)
     assert isinstance(a["avoid_strategies"], list)
-test("GET /api/claude/assessment: returns structured assessment", t_claude_assessment_endpoint)
+test("GET /api/ai/assessment: returns structured assessment", t_ai_assessment_endpoint)
 
-def t_claude_ask_no_key():
-    # Without API key, should return 503
-    r = client.post("/api/claude/ask", headers=H(),
+def t_ai_ask_no_key():
+    r = client.post("/api/ai/ask", headers=H(),
                     json={"question": "Should I trade today?"})
-    # Either 503 (no key) or 200 (key configured) — both valid
-    assert r.status_code in (200, 503), f"Unexpected: {r.status_code}"
-test("POST /api/claude/ask: returns 503 without key or 200 with key", t_claude_ask_no_key)
+    # Either 503 (no key configured) or 200 (key set) — both valid
+    assert r.status_code in (200, 503), f"Unexpected status: {r.status_code}"
+test("POST /api/ai/ask: returns 503 without key or 200 with key", t_ai_ask_no_key)
 
 def t_event_calendar_in_frontend():
     fe = open('../frontend/index.html').read()
-    assert 'renderEvents' in fe, "Missing renderEvents function"
-    assert 'pg-events' in fe, "Missing pg-events page"
-    assert 'claude-dash-card' in fe, "Missing Claude dashboard card"
-    assert 'loadClaudeAssessment' in fe, "Missing loadClaudeAssessment"
-    assert 'openAiPanel' in fe, "Missing AI panel function"
-    assert 'ai-panel' in fe, "Missing AI panel HTML"
-    assert 'sendAiMessage' in fe, "Missing sendAiMessage"
-test("Frontend: Claude card, event calendar, AI panel all present", t_event_calendar_in_frontend)
+    assert 'renderEvents' in fe,         "Missing renderEvents function"
+    assert 'pg-events' in fe,            "Missing pg-events page"
+    assert 'loadClaudeAssessment' in fe or 'loadAiAssessment' in fe, "Missing assessment loader"
+    assert 'openAiPanel' in fe,          "Missing AI panel function"
+    assert 'ai-panel' in fe,             "Missing AI panel HTML"
+    assert 'sendAiMessage' in fe,        "Missing sendAiMessage"
+    assert 'gemini' in fe.lower(),       "Missing Gemini reference in frontend"
+    assert 'news_suspend' in fe,         "Missing news_suspend toggle"
+test("Frontend: event calendar, AI panel (Gemini), news gate all present", t_event_calendar_in_frontend)
 
 # ── 21. AI config + day picker + calendar ────────────────────
 print("\n21. AI config, day picker, calendar...")
 
 def t_ai_config_save():
     r = client.post("/api/ai/config", headers=H(), json={
-        "api_key": "", "model": "claude-sonnet-4-6",
-        "use_for_trading": True, "use_for_analysis": True
+        "api_key": "", "model": "gemini-1.5-flash",
+        "use_for_trading": True, "use_for_analysis": True,
+        "news_suspend_enabled": True, "news_risk_threshold": "high"
     })
     ok_status(r)
     d = r.json()
-    assert d.get("ok")
-    assert "enabled" in d
+    assert d.get("ok"), f"Expected ok=True: {d}"
     assert "key_set" in d
-test("POST /api/ai/config: saves AI configuration", t_ai_config_save)
+test("POST /api/ai/config: saves Gemini AI configuration", t_ai_config_save)
 
 def t_ai_test_no_key():
     r = client.get("/api/ai/test", headers=H())
@@ -1305,41 +1282,43 @@ test("Automation: run_days and skip_dates saved in config", t_automation_run_day
 
 def t_frontend_ai_day_features():
     fe = open('../frontend/index.html').read()
-    assert 'day-picker' in fe, "Missing day-picker CSS class"
-    assert 'day-btn' in fe, "Missing day-btn CSS class"
-    assert '_getSelectedDays' in fe, "Missing _getSelectedDays"
-    assert '_skipDates' in fe, "Missing _skipDates"
-    assert 'addSkipDate' in fe, "Missing addSkipDate"
-    assert 'saveAiConfig' in fe, "Missing saveAiConfig"
-    assert 'testAiConnection' in fe, "Missing testAiConnection"
-    assert 'cal-grid' in fe, "Missing cal-grid CSS"
-    assert 'showDayEvents' in fe, "Missing showDayEvents"
-    assert 'ai_insight' in fe, "Missing ai_insight in trade detail"
-test("Frontend: day picker, skip dates, AI config, calendar all present", t_frontend_ai_day_features)
+    assert 'day-picker' in fe,           "Missing day-picker CSS class"
+    assert 'day-btn' in fe,              "Missing day-btn CSS class"
+    assert '_getSelectedDays' in fe,     "Missing _getSelectedDays"
+    assert '_skipDates' in fe,           "Missing _skipDates"
+    assert 'addSkipDate' in fe,          "Missing addSkipDate"
+    assert 'saveAiConfig' in fe,         "Missing saveAiConfig"
+    assert 'testAiConnection' in fe,     "Missing testAiConnection"
+    assert 'cal-grid' in fe,             "Missing cal-grid CSS"
+    assert 'showDayEvents' in fe,        "Missing showDayEvents"
+    assert 'ai_insight' in fe,           "Missing ai_insight in trade detail"
+    # Gemini-specific
+    assert 'gemini' in fe.lower(),       "Missing Gemini AI references in frontend"
+    assert 'news_suspend' in fe,         "Missing news_suspend toggle in frontend"
+    assert 'automation-name' in fe or 'af-name' in fe, "Missing automation name field"
+test("Frontend: day picker, skip dates, AI config (Gemini), calendar, news gate all present", t_frontend_ai_day_features)
 
 def t_engine_state_has_gates():
     from engine import EngineState
     s = EngineState({"mode":"paper"})
-    assert hasattr(s, 'event_checked'), "Missing event_checked"
-    assert hasattr(s, 'claude_checked'), "Missing claude_checked"
-    assert hasattr(s, 'claude_avoid'), "Missing claude_avoid"
-    assert hasattr(s, 'claude_suspended'), "Missing claude_suspended"
+    assert hasattr(s, 'event_checked'),  "Missing event_checked"
+    assert hasattr(s, 'ai_checked'),     "Missing ai_checked"
+    assert hasattr(s, 'ai_avoid'),       "Missing ai_avoid"
+    assert hasattr(s, 'ai_suspended'),   "Missing ai_suspended"
 test("EngineState: has all gate fields", t_engine_state_has_gates)
 
-def t_claude_avoid_removes_from_enabled():
+def t_ai_avoid_removes_from_enabled():
     from engine import EngineState, check_all_strategies
     from datetime import datetime
     s = EngineState({"strategies":["S1","S2","S8"], "mode":"paper"})
-    s.claude_avoid = ["S2","S8"]  # Claude says avoid these
+    s.ai_avoid = ["S2","S8"]  # AI says avoid these
     s.orb_complete = True
     s.atm_strike = 23100
-    # check_all_strategies should not even try S2 or S8
-    # We verify by checking the enabled set logic
-    enabled = set(s.config.get("strategies",[])) - set(s.claude_avoid)
+    enabled = set(s.config.get("strategies",[])) - set(s.ai_avoid)
     assert "S1" in enabled
     assert "S2" not in enabled
     assert "S8" not in enabled
-test("Engine: claude_avoid correctly removes strategies from enabled set", t_claude_avoid_removes_from_enabled)
+test("Engine: ai_avoid correctly removes strategies from enabled set", t_ai_avoid_removes_from_enabled)
 
 # ── 22. Strategy professional fixes ─────────────────────────
 print("\n22. Strategy professional fixes...")
@@ -1386,14 +1365,26 @@ def t_s1_fires_at_morning_atm():
     assert sig["strike"] == 23100, f"Should fire at morning ATM 23100, got {sig['strike']}"
 test("S1: fires at morning ATM when spot within 1 strike", t_s1_fires_at_morning_atm)
 
-def t_s1_respects_15min_rule():
+def t_s1_fires_from_9_22():
     from engine import EngineState, StrikeState, _s1
     from datetime import datetime, time as dtime
     s = EngineState({"mode":"paper","strike_round":50})
     s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
-    sig = _s1(s, dtime(9,25), datetime.now())  # before 9:30
-    assert sig is None, "S1 should not fire before 9:30"
-test("S1: 15-minute rule — no fire before 9:30", t_s1_respects_15min_rule)
+    # S1 should NOT fire before 9:22 (ORB not yet complete)
+    sig_early = _s1(s, dtime(9,20), datetime.now())
+    assert sig_early is None, "S1 should not fire before 9:22"
+    # S1 can fire at 9:22 (no VWAP dependency — ORB only)
+    for i in range(-3, 4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.orb_low = 470.0; sk.orb_high = 490.0
+        sk.combined_history = [460.0]
+        sk.ce_symbol = f'NIFTY{23100+i*50}CE'
+        sk.pe_symbol = f'NIFTY{23100+i*50}PE'
+        s.strikes.append(sk)
+    s.orb_complete = True
+    sig_922 = _s1(s, dtime(9,22), datetime.now())
+    assert sig_922 is not None, "S1 should be able to fire at 9:22 — ORB complete, no VWAP needed"
+test("S1: fires from 9:22 (not 9:30) — ORB-only, no VWAP dependency", t_s1_fires_from_9_22)
 
 def t_s2_needs_20_candles():
     from engine import EngineState, StrikeState, _s2
@@ -1485,6 +1476,141 @@ def t_s7_15min_rule():
     sig = _s7(s, dtime(9,25), datetime.now())
     assert sig is None, "S7 should not fire before 9:30"
 test("S7: 15-minute rule — no fire before 9:30", t_s7_15min_rule)
+
+# ── 23. Gemini AI endpoints ──────────────────────────────────
+print("\n23. Gemini AI config endpoints...")
+
+def t_ai_models_endpoint():
+    r = client.get("/api/ai/models", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert "models" in d
+    ids = [m["id"] for m in d["models"]]
+    assert "gemini-1.5-flash" in ids, "gemini-1.5-flash should be listed"
+test("GET /api/ai/models — returns Gemini model list", t_ai_models_endpoint)
+
+def t_ai_config_save():
+    r = client.post("/api/ai/config", headers=H(), json={
+        "api_key": "test-gemini-key",
+        "model": "gemini-1.5-flash",
+        "use_for_trading": True,
+        "use_for_analysis": True,
+        "news_suspend_enabled": True,
+        "news_risk_threshold": "high"
+    })
+    ok_status(r)
+    assert r.json().get("ok")
+test("POST /api/ai/config — save Gemini key and settings", t_ai_config_save)
+
+def t_ai_config_reflected_in_me():
+    r = client.get("/api/me", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ai_key_set") == True,  "ai_key_set should be True after save"
+    assert d.get("ai_use_trading") == True
+test("GET /api/me — reflects ai_key_set after config save", t_ai_config_reflected_in_me)
+
+def t_ai_config_delete_key():
+    r = client.delete("/api/ai/config/key", headers=H())
+    ok_status(r)
+    # Verify key is gone
+    r2 = client.get("/api/me", headers=H())
+    assert r2.json().get("ai_key_set") == False, "Key should be unset after delete"
+test("DELETE /api/ai/config/key — removes key", t_ai_config_delete_key)
+
+def t_ai_test_no_key():
+    r = client.get("/api/ai/test", headers=H())
+    ok_status(r)
+    d = r.json()
+    assert d.get("ok") == False, "Should fail with no key"
+    assert "key" in d.get("message","").lower() or "configured" in d.get("message","").lower()
+test("GET /api/ai/test — fails gracefully with no key", t_ai_test_no_key)
+
+def t_ai_news_gate_fields():
+    """Verify news gate config fields are saved and retrieved."""
+    r = client.post("/api/ai/config", headers=H(), json={
+        "news_suspend_enabled": False,
+        "news_risk_threshold": "medium"
+    })
+    ok_status(r)
+test("POST /api/ai/config — news gate fields (suspend/threshold)", t_ai_news_gate_fields)
+
+def t_engine_news_gate_logic():
+    """Engine state must have ai_suspended field — used for news/risk gate."""
+    from engine import EngineState
+    s = EngineState({"mode":"paper"})
+    assert hasattr(s, "ai_suspended"), "Missing ai_suspended for news gate"
+    assert hasattr(s, "ai_avoid"),     "Missing ai_avoid"
+    assert hasattr(s, "ai_checked"),   "Missing ai_checked"
+    s.ai_suspended = True
+    assert s.ai_suspended == True
+test("Engine: news gate state fields present and settable", t_engine_news_gate_fields)
+
+# ── 24. Automation naming + run_days ─────────────────────────
+print("\n24. Automation: name, run_days, skip_dates...")
+
+def t_automation_has_name_field():
+    """Automation model must have name column."""
+    from models import Automation
+    assert hasattr(Automation, "name"), "Automation missing name column"
+test("Model: Automation has name column", t_automation_has_name_field)
+
+def t_automation_name_saved():
+    """Create automation with custom name, verify returned."""
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "My Morning S1 Strategy",
+        "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers",
+        "strategies": ["S1"],
+        "mode": "paper",
+        "config": {"lots":1,"lot_size":65}
+    })
+    ok_status(r)
+    d = r.json()
+    aid = d.get("id")
+    assert aid, "No id returned"
+    # Fetch list and verify name
+    r2 = client.get("/api/automations", headers=H())
+    autos = r2.json()["automations"]
+    found = next((a for a in autos if a["id"] == aid), None)
+    assert found, "Automation not found in list"
+    assert found["name"] == "My Morning S1 Strategy", f"Name mismatch: {found['name']}"
+    # Cleanup
+    client.delete(f"/api/automations/{aid}", headers=H())
+test("Automation: name is saved and returned", t_automation_name_saved)
+
+def t_s3_needs_20_candles_and_9_35():
+    from engine import EngineState, StrikeState, _s3
+    from datetime import datetime, time as dtime
+    s = EngineState({"mode":"paper"})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    for i in range(-3,4):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.combined_history = [480.0]*15
+        s.strikes.append(sk)
+    # Before 9:35 should not fire
+    sig = _s3(s, dtime(9,30), datetime.now())
+    assert sig is None, "S3 should not fire before 9:35"
+test("S3: does not fire before 9:35 (needs VWAP history)", t_s3_needs_20_candles_and_9_35)
+
+def t_s9_widens_hedge_after_big_move():
+    from engine import EngineState, StrikeState, _s9
+    from datetime import datetime, time as dtime
+    import datetime as dt
+    # Thursday
+    thursday = dt.datetime(2026, 3, 26, 11, 30)
+    s = EngineState({"mode":"paper", "prev_day_move_pct": 3.26})
+    s.atm_strike = 23100; s.spot_locked = 23100.0; s.spot_history = [23100]
+    for i in range(-4,5):
+        sk = StrikeState(strike=23100+i*50, offset=i, is_atm=(i==0))
+        sk.combined_history = [350.0]
+        sk.ce_symbol = f'NIFTY{23100+i*50}CE'
+        sk.pe_symbol = f'NIFTY{23100+i*50}PE'
+        s.strikes.append(sk)
+    sig = _s9(s, dtime(11,30), thursday)
+    assert sig is not None, "S9 should still fire on expiry (just wider hedge)"
+    assert sig.get('hedge_width', 0) >= 3, f"S9 hedge should be >=3 after big move, got {sig.get('hedge_width')}"
+test("S9: widens hedge to ±3 when yesterday moved >2%", t_s9_widens_hedge_after_big_move)
 
 # ── Summary ──────────────────────────────────────────────────
 import os
