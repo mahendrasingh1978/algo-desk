@@ -252,6 +252,53 @@ details[open] summary{color:var(--text)}
 .page-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .select-sm{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 8px;font-size:12px;min-height:32px}
 
+/* ── Claude AI card ── */
+.claude-card{background:linear-gradient(135deg,var(--bg2) 0%,rgba(99,102,241,.08) 100%);border:1px solid rgba(99,102,241,.3);border-radius:var(--radius-lg);padding:14px;margin-bottom:12px}
+.claude-card .claude-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.claude-card .claude-title{font-size:12px;font-weight:700;color:rgba(99,102,241,1);display:flex;align-items:center;gap:6px}
+.claude-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:.3px}
+.claude-badge.go{background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+.claude-badge.stop{background:rgba(255,82,82,.15);color:var(--red);border:1px solid rgba(255,82,82,.3)}
+.claude-badge.caution{background:rgba(255,171,64,.15);color:var(--amber);border:1px solid rgba(255,171,64,.3)}
+.strat-badge-ai{display:inline-flex;align-items:center;gap:3px;font-size:9px;padding:1px 5px;border-radius:99px;font-weight:600;margin-left:3px}
+.strat-badge-ai.best{background:rgba(0,230,118,.2);color:var(--green)}
+.strat-badge-ai.avoid{background:rgba(255,82,82,.2);color:var(--red)}
+
+/* ── Assistant panel ── */
+#ai-panel{position:fixed;top:0;right:0;bottom:0;width:320px;max-width:90vw;background:var(--bg2);border-left:1px solid var(--border);z-index:250;transform:translateX(100%);transition:transform .25s;display:flex;flex-direction:column}
+#ai-panel.open{transform:translateX(0)}
+#ai-panel-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:249;display:none}
+#ai-panel-backdrop.open{display:block}
+.ai-msg{padding:10px 12px;border-radius:var(--radius-sm);font-size:12px;line-height:1.5;margin-bottom:8px}
+.ai-msg.user{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);text-align:right}
+.ai-msg.assistant{background:var(--bg3);border:1px solid var(--border)}
+.ai-msg.thinking{color:var(--text2);font-style:italic}
+
+/* ── AI Settings ── */
+.ai-key-input{font-family:var(--mono);font-size:11px;letter-spacing:.05em}
+.day-picker{display:flex;gap:4px;flex-wrap:wrap}
+.day-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center}
+.day-btn.active{background:var(--green);border-color:var(--green);color:#000}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:8px}
+.cal-header{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px}
+.cal-header-cell{text-align:center;font-size:9px;font-weight:700;color:var(--text2);padding:2px 0}
+.cal-day{aspect-ratio:1;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;cursor:pointer;position:relative;transition:all .12s;min-height:28px}
+.cal-day:hover{background:var(--bg3)}
+.cal-day.today{background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4)}
+.cal-day.has-event{font-weight:600}
+.cal-day.suspended{background:rgba(255,82,82,.1)}
+.cal-day.allowed{background:rgba(0,230,118,.07)}
+.cal-dot{width:5px;height:5px;border-radius:50%;margin-top:1px}
+
+/* ── Event calendar ── */
+.event-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.event-cat{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.event-cat.rbi{background:#ff5252}
+.event-cat.fed{background:#2196f3}
+.event-cat.budget{background:#ff9800}
+.event-cat.expiry{background:#00e676}
+.event-cat.other{background:var(--text2)}
+
 /* ── Toast ── */
 #toast{position:fixed;bottom:72px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--bg4);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px 18px;font-size:13px;opacity:0;transition:all .25s;pointer-events:none;z-index:999;white-space:nowrap;max-width:90vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -458,6 +505,7 @@ details[open] summary{color:var(--text)}
       <div class="tb-btn" onclick="doLogout()" title="Sign out">
         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </div>
+      <button class="btn btn-ghost" onclick="openAiPanel()" style="padding:4px 8px;font-size:13px;min-width:0;border:1px solid rgba(99,102,241,.4);color:rgba(99,102,241,.9);border-radius:var(--radius-sm)" title="AI Assistant">✦</button>
       <div class="tb-av" id="tb-av" onclick="nav('profile')">?</div>
     </div>
 
@@ -471,6 +519,7 @@ details[open] summary{color:var(--text)}
       <div class="page" id="pg-trades"></div>
       <div class="page" id="pg-performance"></div>
       <div class="page" id="pg-help"></div>
+      <div class="page" id="pg-events"></div>
       <div class="page" id="pg-profile"></div>
       <div class="page" id="pg-admin"></div>
     </div>
@@ -512,6 +561,10 @@ details[open] summary{color:var(--text)}
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           Trades
         </div>
+        <div class="more-item" onclick="navMore('events')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Event Calendar
+        </div>
         <div class="more-item" onclick="navMore('help')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           Help &amp; Guide
@@ -536,6 +589,35 @@ details[open] summary{color:var(--text)}
 </div>
 
 <div id="toast"></div>
+
+<!-- AI Assistant Panel -->
+<div id="ai-panel-backdrop" onclick="closeAiPanel()"></div>
+<div id="ai-panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid var(--border);flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:16px">✦</span>
+      <span style="font-size:14px;font-weight:600">AI Trading Assistant</span>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="closeAiPanel()">✕</button>
+  </div>
+  <div style="padding:12px;flex-shrink:0;border-bottom:1px solid var(--border)">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Suggested questions:</div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+      <button class="btn btn-ghost btn-sm" style="text-align:left;justify-content:flex-start;font-size:11px" onclick="askAi('Why did my last trades lose?')">Why did my last trades lose?</button>
+      <button class="btn btn-ghost btn-sm" style="text-align:left;justify-content:flex-start;font-size:11px" onclick="askAi('Am I ready to go live?')">Am I ready to go live?</button>
+      <button class="btn btn-ghost btn-sm" style="text-align:left;justify-content:flex-start;font-size:11px" onclick="askAi('What is the best strategy for today?')">Best strategy for today?</button>
+      <button class="btn btn-ghost btn-sm" style="text-align:left;justify-content:flex-start;font-size:11px" onclick="askAi('Explain my win rate by strategy')">Explain my win rate by strategy</button>
+    </div>
+  </div>
+  <div id="ai-chat" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column"></div>
+  <div style="padding:12px;border-top:1px solid var(--border);flex-shrink:0">
+    <div style="display:flex;gap:6px">
+      <input id="ai-input" type="text" placeholder="Ask anything about your trades..." style="flex:1;font-size:12px" onkeydown="if(event.key==='Enter')sendAiMessage()">
+      <button class="btn btn-primary btn-sm" onclick="sendAiMessage()" id="ai-send">Ask</button>
+    </div>
+    <div style="font-size:10px;color:var(--text2);margin-top:6px;text-align:center">Powered by Claude Sonnet</div>
+  </div>
+</div>
 
 <script>
 // ══════════════════════════════════════════════════════════
@@ -646,6 +728,250 @@ async function doForgot() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+// ── AI ASSISTANT PANEL ───────────────────────────────────────────
+var _aiHistory = [];
+
+function openAiPanel() {
+  document.getElementById('ai-panel').classList.add('open');
+  document.getElementById('ai-panel-backdrop').classList.add('open');
+  document.getElementById('ai-input').focus();
+}
+function closeAiPanel() {
+  document.getElementById('ai-panel').classList.remove('open');
+  document.getElementById('ai-panel-backdrop').classList.remove('open');
+}
+function askAi(question) {
+  document.getElementById('ai-input').value = question;
+  sendAiMessage();
+}
+async function sendAiMessage() {
+  var input = document.getElementById('ai-input');
+  var q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  var chat = document.getElementById('ai-chat');
+  // Add user message
+  chat.innerHTML += '<div class="ai-msg user">'+esc(q)+'</div>';
+  // Add thinking indicator
+  var thinkId = 'ai-think-'+Date.now();
+  chat.innerHTML += '<div class="ai-msg thinking" id="'+thinkId+'">Thinking...</div>';
+  chat.scrollTop = chat.scrollHeight;
+  var sendBtn = document.getElementById('ai-send');
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    var r = await api('POST', '/api/claude/ask', {question: q});
+    var thinkEl = document.getElementById(thinkId);
+    if (thinkEl) thinkEl.outerHTML = '<div class="ai-msg assistant">'+esc(r.answer||'')+'</div>';
+  } catch(e) {
+    var thinkEl2 = document.getElementById(thinkId);
+    if (thinkEl2) thinkEl2.outerHTML = '<div class="ai-msg assistant" style="color:var(--red)">'+esc(e.message)+'</div>';
+  }
+  if (sendBtn) sendBtn.disabled = false;
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ── CLAUDE MORNING ASSESSMENT ─────────────────────────────────────
+var _claudeAssessment = null;
+
+async function loadClaudeAssessment() {
+  try {
+    var r = await api('GET', '/api/claude/assessment');
+    _claudeAssessment = r.assessment;
+    _updateClaudeCards();
+  } catch(e) {
+    _claudeAssessment = null;
+  }
+}
+
+async function refreshClaudeAssessment() {
+  var btn = document.getElementById('claude-refresh-btn');
+  if (btn) { btn.disabled=true; btn.textContent='Refreshing...'; }
+  try {
+    var r = await api('POST', '/api/claude/assessment/refresh');
+    _claudeAssessment = r.assessment;
+    _updateClaudeCards();
+    toast('Assessment refreshed', 'success');
+  } catch(e) { toast(e.message, 'error'); }
+  if (btn) { btn.disabled=false; btn.textContent='↻ Refresh'; }
+}
+
+function _updateClaudeCards() {
+  var a = _claudeAssessment;
+  if (!a) return;
+
+  // Update dashboard assessment card
+  var card = document.getElementById('claude-dash-card');
+  if (card) card.innerHTML = _buildClaudeCard(a);
+
+  // Update strategy badges in automate form
+  _applyClaudeBadges(a);
+}
+
+function _buildClaudeCard(a) {
+  if (!a) return '';
+  var tradeClass = a.trade_today ? 'go' : 'stop';
+  var tradeLabel = a.trade_today ? '✅ Trade Today' : '🛑 Skip Today';
+  var riskColors = {low:'var(--green)', medium:'var(--amber)', high:'var(--red)'};
+  var riskColor  = riskColors[a.risk_level||'medium'] || 'var(--amber)';
+  var confColor  = {high:'var(--green)', medium:'var(--amber)', low:'var(--red)'}[a.confidence||'medium'];
+
+  var recHtml  = (a.recommended_strategies||[]).map(function(s){
+    return '<span class="strat-badge-ai best">'+esc(s)+'</span>';
+  }).join(' ');
+  var avoidHtml = (a.avoid_strategies||[]).map(function(s){
+    return '<span class="strat-badge-ai avoid">'+esc(s)+'</span>';
+  }).join(' ');
+
+  return '<div class="claude-header">'
+    + '<div class="claude-title">✦ AI Assessment &nbsp;<span style="font-size:10px;color:var(--text2);font-weight:400">'+esc(a.generated_at||a.date||'')+'</span></div>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<span class="claude-badge '+tradeClass+'">'+tradeLabel+'</span>'
+    + '<button id="claude-refresh-btn" class="btn btn-ghost btn-sm" onclick="refreshClaudeAssessment()" style="font-size:10px;padding:2px 8px">↻ Refresh</button>'
+    + '<button class="btn btn-ghost btn-sm" onclick="openAiPanel()" style="font-size:10px;padding:2px 8px">Ask →</button>'
+    + '</div></div>'
+    // Risk + confidence row
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<span style="font-size:11px">Risk: <strong style="color:'+riskColor+'">'+(a.risk_level||'').toUpperCase()+'</strong></span>'
+    + '<span style="font-size:11px">Confidence: <strong style="color:'+confColor+'">'+(a.confidence||'').toUpperCase()+'</strong></span>'
+    + (a.suggested_hedge ? '<span style="font-size:11px">Hedge: <strong>±'+a.suggested_hedge+' strikes</strong></span>' : '')
+    + '</div>'
+    // Strategies
+    + (recHtml  ? '<div style="margin-bottom:4px;font-size:11px"><span style="color:var(--text2)">Use: </span>'+recHtml+'</div>' : '')
+    + (avoidHtml? '<div style="margin-bottom:8px;font-size:11px"><span style="color:var(--text2)">Avoid: </span>'+avoidHtml+'</div>' : '')
+    // VIX / gap lines
+    + (a.vix_assessment ? '<div style="font-size:11px;color:var(--text2);margin-bottom:2px">'+esc(a.vix_assessment)+'</div>' : '')
+    + (a.gap_assessment ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">'+esc(a.gap_assessment)+'</div>' : '')
+    // Main reason
+    + (a.reason ? '<div style="font-size:12px;line-height:1.5;font-style:italic;color:var(--text)">“'+esc(a.reason)+'”</div>' : '')
+    // Event warning
+    + (a.event_warning ? '<div style="margin-top:8px;padding:6px 8px;background:rgba(255,171,64,.1);border-radius:4px;font-size:11px;color:var(--amber)">⚠️ '+esc(a.event_warning)+'</div>' : '')
+    + (!a.claude_enabled ? '<div style="margin-top:8px;font-size:10px;color:var(--text2)">Set ANTHROPIC_API_KEY on server to enable AI assessment.</div>' : '');
+}
+
+function _applyClaudeBadges(a) {
+  if (!a) return;
+  var rec   = a.recommended_strategies || [];
+  var avoid = a.avoid_strategies || [];
+  ['S1','S2','S3','S4','S5','S6','S7','S8','S9'].forEach(function(code) {
+    var el = document.getElementById('sp-'+code);
+    if (!el) return;
+    // Remove old badges
+    var old = el.querySelector('.strat-badge-ai');
+    if (old) old.remove();
+    if (rec.indexOf(code) >= 0) {
+      el.insertAdjacentHTML('beforeend', '<div class="strat-badge-ai best">★ Today</div>');
+    } else if (avoid.indexOf(code) >= 0) {
+      el.insertAdjacentHTML('beforeend', '<div class="strat-badge-ai avoid">⚠ Avoid</div>');
+    }
+  });
+}
+
+// ── AUTOMATION DAY PICKER & SKIP DATES ──────────────────────────
+var _skipDates = [];
+
+function toggleDay(el) {
+  el.classList.toggle('active');
+}
+
+function _getSelectedDays() {
+  var btns = document.querySelectorAll('#af-days .day-btn');
+  var days = [];
+  btns.forEach(function(b) {
+    if (b.classList.contains('active')) days.push(parseInt(b.dataset.day));
+  });
+  return days.length ? days : [0,1,2,3,4]; // default all
+}
+
+function addSkipDate() {
+  var inp = document.getElementById('af-skip-date');
+  var d = inp ? inp.value : '';
+  if (!d) return;
+  if (_skipDates.indexOf(d) >= 0) { toast('Date already added', 'error'); return; }
+  _skipDates.push(d);
+  inp.value = '';
+  _renderSkipDates();
+}
+
+function removeSkipDate(d) {
+  _skipDates = _skipDates.filter(function(x){ return x !== d; });
+  _renderSkipDates();
+}
+
+function _renderSkipDates() {
+  var el = document.getElementById('af-skip-list');
+  if (!el) return;
+  el.innerHTML = _skipDates.map(function(d) {
+    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:99px;font-size:11px">'
+      + esc(d)
+      + '<button onclick="removeSkipDate('' + esc(d) + '')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;line-height:1;padding:0 2px">×</button>'
+      + '</span>';
+  }).join('');
+}
+
+function _loadAutoFormSchedule(cfg) {
+  // Restore day picker state from existing automation config
+  if (!cfg) return;
+  var run_days = cfg.run_days || [0,1,2,3,4];
+  var btns = document.querySelectorAll('#af-days .day-btn');
+  btns.forEach(function(b) {
+    var day = parseInt(b.dataset.day);
+    if (run_days.indexOf(day) >= 0) b.classList.add('active');
+    else b.classList.remove('active');
+  });
+  _skipDates = (cfg.skip_dates || []).slice();
+  _renderSkipDates();
+}
+
+// ── AI SETTINGS (Profile) ────────────────────────────────────────
+function toggleAiKeyVisibility() {
+  var inp = document.getElementById('ai-key-input');
+  var btn = document.getElementById('ai-key-toggle');
+  if (!inp) return;
+  if (inp.type === 'password') { inp.type = 'text'; if (btn) btn.textContent = 'Hide'; }
+  else { inp.type = 'password'; if (btn) btn.textContent = 'Show'; }
+}
+
+async function saveAiConfig() {
+  var key      = (document.getElementById('ai-key-input').value||'').trim();
+  var model    = document.getElementById('ai-model').value||'claude-sonnet-4-6';
+  var trading  = document.getElementById('ai-use-trading').checked;
+  var analysis = document.getElementById('ai-use-analysis').checked;
+  try {
+    var r = await api('POST', '/api/ai/config', {
+      api_key: key, model: model,
+      use_for_trading: trading, use_for_analysis: analysis
+    });
+    toast(r.enabled ? 'AI settings saved ✅ — Claude connected' : 'Settings saved (no key)', 'success');
+    renderProfile();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function testAiConnection() {
+  var btn = document.getElementById('ai-test-btn');
+  var res = document.getElementById('ai-test-result');
+  if (btn) btn.disabled = true;
+  if (res) res.textContent = 'Testing...';
+  try {
+    var r = await api('GET', '/api/ai/test');
+    if (res) {
+      res.textContent = r.ok ? '✅ ' + r.message : '❌ ' + r.message;
+      res.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+    }
+  } catch(e) {
+    if (res) { res.textContent = '❌ ' + e.message; res.style.color = 'var(--red)'; }
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function removeAiKey() {
+  if (!confirm('Remove your API key? AI features will be disabled.')) return;
+  try {
+    await api('DELETE', '/api/ai/config/key');
+    toast('API key removed', 'success');
+    renderProfile();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 function doLogout() {
   session = {token:null, user:null};
   localStorage.removeItem('algodesk');
@@ -699,7 +1025,7 @@ function navMore(id) {
 // ── NAV ─────────────────────────────────────────────────────
 function nav(id) {
   closeMoreDrawer();
-  var pages = ['dashboard','brokers','automate','live','trades','performance','help','profile','admin'];
+  var pages = ['dashboard','brokers','automate','live','trades','performance','help','profile','admin','events'];
   pages.forEach(function(p) {
     var pg = document.getElementById('pg-' + p);
     if (pg) pg.className = 'page' + (p===id ? ' active' : '');
@@ -722,6 +1048,7 @@ function nav(id) {
   if (id==='trades') renderTrades();
   if (id==='performance') renderPerformance();
   if (id==='help') renderHelp();
+  if (id==='events') renderEvents();
   if (id==='profile') renderProfile();
   if (id==='admin') renderAdmin();
 }
@@ -1062,7 +1389,7 @@ async function renderDashboard() {
       + '<div class="kpi '+(s.open_positions>0?'blue':'')+'"><div class="kpi-label">Open Positions</div><div class="kpi-value neutral">'+(s.open_positions||0)+'</div><div class="kpi-sub">'+(s.open_live>0?'<span style="color:var(--red)">'+s.open_live+' live</span>':'')+(s.open_live>0&&s.open_paper>0?' &bull; ':'')+(s.open_paper>0?'<span style="color:var(--amber)">'+s.open_paper+' paper</span>':'')+(s.open_positions===0?'No open trades':'')+'</div></div>'
       + '<div class="kpi"><div class="kpi-label">Today Trades</div><div class="kpi-value neutral">'+((s.today_live_trades||0)+(s.today_paper_trades||0))+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.today_live_trades||0)+' live</span> &bull; <span style="color:var(--amber)">'+(s.today_paper_trades||0)+' paper</span></div></div>'
       + '</div>'
-      + '<div id="dash-funds-row"></div>'
+      + '<div class="claude-card" id="claude-dash-card"><div class="claude-header"><div class="claude-title">✦ AI Assessment</div></div><div style="font-size:12px;color:var(--text2)">Loading...</div></div>'      + '<div id="dash-funds-row"></div>'
       + '<div id="dash-quick-actions" style="margin-bottom:12px"></div>'
 
       + (s.automations && s.automations.length > 0 ? '<div class="card"><div class="card-header"><div class="card-title">Automations Today</div><button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">Manage</button></div><div class="card-body" style="padding:0 16px">'+ autoCards +'</div></div>' : '<div class="card"><div class="card-body"><div class="empty"><div class="empty-icon">&#9881;</div><div class="empty-title">No automations yet</div><div class="empty-sub">Create an automation to start trading</div><button class="btn btn-primary" style="margin-top:12px" onclick="nav(\'automate\')">Create Automation</button></div></div></div>');
@@ -1824,7 +2151,7 @@ async function loadUnifiedTrades() {
                 + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
                 + '<div><span style="color:var(--text2)">Exit combined: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
                 + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
-                + '<div style="grid-column:span 2;color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'\u2014')+'</div>'
+                + '<div style="grid-column:span 2;color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'\u2014')+'</div>'                + (t.ai_insight ? '<div style="grid-column:span 2;margin-top:6px;padding:6px 8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:4px;font-size:11px;color:rgba(99,102,241,.9)"><span style="font-size:10px">✦ AI</span> '+esc(t.ai_insight)+'</div>' : '')
                 + '</div>'
                 + (t.sl_at_exit&&t.sl_at_exit.candles>0
                   ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2)">'
@@ -2456,6 +2783,269 @@ async function activateUser(uid) {
 
 
 // ── HELP PAGE — Interactive ───────────────────────────────────
+// ── EVENT CALENDAR PAGE ──────────────────────────────────────────
+var _eventEditing = null;
+
+async function renderEvents() {
+  var el = document.getElementById('pg-events');
+  if (!el) return;
+  el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+    + '<div><div class="page-title">Event Calendar</div><div class="page-sub">Mark dates to suspend trading automatically</div></div>'
+    + '<div class="page-controls">'
+    + '<button class="btn btn-ghost btn-sm" onclick="seedDefaultEvents()">Load defaults</button>'
+    + '<button class="btn btn-primary btn-sm" onclick="showAddEvent()">+ Add Event</button>'
+    + '</div></div>'
+    + '<div id="events-content"><div class="empty"><div class="spin"></div></div></div>'
+    + '<div id="event-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:center;justify-content:center;padding:20px">'
+    + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;max-width:380px;width:100%">'
+    + '<div style="font-size:15px;font-weight:600;margin-bottom:14px" id="event-modal-title">Add Event</div>'
+    + '<div class="field"><label>Date</label><input type="date" id="ev-date"></div>'
+    + '<div class="field"><label>Event Name</label><input id="ev-name" placeholder="e.g. RBI Policy Meeting"></div>'
+    + '<div class="field"><label>Category</label>'
+    + '<select id="ev-cat"><option value="rbi">RBI Policy</option><option value="fed">US Fed</option><option value="budget">Budget</option><option value="expiry">F&O Expiry</option><option value="other">Other</option></select></div>'
+    + '<div class="field" style="display:flex;align-items:center;gap:10px"><label style="margin:0;flex:1">Suspend trading on this day</label>'
+    + '<label class="toggle"><input type="checkbox" id="ev-suspend" checked><div class="toggle-track"></div></label></div>'
+    + '<div class="field"><label>Notes (optional)</label><input id="ev-notes" placeholder="Additional context"></div>'
+    + '<div id="ev-err" class="alert alert-error" style="display:none;margin-bottom:10px"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + '<button class="btn btn-primary" style="flex:1" onclick="saveEvent()">Save</button>'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('event-modal').style.display='none'">Cancel</button>'
+    + '</div></div></div>';
+  loadEvents();
+}
+
+// Safe JSON for inline HTML onclick attributes
+function _jsonAttr(obj) {
+  var s = JSON.stringify(obj);
+  var result = "";
+  for (var ci = 0; ci < s.length; ci++) {
+    var ch = s[ci];
+    if (ch === '"') result += "&quot;";
+    else if (ch === "'") result += "&#39;";
+    else result += ch;
+  }
+  return result;
+}
+
+var _eventsViewMode = 'calendar'; // 'calendar' | 'list'
+var _eventsCache = [];
+
+async function loadEvents() {
+  var el = document.getElementById('events-content');
+  if (!el) return;
+  try {
+    var d = await api('GET', '/api/events');
+    _eventsCache = d.events || [];
+    _renderEventsView();
+  } catch(e) {
+    el.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+  }
+}
+
+function _renderEventsView() {
+  var el = document.getElementById('events-content');
+  if (!el) return;
+
+  var catColors = {rbi:'#ff5252', fed:'#2196f3', budget:'#ff9800', expiry:'#00e676', other:'#9e9e9e'};
+  var catLabels = {rbi:'RBI', fed:'Fed', budget:'Budget', expiry:'Expiry', other:'Other'};
+  var events = _eventsCache;
+
+  // Build event lookup by date
+  var byDate = {};
+  events.forEach(function(e) {
+    if (!byDate[e.date]) byDate[e.date] = [];
+    byDate[e.date].push(e);
+  });
+
+  // View toggle
+  var viewToggle = '<div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">'
+    + '<div class="tab-bar">'
+    + '<button class="tab-btn '+(_eventsViewMode==='calendar'?'active':'')+'" onclick="_eventsViewMode='calendar';_renderEventsView()">&#128197; Calendar</button>'
+    + '<button class="tab-btn '+(_eventsViewMode==='list'?'active':'')+'" onclick="_eventsViewMode='list';_renderEventsView()">&#9776; List</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:4px;font-size:10px;color:var(--text2);align-items:center;flex-wrap:wrap">'
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#ff5252;display:inline-block"></span>RBI '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#2196f3;display:inline-block;margin-left:4px"></span>Fed '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#ff9800;display:inline-block;margin-left:4px"></span>Budget '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#00e676;display:inline-block;margin-left:4px"></span>Expiry'
+    + '</div></div>';
+
+  if (!events.length) {
+    el.innerHTML = viewToggle + '<div class="empty"><div class="empty-icon">&#128197;</div>'
+      + '<div class="empty-title">No events yet</div>'
+      + '<div class="empty-sub">Load defaults or add events to suspend trading on key dates.</div>'
+      + '<button class="btn btn-ghost" style="margin-top:12px" onclick="seedDefaultEvents()">Load 2026 defaults</button></div>';
+    return;
+  }
+
+  if (_eventsViewMode === 'list') {
+    // List view — grouped by month
+    var byMonth = {};
+    events.forEach(function(e) {
+      var m = e.date.slice(0,7);
+      if (!byMonth[m]) byMonth[m] = [];
+      byMonth[m].push(e);
+    });
+    var html = viewToggle;
+    Object.keys(byMonth).sort().forEach(function(m) {
+      var monthLabel = new Date(m+'-02').toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text2);padding:8px 0 4px;text-transform:uppercase;letter-spacing:.5px">'+esc(monthLabel)+'</div>';
+      html += '<div class="card" style="margin-bottom:8px"><div class="card-body" style="padding:0 16px">';
+      byMonth[m].forEach(function(e) {
+        var dow = new Date(e.date+'T12:00:00').toLocaleDateString('en-IN', {weekday:'short'});
+        var day = e.date.slice(8);
+        html += '<div class="event-row">'
+          + '<div class="event-cat '+esc(e.category||'other')+'"></div>'
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="font-size:12px;font-weight:500">'+esc(e.name)+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'+esc(dow)+' '+esc(day)+' • '+esc(catLabels[e.category||'other']||'')+'</div>'
+          + '</div>'
+          + '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+          + '<label class="toggle" title="'+(e.suspend?'Suspend trading':'Allow trading')+'"><input type="checkbox"'+(e.suspend?' checked':'')+' onchange="toggleEventSuspend(''+esc(e.id)+'',this.checked)"><div class="toggle-track"></div></label>'
+          + '<button class="btn btn-ghost btn-sm" onclick="editEvent('+_jsonAttr(e)+')">Edit</button>'
+          + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteEvent(''+esc(e.id)+'')">&#10005;</button>'
+          + '</div></div>';
+      });
+      html += '</div></div>';
+    });
+    el.innerHTML = html;
+    return;
+  }
+
+  // Calendar view — show months
+  var today = new Date();
+  var todayStr = today.toISOString().slice(0,10);
+
+  // Determine months to show: current + next 5
+  var html = viewToggle;
+  for (var mi = 0; mi < 6; mi++) {
+    var mDate = new Date(today.getFullYear(), today.getMonth() + mi, 1);
+    var yr = mDate.getFullYear();
+    var mo = mDate.getMonth(); // 0-indexed
+    var monthLabel = mDate.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+    var daysInMonth = new Date(yr, mo+1, 0).getDate();
+    var firstDow = new Date(yr, mo, 1).getDay(); // 0=Sun
+    // Convert to Mon-start: Sun=6, Mon=0
+    var startOffset = (firstDow + 6) % 7;
+
+    html += '<div class="card" style="margin-bottom:10px"><div class="card-body" style="padding:10px 12px">';
+    html += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">'+esc(monthLabel)+'</div>';
+    html += '<div class="cal-header">';
+    ['M','T','W','T','F','S','S'].forEach(function(d){ html += '<div class="cal-header-cell">'+d+'</div>'; });
+    html += '</div><div class="cal-grid">';
+
+    // Empty cells before first day
+    for (var e = 0; e < startOffset; e++) html += '<div></div>';
+
+    // Day cells
+    for (var day = 1; day <= daysInMonth; day++) {
+      var dateStr = yr+'-'+(mo+1<10?'0'+(mo+1):''+(mo+1))+'-'+(day<10?'0'+day:''+day);
+      var dayEvents = byDate[dateStr] || [];
+      var isToday = dateStr === todayStr;
+      var suspended = dayEvents.some(function(ev){ return ev.suspend; });
+      var hasEvent  = dayEvents.length > 0;
+      var cls = 'cal-day' + (isToday?' today':'') + (suspended?' suspended':(hasEvent?' allowed':''));
+      html += '<div class="'+cls+'" onclick="showDayEvents(''+dateStr+'','+_jsonAttr(dayEvents)+')" title="'+dateStr+(hasEvent?' — '+dayEvents.map(function(ev){return ev.name;}).join(', '):'')+'">';
+      html += '<span>'+day+'</span>';
+      if (hasEvent) {
+        var dotColor = catColors[dayEvents[0].category||'other'];
+        html += '<div class="cal-dot" style="background:'+dotColor+'"></div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div></div></div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function showDayEvents(dateStr, events) {
+  if (!events || !events.length) {
+    // Offer to add event
+    document.getElementById('ev-date').value = dateStr;
+    showAddEvent();
+    return;
+  }
+  // Show event details popup using toast or mini modal
+  var names = events.map(function(e){
+    return e.name + (e.suspend ? ' [SUSPENDED]' : ' [allowed]');
+  }).join(', ');
+  if (confirm(dateStr + '\n\n' + names + '\n\nEdit these events?')) {
+    _eventsViewMode = 'list';
+    _renderEventsView();
+    setTimeout(function() {
+      // Scroll to the month
+      var cards = document.querySelectorAll('#events-content .card');
+      if (cards.length) cards[0].scrollIntoView({behavior:'smooth'});
+    }, 100);
+  }
+}
+
+function showAddEvent() {
+  _eventEditing = null;
+  document.getElementById('event-modal-title').textContent = 'Add Event';
+  document.getElementById('ev-date').value = '';
+  document.getElementById('ev-name').value = '';
+  document.getElementById('ev-cat').value = 'other';
+  document.getElementById('ev-suspend').checked = true;
+  document.getElementById('ev-notes').value = '';
+  document.getElementById('ev-err').style.display = 'none';
+  document.getElementById('event-modal').style.display = 'flex';
+}
+
+function editEvent(e) {
+  _eventEditing = e.id;
+  document.getElementById('event-modal-title').textContent = 'Edit Event';
+  document.getElementById('ev-date').value = e.date;
+  document.getElementById('ev-name').value = e.name;
+  document.getElementById('ev-cat').value = e.category||'other';
+  document.getElementById('ev-suspend').checked = e.suspend;
+  document.getElementById('ev-notes').value = e.notes||'';
+  document.getElementById('ev-err').style.display = 'none';
+  document.getElementById('event-modal').style.display = 'flex';
+}
+
+async function saveEvent() {
+  var date    = document.getElementById('ev-date').value;
+  var name    = document.getElementById('ev-name').value.trim();
+  var cat     = document.getElementById('ev-cat').value;
+  var suspend = document.getElementById('ev-suspend').checked;
+  var notes   = document.getElementById('ev-notes').value.trim();
+  var errEl   = document.getElementById('ev-err');
+  if (!date||!name) { errEl.style.display='flex'; errEl.textContent='Date and name required'; return; }
+  try {
+    if (_eventEditing) {
+      await api('PUT', '/api/events/'+_eventEditing, {event_date:date, event_name:name, category:cat, suspend_trading:suspend, notes:notes});
+    } else {
+      await api('POST', '/api/events', {event_date:date, event_name:name, category:cat, suspend_trading:suspend, notes:notes});
+    }
+    document.getElementById('event-modal').style.display = 'none';
+    toast('Event saved', 'success');
+    loadEvents();
+  } catch(e) { errEl.style.display='flex'; errEl.textContent=e.message; }
+}
+
+async function deleteEvent(id) {
+  if (!confirm('Delete this event?')) return;
+  try { await api('DELETE', '/api/events/'+id); loadEvents(); toast('Deleted','success'); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleEventSuspend(id, val) {
+  // Optimistic — just update, no reload
+  try { await api('PUT', '/api/events/'+id, {suspend_trading:val}); }
+  catch(e) { toast(e.message,'error'); loadEvents(); }
+}
+
+async function seedDefaultEvents() {
+  try {
+    var r = await api('POST', '/api/events/seed-defaults');
+    toast('Added '+r.added+' default events', 'success');
+    loadEvents();
+  } catch(e) { toast(e.message,'error'); }
+}
+
 var _helpBuilt = false;
 var _activeStrat = null;
 var _activeHedge = 2;
