@@ -1739,6 +1739,7 @@ def get_unified_trades(
             # Exit detail
             "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
             "exit_time":      (_to_ist(t.exit_time)) if t.exit_time else None,
+            "ai_insight":     getattr(t, 'ai_insight', '') or "",
             "exit_reason":    t.exit_reason,
             "exit_parsed":    reason_parsed,
             "decay_pct":      decay_pct,

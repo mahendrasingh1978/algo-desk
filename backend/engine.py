@@ -202,6 +202,26 @@ def _drift_ok(state: "EngineState") -> bool:
     """True if spot is still within DRIFT_MAX_STRIKES of morning ATM."""
     return _drift_strikes(state) <= DRIFT_MAX_STRIKES
 
+def _prev_day_move_pct(state: "EngineState") -> float:
+    """Yesterday move as absolute %. Stored in config by market data service."""
+    return abs(state.config.get("prev_day_move_pct", 0))
+
+def _spot_rising_fast(state: "EngineState", window: int = 5, threshold: float = 0.3) -> bool:
+    """True if spot moved >threshold% in last window readings — market not directionless."""
+    if len(state.spot_history) < window:
+        return False
+    recent = state.spot_history[-window:]
+    pct = abs(recent[-1] - recent[0]) / recent[0] * 100
+    return pct > threshold
+
+def _orb_range_valid(state: "EngineState", min_pct: float = 0.3) -> bool:
+    """True if ORB range is meaningful (>min_pct of combined). Filters noise ORBs."""
+    atm = state.atm
+    if not atm or not atm.orb_high or not atm.orb_low or not atm.current:
+        return False
+    rng_pct = (atm.orb_high - atm.orb_low) / atm.current * 100
+    return rng_pct >= min_pct
+
 
 def _sb(state: EngineState) -> dict:
     return {s.offset: s for s in state.strikes}
@@ -242,7 +262,7 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
     """
     Priority order: S7 > S1 > S8 > S2 > S3 > S4 > S6 > S9 > S5
 
-    Three pre-signal guards (all configurable per automation):
+    Four pre-signal guards (all configurable per automation):
 
     Guard 1 — One trade per day gate (always on)
     Guard 2 — VIX filter: if India VIX >= vix_max (default 17), skip all
@@ -250,8 +270,12 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
               to buy back = adverse SL hits likely.
     Guard 3 — Drift suspension: if spot has moved more than drift_max_pct
               (default 1.5%) from the morning open, suspend signals.
-              Large intraday moves cause IV expansion that works against
-              all short-premium strategies.
+    Guard 4 — Previous day move: if yesterday moved >2%, restrict strategies.
+              Only S9 allowed on post-big-move days (via individual strategy checks).
+
+    PROFESSIONAL 15-MINUTE RULE:
+    Individual strategies enforce 9:30 minimum (not 9:22).
+    First 15 minutes are price discovery — not tradeable for premium selling.
     """
     # Gate: one trade per automation per day
     if not state.orb_complete or state.position or state.traded_today:
@@ -343,7 +367,7 @@ def _s7(state, t, now):
     the monitored strikes are no longer relevant. Skip to avoid
     entering a straddle at a stale strike far from current market.
     """
-    if not (dtime(9,22) <= t <= dtime(10,0)): return None
+    if not (dtime(9,30) <= t <= dtime(10,0)): return None  # 15-min rule
     # Drift guard — spot too far from morning ATM
     if not _drift_ok(state):
         drift = _drift_strikes(state)
@@ -371,56 +395,73 @@ def _s1(state, t, now):
     """
     S1 — ORB Breakdown Iron Fly
     ============================
-    Primary strategy. Any strike breaks ORB low, ATM preferred.
-    Structure: Iron Fly at breaking strike
+    PRIMARY strategy. ORB breakdown at the MORNING ATM strike only.
+    Structure: Iron Fly at morning ATM
     Hedge: ±2 strikes for defined risk
-    Industry insight: ORB breakdown is most reliable intraday signal.
-    Theta decay strongest in first 2 hours. Iron Fly reduces margin.
 
-    FIX 1 — Current ATM sorting:
-    Pick the candidate closest to CURRENT spot ATM (not morning ATM).
-    Prevents firing at a stale strike far from where market actually is.
-    Example: morning ATM 23500, spot now 23100 → prefer candidate at
-    23100 over candidate at 23500 even though 23500 has offset=0.
+    PROFESSIONAL RULE — Morning ATM only:
+    The ORB (Opening Range Breakout) signal is only valid at the strike
+    that was ATM when the range was built (9:15–9:21). If we fire at a
+    different strike because spot drifted, we are trading a different
+    market context with a stale signal.
 
-    FIX 2 — Drift guard:
-    If spot has moved >3 strikes from morning ATM, the entire monitored
-    strike set may be stale. Log and skip rather than entering a bad trade.
-    The 7-strike window is still searched — if the nearest monitored
-    strike to current ATM broke its ORB, we fire there. If not, skip.
+    Gate: if spot has moved more than 1 strike (50 pts) from morning ATM,
+    the signal is no longer valid — skip entirely. Do not chase.
+
+    Example: morning ATM=23100, spot now=23160 (+60pts = 1.2 strikes)
+    → Skip. The ORB at 23100 is no longer relevant at 23160.
+
+    Example: morning ATM=23100, spot now=23130 (+30pts = 0.6 strikes)
+    → Valid. Fire at 23100 if its ORB low was broken.
     """
-    if not (dtime(9,22) <= t <= dtime(14,0)): return None
+    if not (dtime(9,30) <= t <= dtime(14,0)): return None  # 15-min rule
 
-    # Find all candidate strikes with ORB breakdown
-    candidates = [s for s in state.strikes
-                  if s.orb_low > 0 and s.current < s.orb_low and not s.fired]
-    if not candidates: return None
+    if not state.atm_strike: return None
 
-    # Sort by distance from CURRENT spot ATM (not morning ATM)
-    cur_atm = _current_atm(state)
-    w = sorted(candidates, key=lambda s: abs(s.strike - cur_atm))[0]
-
-    # Drift guard — if best candidate is >3 strikes from current ATM, skip
     gap = state.config.get("strike_round", 50)
-    candidate_drift = abs(w.strike - cur_atm) / gap
-    morning_drift   = _drift_strikes(state)
 
-    if candidate_drift > DRIFT_MAX_STRIKES:
+    # Professional gate: if spot has moved >1 strike from morning ATM, skip
+    if state.spot_history:
+        current_spot = state.spot_history[-1]
+        spot_drift_pts = abs(current_spot - state.atm_strike)
+        if spot_drift_pts > gap:
+            state.emit(
+                f"S1 skipped — spot {current_spot:.0f} is {spot_drift_pts:.0f}pts "
+                f"from morning ATM {state.atm_strike} (>{gap}pt limit). "
+                f"ORB signal no longer valid at current price.", "INFO")
+            return None
+
+    # Find the morning ATM strike in candidates
+    morning_atm_strike = next(
+        (s for s in state.strikes if s.is_atm and not s.fired), None)
+
+    if not morning_atm_strike:
+        return None  # Already fired or not found
+
+    # Must have broken its ORB low
+    if not (morning_atm_strike.orb_low > 0 and
+            morning_atm_strike.current < morning_atm_strike.orb_low):
+        return None  # Morning ATM has not broken ORB low
+
+    # ORB range validity check — filter noise ORBs
+    if not _orb_range_valid(state, min_pct=0.3):
         state.emit(
-            f"S1 skipped — best candidate {w.strike} is {candidate_drift:.0f} strikes "            f"from current ATM {cur_atm} (spot drifted {morning_drift:.0f} strikes from morning). "            f"ORB range no longer relevant at current price.", "INFO")
+            f"S1 skipped — ORB range too tight "
+            f"(high={morning_atm_strike.orb_high:.1f} "
+            f"low={morning_atm_strike.orb_low:.1f}). Noise, not a signal.", "INFO")
         return None
 
-    w.fired = True
+    morning_atm_strike.fired = True
     sb = _sb(state)
-    legs = _build_legs("S1", w, sb, hedge_width=2)
-    drift_note = (f" | Drift: {morning_drift:.0f} strikes from morning ATM {state.atm_strike}"
-                  if morning_drift > 0 else "")
+    legs = _build_legs("S1", morning_atm_strike, sb, hedge_width=2)
     return {
         "code":"S1", "name":"ORB Breakdown Iron Fly",
-        "structure":"Iron Fly (sell at breakdown strike, ±2 hedge)",
-        "strike": w.strike,
-        "combined": w.current,
-        "reason": f"Strike {w.strike} broke ORB low {w.orb_low:.1f} | Current ATM {cur_atm}{drift_note}",
+        "structure":"Iron Fly (morning ATM sell, ±2 hedge)",
+        "strike": morning_atm_strike.strike,
+        "combined": morning_atm_strike.current,
+        "reason": (f"Morning ATM {morning_atm_strike.strike} broke ORB low "
+                   f"{morning_atm_strike.orb_low:.1f} | "
+                   f"Range: {morning_atm_strike.orb_low:.1f}–{morning_atm_strike.orb_high:.1f}"),
         "margin_note": "Defined risk, ~50% margin vs naked",
         **legs,
     }
@@ -434,16 +475,29 @@ def _s8(state, t, now):
     Structure: Iron Condor (wider strikes than Iron Fly)
     Hedge: ±3 strikes (wider range for gap days)
     Industry insight: Gaps fade 80% of time within first hour.
-    Wider strikes give more room for initial volatility to settle.
-    Premium inflated at open — sell while IV is elevated.
+
+    PROFESSIONAL RULES:
+    1. Never fade a gap after yesterday moved >2% in same direction.
+       Momentum from a big fundamental move extends, not fades.
+       Example: 19 Mar fell 3.26% (crude spike). 20 Mar gapped up.
+       Fading that gap = betting against the recovery. Wrong.
+    2. Wait until 9:30 — first 15 minutes are price discovery noise.
     """
-    if not (dtime(9,22) <= t <= dtime(9,45)): return None
+    if not (dtime(9,30) <= t <= dtime(10,0)): return None  # 15-min rule
     atm = state.atm
     if not atm: return None
     prev = state.config.get("prev_close", 0)
     if not prev or not state.spot_locked: return None
     gap_pct = abs(state.spot_locked - prev) / prev * 100
     if gap_pct < 0.4 or atm.current < 50: return None
+
+    # Previous day filter — never fade after a big move
+    prev_move = _prev_day_move_pct(state)
+    if prev_move > 2.0:
+        state.emit(
+            f"S8 skipped — yesterday moved {prev_move:.1f}% "
+            f"(>{2.0}% threshold). Gap likely extends, not fades.", "INFO")
+        return None
     sb = _sb(state)
     # Wider hedge for gap days (±3 strikes = Iron Condor)
     legs = _build_legs("S8", atm, sb, hedge_width=3)
@@ -462,25 +516,67 @@ def _s2(state, t, now):
     """
     S2 — VWAP Squeeze Iron Fly
     ===========================
-    Premium below VWAP + bearish EMA = sell straddle at VWAP.
-    Structure: Iron Fly (tight hedge, VWAP as reference)
-    Hedge: ±2 strikes
-    Industry insight: VWAP is key institutional reference level.
-    Selling below VWAP = highest probability for continuation.
+    The REAL squeeze: premium was ABOVE VWAP (spike), then pulled back
+    below VWAP — sell the reversal. This is the actual squeeze pattern.
+
+    What was wrong before:
+    - Fired at 9:22 with 7 candles — VWAP meaningless
+    - Condition "below VWAP" fires almost always at open (wrong)
+    - EMA check skipped when count < 30 (no guard at all)
+    - Today (20 Mar): fired at 9:22 with 7 candles, market rising → lost ₹1,472
+
+    Correct signal requires ALL of:
+    1. Minimum 20 candles (ensures VWAP is statistically meaningful)
+    2. EMA75 must exist (>=20 candles) and confirm bearish
+    3. Combined was ABOVE VWAP at some point in last 10 candles (the spike)
+    4. Combined is now BELOW VWAP (the reversal = the squeeze)
+    5. Market not rising fast (direction alignment)
+
+    Professional rule: VWAP squeeze is only valid after the market has
+    established a VWAP level. That requires 20+ minutes of data, not 7.
     """
-    if not (dtime(9,22) <= t <= dtime(10,30)): return None
+    if not (dtime(9,35) <= t <= dtime(10,30)): return None  # 20+ min needed
+
     atm = state.atm
-    if not atm or len(atm.combined_history) < 10: return None
+    if not atm: return None
+
+    # Minimum 20 candles for meaningful VWAP
+    if len(atm.combined_history) < 20: return None
+
+    # EMA must exist before firing — no signals without trend confirmation
+    if atm._ema_count < 20: return None
+
+    # EMA75 must be bearish (above combined = downward pressure)
+    if atm.ema75 <= atm.current: return None
+
+    # Combined must currently be BELOW VWAP (pullback confirmed)
     if atm.current >= atm.vwap_val: return None
-    if atm._ema_count >= 30 and atm.ema75 > atm.vwap_val: return None
+
+    # THE REAL SQUEEZE: combined must have been ABOVE VWAP recently
+    # (if it was never above VWAP, there was no spike to reverse)
+    recent_10 = atm.combined_history[-10:]
+    was_above_vwap = any(c > atm.vwap_val for c in recent_10)
+    if not was_above_vwap:
+        return None  # No spike to reverse — not a squeeze
+
+    # Direction guard: if spot is rising fast, premium selling is risky
+    if _spot_rising_fast(state, window=5, threshold=0.3):
+        return None
+
+    cur_atm = _current_atm(state)
+    atm_to_use = next((s for s in state.strikes
+                       if s.strike == cur_atm), atm)
     sb = _sb(state)
-    legs = _build_legs("S2", atm, sb, hedge_width=2)
+    legs = _build_legs("S2", atm_to_use, sb, hedge_width=2)
+    spike_high = max(recent_10)
     return {
         "code":"S2", "name":"VWAP Squeeze Iron Fly",
-        "structure":"Iron Fly (ATM, ±2 hedge)",
-        "strike": atm.strike,
-        "combined": atm.current,
-        "reason": f"Below VWAP {atm.vwap_val:.1f} — bearish confirmation",
+        "structure":"Iron Fly (current ATM, ±2 hedge)",
+        "strike": atm_to_use.strike,
+        "combined": atm_to_use.current,
+        "reason": (f"VWAP squeeze: spiked to {spike_high:.1f}, "
+                   f"reversed below VWAP {atm.vwap_val:.1f} "
+                   f"| EMA75={atm.ema75:.1f}"),
         **legs,
     }
 
@@ -497,8 +593,8 @@ def _s3(state, t, now):
     """
     if not (dtime(9,22) <= t <= dtime(14,0)): return None
     atm = state.atm
-    if not atm or len(atm.combined_history) < 5: return None
-    recent_high = max(atm.combined_history[-5:])
+    if not atm or len(atm.combined_history) < 15: return None  # need 15 for meaningful high
+    recent_high = max(atm.combined_history[-15:])  # 15 candles (was 5 — too short)
     if recent_high < atm.vwap_val * 1.05 or atm.current >= atm.vwap_val: return None
     sb = _sb(state)
     legs = _build_legs("S3", atm, sb, hedge_width=2)
@@ -528,7 +624,7 @@ def _s4(state, t, now):
     if not atm or len(atm.combined_history) < 15: return None
     hist = atm.combined_history[-15:]
     rng = (max(hist)-min(hist)) / atm.current if atm.current else 1
-    if rng > 0.08: return None  # too volatile for condor
+    if rng > 0.05: return None  # tightened 8%→5%: only truly range-bound days
     sb = _sb(state)
     sell_ce  = sb.get(1, atm)
     sell_pe  = sb.get(-1, atm)
@@ -563,7 +659,7 @@ def _s6(state, t, now):
     if not (dtime(9,45) <= t <= dtime(10,30)): return None
     atm = state.atm
     if not atm or not atm.orb_high: return None
-    if atm.current < atm.orb_high * 0.95: return None
+    if atm.current < atm.orb_high * 1.05: return None  # fire only when IV elevated (combined above ORB)
     sb = _sb(state)
     sell_ce = sb.get(1, atm); sell_pe = sb.get(-1, atm)
     buy_ce  = sb.get(4) or sb.get(3, atm)
@@ -598,8 +694,17 @@ def _s9(state, t, now):
     if not (dtime(11,0) <= t <= dtime(12,0)): return None
     atm = state.atm
     if not atm: return None
+
+    # Yesterday move filter — expiry day is risky after a big move
+    prev_move = _prev_day_move_pct(state)
+    if prev_move > 2.0:
+        state.emit(
+            f"S9 skipped — yesterday moved {prev_move:.1f}%. "
+            f"Post-crash expiry days have unpredictable IV. "
+            f"Using wider hedge if you choose to override.", "INFO")
+        # Allow but widen hedge — don't block entirely on expiry day
     sb = _sb(state)
-    legs = _build_legs("S9", atm, sb, hedge_width=1)  # tight hedge on expiry
+    legs = _build_legs("S9", atm, sb, hedge_width=2)  # ±2 on expiry (safer — ±1 too tight if VIX elevated)
     return {
         "code":"S9", "name":"Pre-Expiry Theta Crush",
         "structure":"Iron Fly (ATM sell, ±1 tight hedge — expiry day)",
@@ -621,6 +726,10 @@ def _s5(state, t, now):
     Ratio creates more premium income but leaves one side exposed.
     Only deploy when EMA75 confirms strong downtrend.
     """
+    # S5 is disabled by default — only enable if strategies config explicitly includes S5
+    # Undefined risk (partial hedge). Advanced traders only.
+    if "S5" not in state.config.get("strategies", []):
+        return None
     if not (dtime(9,30) <= t <= dtime(11,0)): return None
     atm = state.atm
     if not atm or atm._ema_count < 20: return None
