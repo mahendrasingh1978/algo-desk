@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <title>AlgoDesk — NIFTY Options Trading</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a0a0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AlgoDesk">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
 <style>
@@ -1649,6 +1654,7 @@ function _renderAutoList(autos) {
     return '<div class="card '+(isLive?'live-border':'paper-border')+'">'
       + '<div class="card-header"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+shadowBadge+statusBadge+'</div><div style="display:flex;gap:6px">'
       + (a.status!=='RUNNING' ? '<button class="btn btn-primary btn-sm" onclick="startAuto(\''+a.id+'\')">&#9654; Start</button>' : '<button class="btn btn-danger btn-sm" onclick="stopAuto(\''+a.id+'\')">&#9632; Stop</button>')
+      + (a.status!=='RUNNING' ? '<button class="btn btn-ghost btn-sm" onclick="editAuto(\''+a.id+'\')">&#9998; Edit</button>' : '')
       + '<button class="btn btn-ghost btn-sm" onclick="deleteAuto(\''+a.id+'\')" style="color:var(--red)">&#10005;</button>'
       + '</div></div>'
       + '<div class="card-body">'
@@ -1664,10 +1670,20 @@ function _renderAutoList(autos) {
   }).join('');
 }
 
-function showAutoForm() {
+async function editAuto(autoId) {
+  try {
+    var res = await api('GET', '/api/automations');
+    var auto = (res.automations||[]).find(function(a){ return a.id === autoId; });
+    if (!auto) { toast('Automation not found', 'error'); return; }
+    showAutoForm(auto);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function showAutoForm(auto) {
   _showingAutoForm = true;
-  _editAutoId = null;
-  selectedStrategies = new Set(['S1','S8']);
+  _editAutoId = auto ? auto.id : null;
+  var cfg = (auto && auto.config) || {};
+  selectedStrategies = auto ? new Set(auto.strategies||[]) : new Set(['S1','S8']);
   var el = document.getElementById('auto-form');
   var symOptions = _symbols.map(function(s){ return '<option value="'+s.value+'">'+s.label+'</option>'; }).join('');
   var brokerOptions = myBrokers.length ? myBrokers.map(function(b){ return '<option value="'+b.broker_id+'">'+esc(b.broker_name)+'</option>'; }).join('') : '<option value="">No brokers connected</option>';
@@ -1690,10 +1706,11 @@ function showAutoForm() {
       + '</div>';
   }).join('');
 
+  var formTitle = _editAutoId ? 'Edit Automation' : 'New Automation';
   el.style.display = 'block';
-  el.innerHTML = '<hr class="divider"><div class="section-title">New Automation</div>'
+  el.innerHTML = '<hr class="divider"><div class="section-title">'+formTitle+'</div>'
     + '<div class="card"><div class="card-body">'
-    + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional — auto-generated if blank)</span></label><input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%"></div>'
+    + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional — auto-generated if blank)</span></label><input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%" value="'+(auto&&auto.name?esc(auto.name):'')+'"></div>'
     + '<div class="field"><label>Symbol</label><select id="af-sym">'+symOptions+'</select></div>'
     + '<div class="field"><label>Broker</label><select id="af-broker">'+brokerOptions+'</select></div>'
     + '<div class="field"><label>Strategies <span style="font-size:10px;color:var(--text2);font-weight:400">(select one or more — first match each day fires)</span></label>'
@@ -1747,6 +1764,7 @@ function showAutoForm() {
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30% quick exit</option><option value="40">40%</option><option value="50" selected>50% standard</option><option value="60">60% hold longer</option></select></div>'
+    + '<div class="field"><label>Position Sizing <span style="color:var(--amber);font-size:10px">Beta</span></label><select id="af-sizing"><option value="fixed" selected>Fixed lots (safe)</option><option value="kelly">Kelly Criterion (auto-size)</option></select><div class="field-hint">Kelly uses your historical win rate to size positions. Keep Fixed until you have 20+ trades.</div></div>'
     + '</div>'
     + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px">'
     + '<div><div style="font-size:13px;font-weight:500">Shadow Mode</div><div style="font-size:11px;color:var(--text2)">Run paper simulation daily, store results</div></div>'
@@ -1758,11 +1776,38 @@ function showAutoForm() {
     + '</div>'
     + '<div class="alert alert-warn" style="margin-bottom:12px"><svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Start in Paper mode. Review Results page after 1 week before going Live.</div>'
     + '<div class="btn-row">'
-    + '<button class="btn btn-ghost" style="flex:1" onclick="saveAuto(\'paper\')">Save as Paper</button>'
-    + '<button class="btn btn-danger" style="flex:1" onclick="saveAuto(\'live\')">Go Live</button>'
+    + (_editAutoId
+        ? '<button class="btn btn-primary" style="flex:1" onclick="saveAuto(\'paper\')">&#9998; Update</button>'
+        : '<button class="btn btn-ghost" style="flex:1" onclick="saveAuto(\'paper\')">Save as Paper</button><button class="btn btn-danger" style="flex:1" onclick="saveAuto(\'live\')">Go Live</button>')
     + '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">Cancel</button>'
     + '</div></div></div>';
   el.scrollIntoView({behavior:'smooth'});
+  // Pre-fill fields when editing
+  if (auto) {
+    var s = document.getElementById('af-sym'); if (s && auto.symbol) s.value = auto.symbol;
+    var b = document.getElementById('af-broker'); if (b && auto.broker_id) b.value = auto.broker_id;
+    var lo = document.getElementById('af-lots'); if (lo && cfg.lots) lo.value = cfg.lots;
+    var ls = document.getElementById('af-lotsize'); if (ls && cfg.lot_size) ls.value = cfg.lot_size;
+    var ex = document.getElementById('af-exit'); if (ex && cfg.auto_exit_time) ex.value = cfg.auto_exit_time;
+    var ml = document.getElementById('af-maxloss'); if (ml && cfg.max_loss_pct) ml.value = cfg.max_loss_pct;
+    var pt = document.getElementById('af-profit'); if (pt && cfg.profit_target_pct) pt.value = cfg.profit_target_pct;
+    var mt = document.getElementById('af-maxtrades'); if (mt && cfg.max_trades_per_day != null) mt.value = cfg.max_trades_per_day;
+    var dm = document.getElementById('af-driftmax'); if (dm && cfg.drift_max_pct) dm.value = cfg.drift_max_pct;
+    var vm = document.getElementById('af-vixmax'); if (vm && cfg.vix_max) vm.value = cfg.vix_max;
+    var sz = document.getElementById('af-sizing'); if (sz && cfg.position_sizing) sz.value = cfg.position_sizing;
+    var sh = document.getElementById('af-shadow'); if (sh) sh.checked = auto.shadow_mode !== false;
+    var tg = document.getElementById('af-tg'); if (tg) tg.checked = auto.telegram_alerts !== false;
+    // Pre-fill run days
+    if (cfg.run_days) {
+      document.querySelectorAll('#af-days .day-btn').forEach(function(btn) {
+        var d = parseInt(btn.getAttribute('data-day'));
+        btn.classList.toggle('active', cfg.run_days.indexOf(d) !== -1);
+      });
+    }
+    // Pre-fill skip dates
+    _skipDates = (cfg.skip_dates||[]).slice();
+    _renderSkipDates();
+  }
 }
 
 function hideAutoForm() {
@@ -1791,27 +1836,34 @@ async function saveAuto(mode) {
   var _nameEl = document.getElementById('af-name');
   var _customName = _nameEl ? (_nameEl.value||'').trim() : '';
   var _autoName = _customName || (symText + ' \u2014 ' + stratList.join('+'));
+  var payload = {
+    name: _autoName,
+    symbol: sym, broker_id: broker,
+    strategies: stratList, mode: mode,
+    shadow_mode: document.getElementById('af-shadow').checked,
+    telegram_alerts: document.getElementById('af-tg').checked,
+    config: {
+      lots: parseInt(document.getElementById('af-lots').value)||1,
+      lot_size: parseInt(document.getElementById('af-lotsize').value)||65,
+      max_loss_pct: parseInt(document.getElementById('af-maxloss').value)||30,
+      profit_target_pct: parseInt(document.getElementById('af-profit').value)||50,
+      auto_exit_time: document.getElementById('af-exit').value||'14:00',
+      run_days: _getSelectedDays(),
+      skip_dates: _skipDates.slice(),
+      max_trades_per_day: parseInt(document.getElementById('af-maxtrades').value)||1,
+      drift_max_pct: parseFloat(document.getElementById('af-driftmax').value)||1.5,
+      vix_max: parseFloat(document.getElementById('af-vixmax').value)||17,
+      position_sizing: (document.getElementById('af-sizing')||{}).value||'fixed',
+    }
+  };
   try {
-    await api('POST', '/api/automations', {
-      name: _autoName,
-      symbol: sym, broker_id: broker,
-      strategies: stratList, mode: mode,
-      shadow_mode: document.getElementById('af-shadow').checked,
-      telegram_alerts: document.getElementById('af-tg').checked,
-      config: {
-        lots: parseInt(document.getElementById('af-lots').value)||1,
-        lot_size: parseInt(document.getElementById('af-lotsize').value)||65,
-        max_loss_pct: parseInt(document.getElementById('af-maxloss').value)||30,
-        profit_target_pct: parseInt(document.getElementById('af-profit').value)||50,
-        auto_exit_time: document.getElementById('af-exit').value||'14:00',
-        run_days: _getSelectedDays(),
-        skip_dates: _skipDates.slice(),
-        max_trades_per_day: parseInt(document.getElementById('af-maxtrades').value)||1,
-        drift_max_pct: parseFloat(document.getElementById('af-driftmax').value)||1.5,
-        vix_max: parseFloat(document.getElementById('af-vixmax').value)||17,
-      }
-    });
-    toast('Automation saved', 'success');
+    if (_editAutoId) {
+      await api('PUT', '/api/automations/'+_editAutoId, payload);
+      toast('Automation updated', 'success');
+    } else {
+      await api('POST', '/api/automations', payload);
+      toast('Automation saved', 'success');
+    }
     hideAutoForm();
     renderAutomate();
   } catch(e) { toast(e.message, 'error'); }
@@ -2717,13 +2769,26 @@ async function renderAdmin() {
         + '</div></div></div></div>';
     }).join('');
 
+    var mrr = stats.mrr||0;
+    var arr = stats.arr||0;
+    var planPx = stats.plan_price||{};
+    var planCnt = stats.plans||{};
     el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div>'
-      // Stats
-      + '<div class="kpi-grid" style="margin-bottom:6px">'
+      // Revenue KPIs
+      + '<div class="section-title" style="margin-bottom:6px">Revenue</div>'
+      + '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi green"><div class="kpi-label">MRR</div><div class="kpi-value pos">&#8377;'+(mrr).toLocaleString('en-IN')+'</div><div class="kpi-sub">Monthly recurring</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">ARR</div><div class="kpi-value neutral">&#8377;'+(arr).toLocaleString('en-IN')+'</div><div class="kpi-sub">Annual run rate</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Paid Users</div><div class="kpi-value neutral">'+((planCnt.STARTER||0)+(planCnt.PRO||0)+(planCnt.ENTERPRISE||0))+'</div><div class="kpi-sub">Starter + Pro + Ent</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Free Users</div><div class="kpi-value neutral">'+(planCnt.FREE||0)+'</div><div class="kpi-sub">Conversion pool</div></div>'
+      + '</div>'
+      // Usage stats
+      + '<div class="section-title" style="margin-bottom:6px">Usage</div>'
+      + '<div class="kpi-grid" style="margin-bottom:12px">'
       + '<div class="kpi blue"><div class="kpi-label">Total Users</div><div class="kpi-value neutral">'+(stats.total_users||0)+'</div></div>'
       + '<div class="kpi green"><div class="kpi-label">Active</div><div class="kpi-value neutral">'+(stats.active_users||0)+'</div></div>'
-      + '<div class="kpi amber"><div class="kpi-label">Trades Today</div><div class="kpi-value neutral">'+(stats.trades_today||0)+'</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Running</div><div class="kpi-value neutral">'+(stats.running_engines||0)+'</div></div>'
+      + '<div class="kpi amber"><div class="kpi-label">Trades Today</div><div class="kpi-value neutral">'+((stats.trades_today||0)+(stats.shadow_today||0))+'</div><div class="kpi-sub">Live: '+(stats.trades_today||0)+' · Paper: '+(stats.shadow_today||0)+'</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Engines Running</div><div class="kpi-value neutral">'+(stats.running_engines||0)+'</div></div>'
       + '</div>'
       // Plan summary
       + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Plan Tiers</div></div>'
@@ -3574,6 +3639,13 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 
 
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js').catch(function(){});
+  });
+}
 </script>
 </body>
 </html>

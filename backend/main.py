@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, TradingEvent, ClaudeAssessment, run_migrations
 from fyers import FyersConnection, encrypt, decrypt
-from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike
+from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike, get_position_size
 
 # Per-user shadow engine states (paper simulation)
 shadow_engines: dict = {}  # user_id -> {auto_id -> EngineState}
@@ -365,6 +365,10 @@ def check_plan_strategy(user, strategy_code: str) -> bool:
 # Each user with a connected broker gets their own live feed entry.
 # user_id -> {"spot":float, "atm":int, "chain":dict, "status":str, "message":str}
 user_market_cache: dict = {}
+
+# Per-user, per-symbol cache for multi-symbol support
+# user_id -> {symbol -> {"spot":float,"atm":int,"chain":dict,"updated":str,"status":str}}
+user_symbol_cache: dict = {}
 
 def _user_cache(user_id: str) -> dict:
     """Get a user's market cache, or a default disconnected state."""
@@ -797,7 +801,19 @@ async def _market_data_service():
                         refresh_token_enc=bc.refresh_token_enc,
                     )
 
-                    # Fetch live data — token auto-refreshes inside
+                    # Determine which symbols this user needs
+                    user_autos = db.query(Automation).filter(
+                        Automation.user_id == user.id,
+                        Automation.status.in_(["RUNNING", "IDLE"])
+                    ).all()
+                    needed_symbols = list({
+                        a.symbol for a in user_autos
+                        if a.symbol and a.symbol in SYMBOL_REGISTRY
+                    }) or ["NSE:NIFTY50-INDEX"]
+                    if "NSE:NIFTY50-INDEX" not in needed_symbols:
+                        needed_symbols.insert(0, "NSE:NIFTY50-INDEX")
+
+                    # Fetch NIFTY first (primary cache)
                     result = await conn.get_spot_and_chain(
                         "NSE:NIFTY50-INDEX", strike_count=7)
 
@@ -811,15 +827,39 @@ async def _market_data_service():
                                 bc.refresh_token_enc = rt["refresh_token_enc"]
                             bc.last_token_refresh = datetime.utcnow()
 
-                        # Update this user's personal cache
+                        # Update this user's personal cache (primary = NIFTY)
+                        ts = datetime.now(ist).strftime("%H:%M:%S")
                         user_market_cache[user.id] = {
                             "spot":    result["spot"],
                             "atm":     result["atm"],
                             "chain":   result["chain"],
-                            "updated": datetime.now(ist).strftime("%H:%M:%S"),
+                            "updated": ts,
                             "status":  "live",
-                            "message": f"Live · {datetime.now(ist).strftime('%H:%M:%S')} IST",
+                            "message": f"Live · {ts} IST",
                         }
+                        # Store in symbol cache too
+                        if user.id not in user_symbol_cache:
+                            user_symbol_cache[user.id] = {}
+                        user_symbol_cache[user.id]["NSE:NIFTY50-INDEX"] = {
+                            "spot": result["spot"], "atm": result["atm"],
+                            "chain": result["chain"], "updated": ts, "status": "live",
+                        }
+
+                    # Fetch additional symbols (BankNifty, FinNifty etc.)
+                    for sym in needed_symbols:
+                        if sym == "NSE:NIFTY50-INDEX":
+                            continue
+                        try:
+                            sym_result = await conn.get_spot_and_chain(sym, strike_count=5)
+                            if sym_result.get("ok"):
+                                ts2 = datetime.now(ist).strftime("%H:%M:%S")
+                                user_symbol_cache[user.id][sym] = {
+                                    "spot": sym_result["spot"], "atm": sym_result["atm"],
+                                    "chain": sym_result["chain"], "updated": ts2, "status": "live",
+                                }
+                                log.info(f"[{user.email}] {sym.split(':')[1]}={sym_result['spot']:.1f}")
+                        except Exception as sym_e:
+                            log.debug(f"[{user.email}] {sym} fetch error: {sym_e}")
 
                         # Feed this user's running engine if active
                         eng = active_engines.get(user.id)
@@ -1304,23 +1344,33 @@ def market_status(
     """Quick status check for this user's market data.
     Returns spot/ATM for the requested symbol if available in chain cache.
     """
-    cache = _user_cache(user.id)
-    spot  = cache.get("spot", 0)
-    atm   = cache.get("atm", 0)
-
-    # If a non-NIFTY symbol is requested, try to find its data in the chain
-    # The market data service currently only fetches NIFTY — for other symbols
-    # return the cached NIFTY data with a note (multi-symbol support is a future feature)
     sym_short = {
         "NSE:NIFTY50-INDEX":    "NIFTY",
         "NSE:NIFTYBANK-INDEX":  "BANKNIFTY",
         "NSE:FINNIFTY-INDEX":   "FINNIFTY",
+        "NSE:MIDCPNIFTY-INDEX": "MIDCAP NIFTY",
         "BSE:SENSEX-INDEX":     "SENSEX",
     }.get(symbol, symbol)
 
+    # Check per-symbol cache first (multi-symbol support)
+    sym_cache = (user_symbol_cache.get(user.id) or {}).get(symbol)
+    if sym_cache:
+        return {
+            "spot":    sym_cache.get("spot", 0),
+            "atm":     sym_cache.get("atm", 0),
+            "symbol":  symbol,
+            "sym_short": sym_short,
+            "chain":   sym_cache.get("chain", {}),
+            "status":  sym_cache.get("status", "live"),
+            "message": f"Live · {sym_cache.get('updated', '')} IST",
+            "updated": sym_cache.get("updated"),
+        }
+
+    # Fall back to primary NIFTY cache
+    cache = _user_cache(user.id)
     return {
-        "spot":    spot,
-        "atm":     atm,
+        "spot":    cache.get("spot", 0),
+        "atm":     cache.get("atm", 0),
         "symbol":  symbol,
         "sym_short": sym_short,
         "chain":   cache.get("chain", {}),
@@ -1329,6 +1379,23 @@ def market_status(
         "updated": cache.get("updated"),
     }
 
+
+@app.get("/api/market/all-symbols")
+def market_all_symbols(user: User = Depends(get_current_user)):
+    """Returns live data for all symbols currently cached for this user."""
+    sym_data = user_symbol_cache.get(user.id) or {}
+    result = {}
+    for sym, data in sym_data.items():
+        reg = SYMBOL_REGISTRY.get(sym, {})
+        result[sym] = {
+            "spot":      data.get("spot", 0),
+            "atm":       data.get("atm", 0),
+            "updated":   data.get("updated"),
+            "status":    data.get("status", "waiting"),
+            "label":     reg.get("label", sym),
+            "lot_size":  reg.get("lot_size", 65),
+        }
+    return {"symbols": result}
 
 @app.get("/api/market/symbols")
 def get_symbols(user: User = Depends(get_current_user),
@@ -1522,6 +1589,35 @@ def save_automation(req: SaveAutoReq, user: User = Depends(get_current_user),
                    config=req.config, status="IDLE")
     db.add(a); db.commit(); db.refresh(a)
     return {"ok": True, "id": a.id, "automation": {"id": a.id, "name": a.name}}
+
+@app.put("/api/automations/{auto_id}")
+def update_automation(auto_id: str, req: SaveAutoReq,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    a = db.query(Automation).filter(
+        Automation.id == auto_id,
+        Automation.user_id == user.id).first()
+    if not a:
+        raise HTTPException(404, "Automation not found")
+    if a.status == "RUNNING":
+        raise HTTPException(400, "Stop the automation before editing it")
+    plan = get_plan(user)
+    if req.mode == "live" and not plan["live_trading"]:
+        raise HTTPException(403, "Live trading requires a paid plan.")
+    locked = [s for s in (req.strategies or []) if not check_plan_strategy(user, s)]
+    if locked:
+        raise HTTPException(403, f"Strategies {locked} require a higher plan.")
+    mode = req.mode if plan["live_trading"] else "paper"
+    a.name = req.name
+    a.symbol = req.symbol
+    a.broker_id = req.broker_id
+    a.strategies = req.strategies
+    a.mode = mode
+    a.shadow_mode = req.shadow_mode
+    a.telegram_alerts = req.telegram_alerts
+    a.config = req.config
+    db.commit()
+    return {"ok": True, "id": a.id}
 
 @app.delete("/api/automations/{auto_id}")
 async def delete_automation(auto_id: str, user: User = Depends(get_current_user),
@@ -2199,14 +2295,35 @@ def create_invite(req: dict, admin: User = Depends(require_admin),
 def admin_stats(admin: User = Depends(require_admin),
                 db: Session = Depends(get_db)):
     users = db.query(User).all()
+    active = [u for u in users if u.is_active]
+    # Plan pricing (INR/month)
+    PLAN_PRICE = {"FREE": 0, "STARTER": 999, "PRO": 2499, "ENTERPRISE": 9999}
+    plan_counts = {p: sum(1 for u in active if u.plan == p)
+                   for p in ["FREE", "STARTER", "PRO", "ENTERPRISE"]}
+    mrr = sum(plan_counts.get(p, 0) * PLAN_PRICE.get(p, 0) for p in PLAN_PRICE)
+
+    # Trade counts
+    from datetime import timedelta
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    trades_today = db.query(Trade).filter(Trade.trade_date == today).count()
+    shadow_today = db.query(ShadowTrade).filter(ShadowTrade.trade_date == today).count()
+
+    # Running engines
+    running = len([uid for uid, eng in active_engines.items() if eng.is_running])
+
     return {
-        "total_users":     len(users),
-        "active_users":    sum(1 for u in users if u.is_active),
-        "total_brokers":   db.query(BrokerConnection).filter(
+        "total_users":       len(users),
+        "active_users":      len(active),
+        "total_brokers":     db.query(BrokerConnection).filter(
             BrokerConnection.is_connected == True).count(),
         "total_automations": db.query(Automation).count(),
-        "plans": {p: sum(1 for u in users if u.plan == p)
-                  for p in ["FREE", "STARTER", "PRO", "ENTERPRISE"]},
+        "running_engines":   running,
+        "trades_today":      trades_today,
+        "shadow_today":      shadow_today,
+        "plans":             plan_counts,
+        "mrr":               mrr,
+        "arr":               mrr * 12,
+        "plan_price":        PLAN_PRICE,
     }
 
 # ── Telegram ──────────────────────────────────────────────────
@@ -2306,6 +2423,169 @@ async def test_telegram(user: User = Depends(get_current_user)):
     await _send_telegram(user.telegram_token, user.telegram_chat,
         f"✅ Test successful\nHello {user.name}! Alerts are working.")
     return {"ok": True}
+
+
+@app.post("/api/telegram/set-webhook")
+async def set_telegram_webhook(req: dict, user: User = Depends(get_current_user)):
+    """Register webhook URL with Telegram so bot can receive commands."""
+    bot_token = req.get("bot_token") or user.telegram_token
+    webhook_url = req.get("webhook_url")
+    if not bot_token:
+        raise HTTPException(400, "No bot token — add in Profile → Telegram first")
+    if not webhook_url:
+        raise HTTPException(400, "webhook_url required")
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(
+                f"https://api.telegram.org/bot{bot_token}/setWebhook",
+                json={"url": webhook_url, "allowed_updates": ["message"]})
+            data = r.json()
+        if data.get("ok"):
+            return {"ok": True, "message": "Webhook registered ✓"}
+        return {"ok": False, "message": data.get("description", "Failed")}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(req: dict, db: Session = Depends(get_db)):
+    """
+    Telegram bot webhook — receives commands from users.
+    Supported commands:
+      /start   — show help
+      /status  — engine + market status
+      /stop    — stop running engine
+      /engine <automation_name> — start engine for named automation
+      /help    — show all commands
+    """
+    msg = req.get("message") or req.get("edited_message")
+    if not msg:
+        return {"ok": True}
+
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    text = (msg.get("text") or "").strip()
+    if not chat_id or not text.startswith("/"):
+        return {"ok": True}
+
+    # Find user by chat_id (check all telegram accounts)
+    all_users = db.query(User).filter(User.is_active == True).all()
+    matched_user = None
+    matched_token = None
+    for u in all_users:
+        for acct in (u.telegram_accounts or []):
+            if acct.get("active") and str(acct.get("chat", "")) == chat_id:
+                matched_user = u
+                matched_token = acct.get("token")
+                break
+        if not matched_user and u.telegram_chat == chat_id and u.telegram_token:
+            matched_user = u
+            matched_token = u.telegram_token
+        if matched_user:
+            break
+
+    async def reply(text_msg: str):
+        if matched_token:
+            await _send_telegram(matched_token, chat_id, text_msg)
+
+    if not matched_user:
+        await reply("❌ Chat ID not linked to any AlgoDesk account.\nAdd this bot in Profile → Telegram.")
+        return {"ok": True}
+
+    cmd = text.split()[0].lower().lstrip("/")
+
+    if cmd in ("start", "help"):
+        await reply(
+            f"👋 Hi {matched_user.name}! AlgoDesk Bot Commands:\n\n"
+            "/status — Engine + market status\n"
+            "/stop — Stop running engine\n"
+            "/engine <name> — Start automation by name\n"
+            "/help — Show this message\n\n"
+            "You will receive trade alerts automatically when engine is running."
+        )
+
+    elif cmd == "status":
+        eng = active_engines.get(matched_user.id)
+        cache = _user_cache(matched_user.id)
+        spot = cache.get("spot", 0)
+        mkt_status = cache.get("status", "waiting")
+        if eng and eng.is_running:
+            pos = eng.position
+            pos_txt = f"Position: {pos['strategy_code']} | Entry: ₹{pos.get('entry_combined',0):.1f}" if pos else "No open position"
+            await reply(
+                f"🟢 Engine RUNNING\n"
+                f"NIFTY: ₹{spot:,.1f} ({mkt_status})\n"
+                f"{pos_txt}\n"
+                f"Day P&L: ₹{eng.day_pnl:.0f}"
+            )
+        else:
+            await reply(
+                f"⚪ Engine IDLE\n"
+                f"NIFTY: ₹{spot:,.1f} ({mkt_status})\n"
+                f"Use /engine <name> to start"
+            )
+
+    elif cmd == "stop":
+        eng = active_engines.get(matched_user.id)
+        if eng and eng.is_running:
+            eng.is_running = False
+            del active_engines[matched_user.id]
+            db.query(Automation).filter(
+                Automation.user_id == matched_user.id,
+                Automation.status == "RUNNING"
+            ).update({"status": "IDLE"})
+            db.commit()
+            await reply("🛑 Engine stopped via Telegram command.")
+        else:
+            await reply("⚪ Engine is not running.")
+
+    elif cmd == "engine":
+        parts = text.split(maxsplit=1)
+        auto_name = parts[1].strip() if len(parts) > 1 else ""
+        autos = db.query(Automation).filter(
+            Automation.user_id == matched_user.id
+        ).all()
+        auto = next((a for a in autos if auto_name.lower() in a.name.lower()), None)
+        if not auto and autos:
+            auto = autos[0]  # start first automation if no match
+        if not auto:
+            await reply("❌ No automations found. Create one in the app first.")
+        elif auto.status == "RUNNING":
+            await reply(f"⚠️ {auto.name} is already running.")
+        else:
+            # Start the engine
+            from fyers import FyersConnection, decrypt
+            bc = db.query(BrokerConnection).filter(
+                BrokerConnection.user_id == matched_user.id,
+                BrokerConnection.broker_id == "fyers",
+                BrokerConnection.is_connected == True
+            ).first()
+            if not bc:
+                await reply("❌ Fyers not connected. Connect in My Brokers first.")
+            else:
+                fields = {k.replace("_enc", ""): decrypt(matched_user.id, v)
+                          for k, v in (bc.encrypted_fields or {}).items()}
+                conn = FyersConnection(
+                    user_id=matched_user.id,
+                    client_id=fields.get("client_id", ""),
+                    secret_key=fields.get("secret_key", ""),
+                    pin=fields.get("pin", ""),
+                    redirect_uri=fields.get("redirect_uri", ""),
+                    access_token_enc=bc.access_token_enc,
+                    refresh_token_enc=bc.refresh_token_enc,
+                )
+                from engine import EngineState
+                config = {**auto.config, "strategies": auto.strategies, "mode": auto.mode}
+                state = EngineState(config)
+                active_engines[matched_user.id] = state
+                asyncio.create_task(_run_engine(matched_user.id, auto, state, conn, db))
+                auto.status = "RUNNING"
+                db.commit()
+                await reply(f"✅ Engine started: {auto.name}\nMode: {auto.mode.upper()}")
+    else:
+        await reply(f"Unknown command: /{cmd}\nSend /help for available commands.")
+
+    return {"ok": True}
+
 
 # ── WebSocket ─────────────────────────────────────────────────
 
@@ -3315,9 +3595,11 @@ async def _run_engine(user_id: str, auto: Automation,
         lot_sz = 120  # MIDCPNIFTY lot size changed
     else:
         lot_sz = int(_cfg_lot or _sym_reg_lot)
-    lots    = int(state.config.get("lots", 1))
+    lots    = get_position_size(state.config)
 
-    state.emit(f"Engine started — {auto.name} | Mode: {auto.mode.upper()}", "START")
+    state.emit(
+        f"Engine started — {auto.name} | Mode: {auto.mode.upper()} | "
+        f"Lots: {lots} (sizing: {state.config.get('position_sizing','fixed')})", "START")
 
     ist = pytz.timezone("Asia/Kolkata")
 

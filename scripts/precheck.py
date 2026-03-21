@@ -164,6 +164,23 @@ if html_broken:
 else:
     ok("No broken JS strings (HTML-aware scan)")
 
+# Check for ternary quote pattern )'  e.g. (cond ? 'a' : 'b)'  — closes paren inside string
+ternary_quote = []
+for i, line in enumerate(js.split('\n'), 1):
+    stripped = line.strip()
+    if stripped.startswith('//') or '`' in line:
+        continue
+    # Pattern: closing paren immediately followed by a quote char — almost always a syntax error
+    if re.search(r"\)'", line) and not re.search(r"//.*\)'", line):
+        # Allow legitimate patterns like .replace(/foo/,'bar') or ['key']
+        if not re.search(r"(replace|split|join|match|test|exec)\s*\(", line):
+            ternary_quote.append(f"Line {i}: {stripped[:80]}")
+if ternary_quote:
+    for tq in ternary_quote[:5]:
+        err(f"Ternary quote pattern \\)' — likely syntax error — {tq}")
+else:
+    ok("No ternary quote pattern issues )'")
+
 # Check for unescaped onclick nav() calls inside single-quoted JS strings
 # e.g. + '<button onclick="nav('automate')"> — breaks the outer string
 import re as _re

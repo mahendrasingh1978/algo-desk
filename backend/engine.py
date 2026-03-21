@@ -180,6 +180,61 @@ class EngineState:
 def nearest_strike(spot: float, gap: int = 50) -> int:
     return round(spot / gap) * gap
 
+
+def kelly_lots(win_rate: float, avg_win: float, avg_loss: float,
+               max_lots: int = 10, min_lots: int = 1) -> int:
+    """
+    Kelly criterion for position sizing.
+    Returns recommended lots (capped at max_lots).
+
+    Kelly fraction = W/L - (1-W)/W
+    where W = win_rate (0-1), L = avg loss, W = avg win
+
+    Uses half-Kelly (safer) as industry standard.
+    If insufficient data, returns 1 (conservative default).
+    """
+    if win_rate <= 0 or avg_win <= 0 or avg_loss <= 0:
+        return min_lots
+    w = win_rate
+    b = avg_win / avg_loss          # reward-to-risk ratio
+    kelly = b * w - (1 - w)        # full Kelly fraction
+    half_kelly = kelly / 2          # half-Kelly = safer, industry standard
+    if half_kelly <= 0:
+        return min_lots
+    # Convert fraction to lots (assume 1.0 fraction = max_lots)
+    lots = max(min_lots, min(max_lots, round(half_kelly * max_lots)))
+    return lots
+
+
+def get_position_size(config: dict) -> int:
+    """
+    Get recommended lots from config.
+    Respects user's position_sizing setting:
+      'fixed'  — always use config.lots (default, safe)
+      'kelly'  — Kelly criterion using historical win_rate/avg_win/avg_loss
+    """
+    sizing_mode = config.get("position_sizing", "fixed")
+    base_lots   = int(config.get("lots", 1))
+
+    if sizing_mode != "kelly":
+        return base_lots
+
+    win_rate = config.get("kelly_win_rate", 0)
+    avg_win  = config.get("kelly_avg_win",  0)
+    avg_loss = config.get("kelly_avg_loss", 0)
+
+    if not (win_rate and avg_win and avg_loss):
+        return base_lots
+
+    recommended = kelly_lots(
+        win_rate / 100,        # stored as percentage
+        avg_win, avg_loss,
+        max_lots=base_lots * 3,
+        min_lots=1,
+    )
+    return recommended
+
+
 # Maximum spot drift (in strike widths) before suspending signals.
 # 3 strikes = 150 pts on NIFTY (50pt gap × 3).
 # Beyond this, the morning ATM is too far from current price to be relevant.
@@ -545,27 +600,43 @@ def _s2(state, t, now):
     if not atm: return None
 
     # Minimum 20 candles for meaningful VWAP
-    if len(atm.combined_history) < 20: return None
+    candles = len(atm.combined_history)
+    if candles < 20:
+        if candles % 5 == 0:
+            state.emit(f"S2 check: only {candles}/20 candles — waiting", "INFO")
+        return None
 
     # EMA must exist before firing — no signals without trend confirmation
     if atm._ema_count < 20: return None
 
     # EMA75 must be bearish (above combined = downward pressure)
-    if atm.ema75 <= atm.current: return None
+    if atm.ema75 <= atm.current:
+        state.emit(f"S2 skip: EMA75={atm.ema75:.1f} <= combined={atm.current:.1f} (not bearish)", "INFO")
+        return None
 
     # Combined must currently be BELOW VWAP (pullback confirmed)
-    if atm.current >= atm.vwap_val: return None
+    if atm.current >= atm.vwap_val:
+        state.emit(f"S2 skip: combined={atm.current:.1f} >= VWAP={atm.vwap_val:.1f} (no pullback)", "INFO")
+        return None
 
     # THE REAL SQUEEZE: combined must have been ABOVE VWAP recently
     # (if it was never above VWAP, there was no spike to reverse)
     recent_10 = atm.combined_history[-10:]
     was_above_vwap = any(c > atm.vwap_val for c in recent_10)
     if not was_above_vwap:
-        return None  # No spike to reverse — not a squeeze
+        spike_max = max(recent_10) if recent_10 else 0
+        state.emit(f"S2 skip: no VWAP spike in last 10 candles (max={spike_max:.1f} VWAP={atm.vwap_val:.1f}) — not a squeeze", "INFO")
+        return None
 
     # Direction guard: if spot is rising fast, premium selling is risky
     if _spot_rising_fast(state, window=5, threshold=0.3):
+        if len(state.spot_history) >= 5:
+            recent_spot = state.spot_history[-5:]
+            move_pct = abs(recent_spot[-1] - recent_spot[0]) / recent_spot[0] * 100
+            state.emit(f"S2 skip: spot rising fast {move_pct:.2f}% in 5 candles — direction risk", "INFO")
         return None
+
+    state.emit(f"S2 FIRE: combined={atm.current:.1f} < VWAP={atm.vwap_val:.1f} EMA75={atm.ema75:.1f} spike_high={max(recent_10):.1f} candles={candles}", "INFO")
 
     cur_atm = _current_atm(state)
     atm_to_use = next((s for s in state.strikes
