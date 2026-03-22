@@ -62,8 +62,8 @@ except ImportError:
     _genai = None
     _GENAI_AVAILABLE = False
 
-_GEMINI_MODEL  = "gemini-1.5-flash"   # free tier default — stable, widely available
-_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"]
+_GEMINI_MODEL  = "gemini-2.5-flash"   # confirmed working — tested against API
+_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-pro"]
 
 def _simple_encrypt(text: str) -> str:
     """Base64 encode API key for storage."""
@@ -2180,9 +2180,8 @@ async def test_ai_connection(user: User = Depends(get_current_user)):
 def get_ai_models(user: User = Depends(get_current_user)):
     """Return available Gemini model options."""
     return {"models": [
-        {"id": "gemini-1.5-flash",      "label": "Gemini 1.5 Flash",      "note": "Free · Recommended · Widely available"},
-        {"id": "gemini-2.0-flash-lite", "label": "Gemini 2.0 Flash Lite", "note": "Free · Faster · New users"},
-        {"id": "gemini-1.5-pro",        "label": "Gemini 1.5 Pro",        "note": "Paid · Highest quality"},
+        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "note": "Free · Recommended · Confirmed working"},
+        {"id": "gemini-2.5-pro",   "label": "Gemini 2.5 Pro",   "note": "Paid · Highest quality"},
     ]}
 
 
