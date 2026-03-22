@@ -523,6 +523,7 @@ details[open] summary{color:var(--text)}
       <div class="page" id="pg-live"></div>
       <div class="page" id="pg-trades"></div>
       <div class="page" id="pg-performance"></div>
+      <div class="page" id="pg-backtest"></div>
       <div class="page" id="pg-help"></div>
       <div class="page" id="pg-events"></div>
       <div class="page" id="pg-profile"></div>
@@ -569,6 +570,10 @@ details[open] summary{color:var(--text)}
         <div class="more-item" onclick="navMore('performance')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
           Results &amp; Performance
+        </div>
+        <div class="more-item" onclick="navMore('backtest')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Backtest (Paper History)
         </div>
         <div class="more-item" onclick="navMore('help')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -1040,7 +1045,7 @@ function navMore(id) {
 // ── NAV ─────────────────────────────────────────────────────
 function nav(id) {
   closeMoreDrawer();
-  var pages = ['dashboard','brokers','automate','live','trades','performance','help','profile','admin','events'];
+  var pages = ['dashboard','brokers','automate','live','trades','performance','backtest','help','profile','admin','events'];
   pages.forEach(function(p) {
     var pg = document.getElementById('pg-' + p);
     if (pg) pg.className = 'page' + (p===id ? ' active' : '');
@@ -1050,7 +1055,7 @@ function nav(id) {
     if (bn) bn.className = 'bn-item' + (p===id ? ' active' : '');
   });
   // More button stays highlighted when on a "More" page
-  var morePages = ['brokers','trades','help','profile','admin'];
+  var morePages = ['brokers','trades','performance','backtest','help','profile','admin'];
   var bn_more = document.getElementById('bn-more');
   if (bn_more) {
     bn_more.className = 'bn-item' + (morePages.includes(id) ? ' active' : '');
@@ -1062,6 +1067,7 @@ function nav(id) {
   if (id==='live') renderLive();
   if (id==='trades') renderTrades();
   if (id==='performance') renderPerformance();
+  if (id==='backtest') renderBacktest();
   if (id==='help') renderHelp();
   if (id==='events') renderEvents();
   if (id==='profile') renderProfile();
@@ -1176,6 +1182,12 @@ function pnlFmt(v) {
   return sign + '\u20b9' + Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits:0});
 }
 function pnlClass(v) { return v>0?'pos':v<0?'neg':'neutral'; }
+function kpi(label, value, sub, color) {
+  return '<div class="kpi"><div class="kpi-label">'+esc(label)+'</div>'
+    + '<div class="kpi-value" style="'+(color?'color:'+color:'')+'">'+value+'</div>'
+    + (sub?'<div class="kpi-sub">'+sub+'</div>':'')
+    + '</div>';
+}
 function fmtTime(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}); }
@@ -2629,6 +2641,7 @@ async function renderProfile() {
         + '<div style="display:flex;gap:6px;align-items:center">'
         + '<label class="toggle"><input type="checkbox"'+(a.active?' checked':'')+' onchange="toggleTg(\''+a.id+'\',this.checked)"><div class="toggle-track"></div></label>'
         + '<button class="btn btn-ghost btn-sm" onclick="testTg(\''+a.id+'\')">Test</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="enableTgCommands(\''+a.id+'\')" title="Enable /start /stop /status commands">&#129302; Bot</button>'
         + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTg(\''+a.id+'\')">&#10005;</button>'
         + '</div></div></div>';
     }).join('');
@@ -2727,6 +2740,15 @@ async function toggleTg(id, active) {
 async function testTg(id) {
   try { await api('POST', '/api/telegram/test/'+id); toast('Test sent!', 'success'); }
   catch(e) { toast(e.message, 'error'); }
+}
+
+async function enableTgCommands(id) {
+  var webhookUrl = window.location.origin + '/api/telegram/webhook';
+  try {
+    var r = await api('POST', '/api/telegram/set-webhook', {acct_id: id, webhook_url: webhookUrl});
+    if (r.ok) toast('Bot commands enabled! Try /start in Telegram.', 'success');
+    else toast(r.message || 'Failed', 'error');
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 // ── ADMIN ─────────────────────────────────────────────────────
@@ -3390,6 +3412,133 @@ function showHedge(w) {
     + '<div><div style="color:var(--text2);margin-bottom:2px">MAX LOSS</div><div style="font-weight:600">'+h.maxloss+'</div></div>'
     + '<div><div style="color:var(--text2);margin-bottom:2px">BEST FOR</div><div style="font-weight:600;color:var(--amber)">'+h.best+'</div></div>'
     + '</div>';
+}
+
+// ── BACKTEST ──────────────────────────────────────────────────
+async function renderBacktest() {
+  var el = document.getElementById('pg-backtest');
+  if (!el) return;
+  el.innerHTML = '<div class="page-header"><div class="page-title">Backtest — Paper History</div></div>'
+    + '<div style="text-align:center;padding:40px;color:var(--text2)">Loading...</div>';
+  try {
+    var d = await api('GET', '/api/backtest');
+    if (!d.trades_count) {
+      el.innerHTML = '<div class="page-header"><div class="page-title">Backtest — Paper History</div></div>'
+        + '<div class="alert alert-info" style="margin:16px">No completed paper trades yet. Run automations in Shadow Mode to collect data, then come back here to analyse.</div>';
+      return;
+    }
+    var s = d.summary;
+    var winColor  = s.win_rate >= 50 ? 'var(--green)' : 'var(--red)';
+    var pnlColor  = s.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    // ── Summary KPIs ──────────────────────────────────────────
+    var kpis = '<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">'
+      + kpi('Trades', d.trades_count, '')
+      + kpi('Win Rate', s.win_rate + '%', '', winColor)
+      + kpi('Total P&L', pnlFmt(s.total_pnl), '', pnlColor)
+      + kpi('Avg/Trade', pnlFmt(s.avg_pnl), '')
+      + '</div>'
+      + '<div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">'
+      + kpi('Best Trade', pnlFmt(s.best_trade), '', 'var(--green)')
+      + kpi('Worst Trade', pnlFmt(s.worst_trade), '', 'var(--red)')
+      + '</div>';
+
+    // ── By Strategy table ────────────────────────────────────
+    var stratRows = d.by_strategy.map(function(r) {
+      var wr = r.win_rate;
+      var wrCol = wr >= 50 ? 'var(--green)' : 'var(--red)';
+      var pCol  = r.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      return '<tr>'
+        + '<td><span class="badge idle">'+esc(r.code)+'</span></td>'
+        + '<td>'+r.count+'</td>'
+        + '<td style="color:'+wrCol+'">'+wr+'%</td>'
+        + '<td style="color:'+pCol+'">'+pnlFmt(r.total_pnl)+'</td>'
+        + '<td>'+pnlFmt(r.avg_pnl)+'</td>'
+        + '<td>'+r.avg_entry.toFixed(0)+'</td>'
+        + '</tr>';
+    }).join('');
+    var stratTable = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">By Strategy</div></div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr style="color:var(--text2);font-size:11px;border-bottom:1px solid var(--border)">'
+      + '<th style="text-align:left;padding:8px 10px">Strategy</th><th style="padding:8px 10px">Trades</th>'
+      + '<th style="padding:8px 10px">Win%</th><th style="padding:8px 10px">Total P&L</th>'
+      + '<th style="padding:8px 10px">Avg P&L</th><th style="padding:8px 10px">Avg Entry</th>'
+      + '</tr></thead><tbody>'+stratRows+'</tbody></table></div></div>';
+
+    // ── By Weekday ───────────────────────────────────────────
+    var wdRows = d.by_weekday.map(function(w) {
+      var pCol = w.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      var wrCol = w.win_rate >= 50 ? 'var(--green)' : 'var(--red)';
+      return '<tr><td style="padding:8px 10px">'+esc(w.day)+'</td>'
+        + '<td style="padding:8px 10px">'+w.count+'</td>'
+        + '<td style="padding:8px 10px;color:'+wrCol+'">'+w.win_rate+'%</td>'
+        + '<td style="padding:8px 10px;color:'+pCol+'">'+pnlFmt(w.pnl)+'</td>'
+        + '</tr>';
+    }).join('');
+    var wdTable = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">By Day of Week</div></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr style="color:var(--text2);font-size:11px;border-bottom:1px solid var(--border)">'
+      + '<th style="text-align:left;padding:8px 10px">Day</th><th style="padding:8px 10px">Trades</th>'
+      + '<th style="padding:8px 10px">Win%</th><th style="padding:8px 10px">P&L</th>'
+      + '</tr></thead><tbody>'+wdRows+'</tbody></table></div>';
+
+    // ── Exit Reasons ─────────────────────────────────────────
+    var total_exits = d.by_exit.reduce(function(a,r){return a+r.count;},0);
+    var exitBars = d.by_exit.map(function(r) {
+      var pct = total_exits ? Math.round(r.count/total_exits*100) : 0;
+      var col = r.reason==='Profit Target' ? 'var(--green)' : r.reason.includes('SL') ? 'var(--red)' : 'var(--amber)';
+      return '<div style="margin-bottom:8px">'
+        + '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">'
+        + '<span>'+esc(r.reason)+'</span><span style="color:var(--text2)">'+r.count+' ('+pct+'%)</span></div>'
+        + '<div style="height:6px;background:var(--bg3);border-radius:3px">'
+        + '<div style="height:6px;width:'+pct+'%;background:'+col+';border-radius:3px;transition:width .3s"></div>'
+        + '</div></div>';
+    }).join('');
+    var exitCard = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Exit Reasons</div></div>'
+      + '<div class="card-body">'+exitBars+'</div></div>';
+
+    // ── Monthly P&L ──────────────────────────────────────────
+    var monthRows = d.monthly.map(function(m) {
+      var pCol = m.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">'
+        + '<span>'+esc(m.month)+'</span>'
+        + '<span style="font-weight:600;color:'+pCol+'">'+pnlFmt(m.pnl)+'</span>'
+        + '</div>';
+    }).join('');
+    var monthCard = d.monthly.length ? '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Monthly P&L</div></div>'
+      + '<div class="card-body">'+monthRows+'</div></div>' : '';
+
+    // ── Equity Curve (simple bar chart) ──────────────────────
+    var eqCard = '';
+    if (d.equity_curve && d.equity_curve.length > 1) {
+      var eqMax  = Math.max.apply(null, d.equity_curve.map(function(p){return p.equity;}));
+      var eqMin  = Math.min.apply(null, d.equity_curve.map(function(p){return p.equity;}));
+      var eqRange = Math.max(Math.abs(eqMax), Math.abs(eqMin), 1);
+      var bars = d.equity_curve.map(function(p) {
+        var pct = Math.round(Math.abs(p.equity) / eqRange * 40);
+        var col = p.equity >= 0 ? 'var(--green)' : 'var(--red)';
+        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:6px" title="'+p.date+': '+pnlFmt(p.equity)+'">'
+          + '<div style="width:100%;height:'+(p.equity>=0?pct:0)+'px;background:'+col+';border-radius:2px 2px 0 0;margin-bottom:1px"></div>'
+          + '<div style="width:100%;height:'+(p.equity<0?pct:0)+'px;background:'+col+';border-radius:0 0 2px 2px"></div>'
+          + '</div>';
+      }).join('');
+      eqCard = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Equity Curve</div></div>'
+        + '<div class="card-body"><div style="display:flex;align-items:flex-end;height:80px;gap:2px;padding-top:4px">'+bars+'</div>'
+        + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-top:4px">'
+        + '<span>'+d.equity_curve[0].date+'</span><span>'+d.equity_curve[d.equity_curve.length-1].date+'</span></div>'
+        + '</div></div>';
+    }
+
+    el.innerHTML = '<div class="page-header"><div class="page-title">Backtest — Paper History</div></div>'
+      + '<div style="padding:0 16px 80px">'
+      + '<div class="alert alert-info" style="margin-bottom:12px;font-size:11px">Based on '+d.trades_count+' completed paper trades from Shadow Mode. Run more paper trades to improve accuracy.</div>'
+      + kpis + eqCard + stratTable + wdTable + exitCard + monthCard
+      + '</div>';
+
+  } catch(e) {
+    el.innerHTML = '<div class="page-header"><div class="page-title">Backtest</div></div>'
+      + '<div class="alert alert-error" style="margin:16px">'+esc(e.message)+'</div>';
+  }
 }
 
 function renderHelp() {

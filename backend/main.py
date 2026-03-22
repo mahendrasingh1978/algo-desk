@@ -2428,7 +2428,13 @@ async def test_telegram(user: User = Depends(get_current_user)):
 @app.post("/api/telegram/set-webhook")
 async def set_telegram_webhook(req: dict, user: User = Depends(get_current_user)):
     """Register webhook URL with Telegram so bot can receive commands."""
-    bot_token = req.get("bot_token") or user.telegram_token
+    # Support acct_id to look up token from accounts list
+    acct_id = req.get("acct_id")
+    if acct_id:
+        acct = next((a for a in (user.telegram_accounts or []) if a.get("id") == acct_id), None)
+        bot_token = acct["token"] if acct else None
+    else:
+        bot_token = req.get("bot_token") or user.telegram_token
     webhook_url = req.get("webhook_url")
     if not bot_token:
         raise HTTPException(400, "No bot token — add in Profile → Telegram first")
@@ -2797,6 +2803,158 @@ def shadow_performance(
     }
 
 
+@app.get("/api/backtest")
+def get_backtest(user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """
+    Backtest analysis based on stored shadow (paper) trade history.
+    Returns strategy-level stats, day-of-week breakdown, exit reason
+    distribution, hourly entry performance, and monthly P&L trend.
+    """
+    trades = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.is_open == False,
+        ShadowTrade.net_pnl.isnot(None),
+    ).order_by(ShadowTrade.trade_date).all()
+
+    if not trades:
+        return {"ok": True, "trades_count": 0, "by_strategy": [],
+                "by_weekday": [], "by_hour": [], "by_exit": [],
+                "monthly": [], "equity_curve": [], "summary": {}}
+
+    total_pnl   = 0.0
+    wins        = 0
+    losses      = 0
+    equity      = 0.0
+    equity_curve = []
+
+    # Accumulators
+    by_strategy  = {}   # code -> {wins, losses, pnl, entries}
+    by_weekday   = {}   # 0-4 -> {wins, losses, pnl, count}
+    by_hour      = {}   # hour -> {wins, losses, pnl, count}
+    by_exit      = {}   # reason -> count
+    by_month     = {}   # YYYY-MM -> pnl
+
+    DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+
+    for t in trades:
+        pnl  = t.net_pnl or 0.0
+        code = t.strategy_code or "?"
+        total_pnl += pnl
+        equity    += pnl
+        is_win     = pnl > 0
+
+        if is_win: wins   += 1
+        else:      losses += 1
+
+        equity_curve.append({"date": t.trade_date, "equity": round(equity, 2)})
+
+        # By strategy
+        s = by_strategy.setdefault(code, {"code": code, "wins": 0, "losses": 0,
+                                          "pnl": 0.0, "count": 0,
+                                          "avg_entry": 0.0, "_entry_sum": 0.0})
+        s["count"] += 1
+        s["pnl"]   += pnl
+        s["_entry_sum"] += t.entry_combined or 0.0
+        if is_win: s["wins"]   += 1
+        else:      s["losses"] += 1
+
+        # By weekday
+        try:
+            wd = datetime.strptime(t.trade_date, "%Y-%m-%d").weekday()
+            w  = by_weekday.setdefault(wd, {"day": DAYS[wd], "wins": 0,
+                                            "losses": 0, "pnl": 0.0, "count": 0})
+            w["count"] += 1; w["pnl"] += pnl
+            if is_win: w["wins"] += 1
+            else:      w["losses"] += 1
+        except Exception:
+            pass
+
+        # By entry hour
+        if t.entry_time:
+            try:
+                import pytz
+                ist = pytz.timezone("Asia/Kolkata")
+                et  = t.entry_time.replace(tzinfo=pytz.utc).astimezone(ist)
+                hr  = et.hour
+                h   = by_hour.setdefault(hr, {"hour": f"{hr}:00", "wins": 0,
+                                              "losses": 0, "pnl": 0.0, "count": 0})
+                h["count"] += 1; h["pnl"] += pnl
+                if is_win: h["wins"] += 1
+                else:      h["losses"] += 1
+            except Exception:
+                pass
+
+        # By exit reason (simplified label)
+        raw_reason = (t.exit_reason or "OTHER").upper()
+        if   "PROFIT"   in raw_reason: label = "Profit Target"
+        elif "TRAILING" in raw_reason: label = "Trailing SL"
+        elif "VWAP"     in raw_reason: label = "VWAP SL"
+        elif "EMA"      in raw_reason: label = "EMA75 SL"
+        elif "MAX_LOSS" in raw_reason: label = "Max Loss SL"
+        elif "AUTO"     in raw_reason: label = "Auto Exit"
+        elif "MARKET"   in raw_reason: label = "Market Close"
+        else:                          label = "Other"
+        by_exit[label] = by_exit.get(label, 0) + 1
+
+        # By month
+        month = t.trade_date[:7]  # YYYY-MM
+        by_month[month] = by_month.get(month, 0.0) + pnl
+
+    total = len(trades)
+
+    # Finalise strategy stats
+    strat_list = []
+    for code, s in sorted(by_strategy.items()):
+        cnt = s["count"]
+        strat_list.append({
+            "code":      code,
+            "count":     cnt,
+            "wins":      s["wins"],
+            "losses":    s["losses"],
+            "win_rate":  round(s["wins"] / cnt * 100, 1) if cnt else 0,
+            "total_pnl": round(s["pnl"], 2),
+            "avg_pnl":   round(s["pnl"] / cnt, 2) if cnt else 0,
+            "avg_entry": round(s["_entry_sum"] / cnt, 1) if cnt else 0,
+        })
+
+    weekday_list = [by_weekday[k] for k in sorted(by_weekday)]
+    for w in weekday_list:
+        w["pnl"]      = round(w["pnl"], 2)
+        w["win_rate"] = round(w["wins"] / w["count"] * 100, 1) if w["count"] else 0
+
+    hour_list = [by_hour[k] for k in sorted(by_hour)]
+    for h in hour_list:
+        h["pnl"]      = round(h["pnl"], 2)
+        h["win_rate"] = round(h["wins"] / h["count"] * 100, 1) if h["count"] else 0
+
+    monthly_list = [{"month": m, "pnl": round(p, 2)}
+                    for m, p in sorted(by_month.items())]
+
+    exit_list = [{"reason": k, "count": v} for k, v in
+                 sorted(by_exit.items(), key=lambda x: -x[1])]
+
+    return {
+        "ok":           True,
+        "trades_count": total,
+        "summary": {
+            "total_pnl":  round(total_pnl, 2),
+            "wins":       wins,
+            "losses":     losses,
+            "win_rate":   round(wins / total * 100, 1) if total else 0,
+            "avg_pnl":    round(total_pnl / total, 2) if total else 0,
+            "best_trade": round(max(t.net_pnl or 0 for t in trades), 2),
+            "worst_trade":round(min(t.net_pnl or 0 for t in trades), 2),
+        },
+        "by_strategy":  strat_list,
+        "by_weekday":   weekday_list,
+        "by_hour":      hour_list,
+        "by_exit":      exit_list,
+        "monthly":      monthly_list,
+        "equity_curve": equity_curve,
+    }
+
+
 # ── Shadow engine helper ──────────────────────────────────────────
 
 async def _run_shadow_trade(user_id: str, auto: Automation,
@@ -2821,6 +2979,17 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
     # Create shadow trade record
     db = SessionLocal()
     try:
+        # S2 direction metadata for real-world validation
+        entry_insight = None
+        if signal.get("code") == "S2":
+            atm_strike = signal.get("strike", 0)
+            spot_drift = entry_spot - atm_strike if atm_strike else 0
+            direction = "UP" if spot_drift > 25 else "DOWN" if spot_drift < -25 else "FLAT"
+            entry_insight = (
+                f"[S2 Validation] Spot={entry_spot:.0f} ATM={atm_strike} "
+                f"Drift={spot_drift:+.0f}pts ({direction}) | {signal.get('reason','')}"
+            )
+
         st = ShadowTrade(
             user_id=user_id, automation_id=auto.id,
             trade_date=datetime.now(ist).strftime("%Y-%m-%d"),
@@ -2830,6 +2999,7 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
             entry_time=datetime.utcnow(),
             lots=lots, lot_size=lot_sz,
             is_open=True, signal_data=signal,
+            ai_insight=entry_insight,
         )
         db.add(st); db.commit(); db.refresh(st)
         trade_id = st.id

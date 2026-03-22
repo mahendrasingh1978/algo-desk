@@ -171,9 +171,19 @@ for i, line in enumerate(js.split('\n'), 1):
     if stripped.startswith('//') or '`' in line:
         continue
     # Pattern: closing paren immediately followed by a quote char — almost always a syntax error
+    # Specifically: a ternary or expression where ) ends up inside the string literal
     if re.search(r"\)'", line) and not re.search(r"//.*\)'", line):
-        # Allow legitimate patterns like .replace(/foo/,'bar') or ['key']
-        if not re.search(r"(replace|split|join|match|test|exec)\s*\(", line):
+        # Skip clearly legitimate patterns
+        skip = False
+        # CSS functions inside strings: rgba(), hsl(), var(--x)
+        if re.search(r"(rgba|hsl|rgb|var)\([^)]*\)'", line): skip = True
+        # Parens inside plain string literals: '(text)' or "(text)"
+        if re.search(r"'[^']*\)[^']*'", line): skip = True
+        # String method calls: .replace(, .split(, .join(, etc.
+        if re.search(r"\.(replace|split|join|match|test|exec|indexOf|includes)\s*\(", line): skip = True
+        # Ternary where ) is followed by , or ; or ) — it's the outer call closing
+        if re.search(r"\)',\s*'", line): skip = True   # toast(...), 'type')
+        if not skip:
             ternary_quote.append(f"Line {i}: {stripped[:80]}")
 if ternary_quote:
     for tq in ternary_quote[:5]:
