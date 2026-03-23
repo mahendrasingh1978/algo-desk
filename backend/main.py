@@ -3927,7 +3927,7 @@ async def _run_engine(user_id: str, auto: Automation,
                 for sk in state.strikes:
                     cd = chain.get(sk.strike)
                     if cd:
-                        sk.combined_history.append(cd["combined"])
+                        sk.update(cd["combined"])   # computes VWAP + EMA75 — do NOT use .append()
                         sk.ce_symbol = cd.get("ce_symbol", "")
                         sk.pe_symbol = cd.get("pe_symbol", "")
                         # Build ORB
