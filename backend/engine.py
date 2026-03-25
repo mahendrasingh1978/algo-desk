@@ -248,10 +248,28 @@ def get_position_size(config: dict) -> int:
 DRIFT_MAX_STRIKES = 3
 
 def _current_atm(state: "EngineState") -> int:
-    """ATM based on the most recent spot price, not the morning lock."""
+    """ATM strike number based on the most recent spot price."""
     if state.spot_history:
         return nearest_strike(state.spot_history[-1])
     return state.atm_strike or 0
+
+def _live_atm_state(state: "EngineState") -> "StrikeState":
+    """
+    Returns the StrikeState for the current live ATM (based on live spot).
+    Falls back to nearest tracked strike if exact live ATM not in tracked window.
+    Falls back to morning ATM if no spot history.
+    Used by S3,S4,S5,S6,S8 — these should trade at wherever spot IS now.
+    """
+    if not state.spot_history:
+        return state.atm
+    live_strike = nearest_strike(state.spot_history[-1])
+    # Exact match
+    exact = next((s for s in state.strikes if s.strike == live_strike), None)
+    if exact:
+        return exact
+    # Nearest tracked strike
+    nearest = min(state.strikes, key=lambda s: abs(s.strike - live_strike), default=None)
+    return nearest or state.atm
 
 def _drift_strikes(state: "EngineState") -> int:
     """How many strikes has spot drifted from morning ATM?"""
@@ -579,12 +597,12 @@ def _s8(state, t, now):
     2. Wait until 9:30 — first 15 minutes are price discovery noise.
     """
     if not (dtime(9,30) <= t <= dtime(10,0)): return None  # 15-min rule
-    atm = state.atm
-    if not atm: return None
+    morning_atm = state.atm
+    if not morning_atm: return None
     prev = state.config.get("prev_close", 0)
     if not prev or not state.spot_locked: return None
     gap_pct = abs(state.spot_locked - prev) / prev * 100
-    if gap_pct < 0.4 or atm.current < 50: return None
+    if gap_pct < 0.4 or morning_atm.current < 50: return None
 
     # Previous day filter — never fade after a big move
     prev_move = _prev_day_move_pct(state)
@@ -613,8 +631,10 @@ def _s8(state, t, now):
                 f"Gap continuing, fade not safe.", "INFO")
             return None
 
+    # M7: use live ATM — on gap days spot is already displaced from morning ATM
+    atm = _live_atm_state(state)
+    if not atm: return None
     sb = _sb(state)
-    # Wider hedge for gap days (±3 strikes = Iron Condor)
     legs = _build_legs("S8", atm, sb, hedge_width=20)
     return {
         "code":"S8", "name":"Gap Fade Iron Condor",
@@ -723,18 +743,21 @@ def _s3(state, t, now):
     Selling at reversal point captures inflated IV from the spike.
     """
     if not (dtime(9,35) <= t <= dtime(14,0)): return None  # needs 20+ candles for VWAP spike pattern
-    atm = state.atm
-    if not atm or len(atm.combined_history) < 20: return None  # 20 candles minimum for S3
-    recent_high = max(atm.combined_history[-15:])  # 15 candles (was 5 — too short)
-    if recent_high < atm.vwap_val * 1.05 or atm.current >= atm.vwap_val: return None
+    morning_atm = state.atm
+    if not morning_atm or len(morning_atm.combined_history) < 20: return None
+    # Use live ATM for trade entry — spot may have moved since 9:15
+    atm = _live_atm_state(state)
+    if not atm: return None
+    recent_high = max(morning_atm.combined_history[-15:])  # VWAP check uses morning data
+    if recent_high < morning_atm.vwap_val * 1.05 or morning_atm.current >= morning_atm.vwap_val: return None
     sb = _sb(state)
     legs = _build_legs("S3", atm, sb, hedge_width=20)
     return {
         "code":"S3", "name":"Breakout Reversal Iron Fly",
-        "structure":"Iron Fly (ATM, ±2 hedge)",
+        "structure":"Iron Fly (live ATM, ±1000pt hedge)",
         "strike": atm.strike,
         "combined": atm.current,
-        "reason": f"Spike to {recent_high:.1f} reversed below VWAP {atm.vwap_val:.1f}",
+        "reason": f"Spike to {recent_high:.1f} reversed below VWAP {morning_atm.vwap_val:.1f}",
         **legs,
     }
 
@@ -751,20 +774,24 @@ def _s4(state, t, now):
     Capital efficiency: ~₹35-40K margin per lot (vs ₹1L naked).
     """
     if not (dtime(9,30) <= t <= dtime(10,0)): return None
-    atm = state.atm
-    if not atm or len(atm.combined_history) < 15: return None
-    hist = atm.combined_history[-15:]
-    rng = (max(hist)-min(hist)) / atm.current if atm.current else 1
+    morning_atm = state.atm
+    if not morning_atm or len(morning_atm.combined_history) < 15: return None
+    hist = morning_atm.combined_history[-15:]
+    rng = (max(hist)-min(hist)) / morning_atm.current if morning_atm.current else 1
     if rng > 0.05: return None  # tightened 8%→5%: only truly range-bound days
+    # M6: use live ATM — centre condor around actual spot not 9:15 level
+    atm = _live_atm_state(state)
+    if not atm: return None
+    gap = state.config.get("strike_round", 50)
     sb = _sb(state)
-    sell_ce  = sb.get(1, atm)
-    sell_pe  = sb.get(-1, atm)
-    buy_ce   = sb.get(21) or sb.get(20) or sb.get(3) or sb.get(2, atm)  # ±1000pt hedge
-    buy_pe   = sb.get(-21) or sb.get(-20) or sb.get(-3) or sb.get(-2, atm)
+    sell_ce  = next((s for s in state.strikes if s.strike == atm.strike + gap), sb.get(1, atm))
+    sell_pe  = next((s for s in state.strikes if s.strike == atm.strike - gap), sb.get(-1, atm))
+    buy_ce   = next((s for s in state.strikes if s.strike == atm.strike + 1000), None) or sb.get(21) or sb.get(20, atm)
+    buy_pe   = next((s for s in state.strikes if s.strike == atm.strike - 1000), None) or sb.get(-21) or sb.get(-20, atm)
     combined = sell_ce.current + sell_pe.current
     return {
         "code":"S4", "name":"Iron Condor",
-        "structure":"Iron Condor (sell ±1, buy ±1000pt wings)",
+        "structure":"Iron Condor (sell ±1 live ATM, buy ±1000pt wings)",
         "strike": atm.strike,
         "combined": combined,
         "sell_ce": sell_ce.ce_symbol, "sell_pe": sell_pe.pe_symbol,
@@ -773,7 +800,7 @@ def _s4(state, t, now):
         "buy_ce_strike": buy_ce.strike,
         "buy_pe_strike": buy_pe.strike,
         "hedge_width": 20,
-        "reason": f"Range-bound {rng*100:.1f}% — Iron Condor optimal",
+        "reason": f"Range-bound {rng*100:.1f}% — Iron Condor at live ATM {atm.strike}",
         "margin_note": "Fully defined risk, lowest margin",
     }
 
@@ -789,17 +816,22 @@ def _s6(state, t, now):
     Use when India VIX > 15 and premium elevated at open.
     """
     if not (dtime(9,45) <= t <= dtime(10,30)): return None
-    atm = state.atm
-    if not atm or not atm.orb_high: return None
-    if atm.current < atm.orb_high * 1.05: return None  # fire only when IV elevated (combined above ORB)
+    morning_atm = state.atm
+    if not morning_atm or not morning_atm.orb_high: return None
+    if morning_atm.current < morning_atm.orb_high * 1.05: return None  # IV gate uses morning data
+    # M7: use live ATM for order entry
+    atm = _live_atm_state(state)
+    if not atm: return None
     sb = _sb(state)
-    sell_ce = sb.get(1, atm); sell_pe = sb.get(-1, atm)
-    buy_ce  = sb.get(21) or sb.get(20) or sb.get(4) or sb.get(3, atm)  # ±1000pt hedge
-    buy_pe  = sb.get(-21) or sb.get(-20) or sb.get(-4) or sb.get(-3, atm)
+    gap = state.config.get("strike_round", 50)
+    sell_ce = next((s for s in state.strikes if s.strike == atm.strike + gap), sb.get(1, atm))
+    sell_pe = next((s for s in state.strikes if s.strike == atm.strike - gap), sb.get(-1, atm))
+    buy_ce  = next((s for s in state.strikes if s.strike == atm.strike + 1000), None) or sb.get(21) or sb.get(20, atm)
+    buy_pe  = next((s for s in state.strikes if s.strike == atm.strike - 1000), None) or sb.get(-21) or sb.get(-20, atm)
     combined = sell_ce.current + sell_pe.current
     return {
         "code":"S6", "name":"Theta Decay Wide Condor",
-        "structure":"Wide Iron Condor (sell ±1, buy ±1000pt wings)",
+        "structure":"Wide Iron Condor (sell ±1 live ATM, buy ±1000pt wings)",
         "strike": atm.strike,
         "combined": combined,
         "sell_ce": sell_ce.ce_symbol, "sell_pe": sell_pe.pe_symbol,
@@ -808,7 +840,7 @@ def _s6(state, t, now):
         "buy_ce_strike": buy_ce.strike,
         "buy_pe_strike": buy_pe.strike,
         "hedge_width": 20,
-        "reason": f"Elevated IV — sell wide condor, buy ±1000pt wings",
+        "reason": f"Elevated IV — sell wide condor at live ATM {atm.strike}, buy ±1000pt wings",
         "margin_note": "Fully defined, premium elevated",
     }
 
@@ -926,14 +958,17 @@ def _s5(state, t, now):
     if "S5" not in state.config.get("strategies", []):
         return None
     if not (dtime(9,30) <= t <= dtime(11,0)): return None
-    atm = state.atm
-    if not atm or atm._ema_count < 20: return None
-    if atm.current >= atm.ema75 * 0.95: return None
+    morning_atm = state.atm
+    if not morning_atm or morning_atm._ema_count < 20: return None
+    if morning_atm.current >= morning_atm.ema75 * 0.95: return None
+    # M7: use live ATM for order entry
+    atm = _live_atm_state(state)
+    if not atm: return None
     sb = _sb(state)
-    buy_hedge = sb.get(20) or sb.get(3) or sb.get(2, atm)  # ±1000pt hedge
+    buy_hedge = next((s for s in state.strikes if s.strike == atm.strike + 1000), None) or sb.get(20) or sb.get(3, atm)
     return {
         "code":"S5", "name":"Ratio Spread (Advanced)",
-        "structure":"Sell 2x ATM CE+PE, buy 1x ±1000pt hedge each side",
+        "structure":"Sell 2x live ATM CE+PE, buy 1x ±1000pt hedge each side",
         "strike": atm.strike,
         "combined": atm.current,
         "sell_ce": atm.ce_symbol, "sell_pe": atm.pe_symbol,

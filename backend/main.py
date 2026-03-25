@@ -3993,6 +3993,29 @@ async def _run_engine(user_id: str, auto: Automation,
                         f"ORB complete. ATM {atm.strike}: "
                         f"Low={atm.orb_low:.1f} High={atm.orb_high:.1f}", "OK")
 
+            # M8: Re-initialise strikes at 10:30 if spot drifted >2 strikes from morning ATM
+            # Ensures S9 (fires at 11am) trades at real current ATM, not stale 9:15 level
+            if (t >= dtime(10, 30) and not getattr(state, "_strikes_refreshed", False)
+                    and state.atm_strike and state.spot_history):
+                live_atm = nearest_strike(state.spot_history[-1])
+                gap = state.config.get("strike_round", 50)
+                drift = abs(live_atm - state.atm_strike) / gap
+                if drift >= 2:
+                    sides = state.config.get("strike_sides", 20)
+                    new_strikes = []
+                    for i in range(-sides, sides + 1):
+                        sk = StrikeState(strike=live_atm + i * gap, offset=i, is_atm=(i == 0))
+                        cd = chain.get(sk.strike)
+                        if cd:
+                            sk.update(cd["combined"], ce_ltp=cd.get("ce_ltp", 0), pe_ltp=cd.get("pe_ltp", 0))
+                            sk.ce_symbol = cd.get("ce_symbol", "")
+                            sk.pe_symbol = cd.get("pe_symbol", "")
+                        new_strikes.append(sk)
+                    state.strikes = new_strikes
+                    state.atm_strike = live_atm
+                    state._strikes_refreshed = True
+                    state.emit(f"Strikes refreshed at 10:30 — live ATM {live_atm} (was {state.atm_strike}, drift {drift:.0f} strikes)", "INFO")
+
             # Reset daily gate at 9:15 each morning (new trading day)
             if t == dtime(9, 15) and state.traded_today:
                 state.traded_today = False
