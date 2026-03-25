@@ -869,7 +869,9 @@ async def _market_data_service():
                                 for sk in eng.strikes:
                                     cd = result["chain"].get(sk.strike)
                                     if cd:
-                                        sk.update(cd["combined"])
+                                        sk.update(cd["combined"],
+                                                  ce_ltp=cd.get("ce_ltp", 0),
+                                                  pe_ltp=cd.get("pe_ltp", 0))
                                         sk.ce_symbol = cd.get("ce_symbol","")
                                         sk.pe_symbol = cd.get("pe_symbol","")
                                         if dtime(9,15) <= t <= dtime(9,21):
@@ -1521,6 +1523,9 @@ def get_strategies(user: User = Depends(get_current_user)):
         {"code": "S9", "name": "Pre-Expiry Theta Crush",
          "tier": "PRO",
          "description": "Expiry day only 11:00-12:00. Tight butterfly."},
+        {"code": "S10", "name": "Gap Directional Buy",
+         "tier": "PRO",
+         "description": "Clear gap >1%. BUY ATM CE (gap-up) or PE (gap-down). Exit 11:00 AM."},
     ]}
 
 # ── Automations ───────────────────────────────────────────────
@@ -3962,11 +3967,44 @@ async def _run_engine(user_id: str, auto: Automation,
             # Check SL
             elif state.position:
                 atm  = state.atm
-                reason = check_sl(state)
-                if reason or state.position.get("force_exit"):
-                    reason = reason or "FORCE_EXIT"
-                    await _close_position(state, conn, reason,
-                                           lot_sz, lots, user_id)
+                pos_sig = state.position.get("signal", {})
+
+                # ── S10 BUY SL checks ─────────────────────────────
+                if pos_sig.get("is_buy"):
+                    direction  = pos_sig.get("direction", "CE")
+                    entry_ltp  = state.position.get("entry_combined", 0)
+                    entry_spot = state.position.get("entry_spot", 0)
+                    cur_ltp    = (atm.ce_ltp if direction == "CE" else atm.pe_ltp) if atm else 0
+
+                    # Hard exit at 11:00 AM
+                    if t >= dtime(11, 0):
+                        await _close_position(state, conn, "S10_HARD_EXIT_11AM",
+                                               lot_sz, lots, user_id)
+                    # Premium SL: 40% loss
+                    elif cur_ltp > 0 and cur_ltp <= entry_ltp * 0.60:
+                        await _close_position(state, conn,
+                            f"S10_PREMIUM_SL entry={entry_ltp:.1f} now={cur_ltp:.1f}",
+                            lot_sz, lots, user_id)
+                    # Spot reversal SL: 30pts against direction
+                    elif entry_spot and state.spot_history:
+                        cur_spot = state.spot_history[-1]
+                        reversal = cur_spot - entry_spot
+                        if direction == "CE" and reversal <= -30:
+                            await _close_position(state, conn,
+                                f"S10_SPOT_REVERSAL entry={entry_spot:.0f} now={cur_spot:.0f}",
+                                lot_sz, lots, user_id)
+                        elif direction == "PE" and reversal >= 30:
+                            await _close_position(state, conn,
+                                f"S10_SPOT_REVERSAL entry={entry_spot:.0f} now={cur_spot:.0f}",
+                                lot_sz, lots, user_id)
+
+                else:
+                    # Standard SL for selling strategies
+                    reason = check_sl(state)
+                    if reason or state.position.get("force_exit"):
+                        reason = reason or "FORCE_EXIT"
+                        await _close_position(state, conn, reason,
+                                               lot_sz, lots, user_id)
                     # Telegram
                     db2 = SessionLocal()
                     try:
@@ -4035,6 +4073,81 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
     qty = lot_sz * lots
     is_live = conn.mode != "paper"
     orders = []
+
+    # ── S10 BUY strategy: single-leg order ────────────────────────
+    if signal.get("is_buy"):
+        buy_sym = signal.get("buy_symbol")
+        if not buy_sym:
+            state.emit("❌ S10: no buy_symbol in signal", "ERROR")
+            return
+        state.emit(f"S10 BUY: placing {qty}x {buy_sym}", "ORDER")
+        if is_live:
+            r = await conn.place_order(buy_sym, "BUY", qty)
+        else:
+            r = {"ok": True, "order_id": "PAPER"}
+        if not r.get("ok"):
+            state.emit(f"❌ S10 BUY failed: {r.get('message')}", "ERROR")
+            return
+        orders = [{"leg":"buy_option","symbol":buy_sym,"side":"BUY",
+                   "order_id":r.get("order_id","PAPER"),"ok":True}]
+        state.emit(f"✅ S10 BUY {qty}x {buy_sym} id={r.get('order_id','PAPER')}", "ORDER")
+
+        entry_ltp = signal.get("entry_ltp", signal.get("combined", 0))
+        state.position = {
+            "signal": signal, "entry_combined": entry_ltp,
+            "entry_time": datetime.now().isoformat(),
+            "entry_spot": state.spot_history[-1] if state.spot_history else 0,
+            "orders": orders,
+        }
+
+        db = SessionLocal()
+        try:
+            import pytz as _pytz
+            _ist = _pytz.timezone("Asia/Kolkata")
+            ist_now = datetime.now(_ist).replace(tzinfo=None)
+            trade_mode = state.config.get("mode", "paper")
+
+            if trade_mode == "paper":
+                trade = ShadowTrade(
+                    user_id=user_id, automation_id=auto_id,
+                    trade_date=ist_now.strftime("%Y-%m-%d"),
+                    symbol=state.config.get("symbol", "NSE:NIFTY50-INDEX"),
+                    strategy_code=signal["code"],
+                    atm_strike=state.atm_strike,
+                    entry_combined=entry_ltp,
+                    entry_spot=state.spot_history[-1] if state.spot_history else 0,
+                    entry_time=ist_now,
+                    lots=lots, lot_size=lot_sz, hedge_width=0,
+                    max_profit=entry_ltp * qty * 3,   # rough: 3x on a big gap move
+                    max_loss=entry_ltp * qty,          # max loss = premium paid
+                    is_open=True, signal_data=signal, last_monitored=ist_now)
+                db.add(trade); db.commit()
+                state.position["trade_id"] = trade.id
+                state.position["trade_table"] = "shadow"
+            else:
+                trade = Trade(
+                    user_id=user_id, automation_id=auto_id,
+                    trade_date=ist_now.strftime("%Y-%m-%d"),
+                    symbol=state.config.get("symbol", "NIFTY"),
+                    strategy_code=signal["code"], mode=trade_mode,
+                    atm_strike=state.atm_strike,
+                    sell_ce_strike=0, sell_pe_strike=0,
+                    entry_combined=entry_ltp, net_credit=-entry_ltp,  # debit (buy)
+                    lots=lots, lot_size=lot_sz, entry_time=ist_now,
+                    is_open=True, signal_data=signal, orders=orders)
+                db.add(trade); db.commit()
+                state.position["trade_id"] = trade.id
+                state.position["trade_table"] = "live"
+        finally:
+            db.close()
+
+        state.traded_today = True
+        state.trade_count += 1
+        state.emit(
+            f"S10 position open: BUY {signal['direction']} @ ₹{entry_ltp:.1f} | "
+            f"SL: ₹{entry_ltp*0.60:.1f} (40% drop) or spot reversal 30pts | "
+            f"Hard exit 11:00 AM", "OK")
+        return
 
     # Build all 4 legs for basket order
     legs_to_place = []
@@ -4228,6 +4341,64 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
     if not state.position: return
     qty = lot_sz * lots
     atm = state.atm
+    sig = state.position.get("signal", {})
+
+    # ── S10 BUY close: single-leg SELL ────────────────────────────
+    if sig.get("is_buy"):
+        direction = sig.get("direction", "CE")
+        cur_ltp = (atm.ce_ltp if direction == "CE" else atm.pe_ltp) if atm else 0
+        entry_ltp = state.position.get("entry_combined", 0)
+        exit_combined = cur_ltp if cur_ltp > 0 else entry_ltp
+        pnl_per_lot = (exit_combined - entry_ltp) * lot_sz
+        pnl_total   = pnl_per_lot * lots
+
+        # Place closing SELL
+        buy_sym = sig.get("buy_symbol")
+        if buy_sym and conn.mode != "paper":
+            r = await conn.place_order(buy_sym, "SELL", qty)
+            state.emit(f"S10 CLOSE: SELL {qty}x {buy_sym} — {r.get('ok')}", "ORDER")
+        else:
+            state.emit(f"S10 CLOSE (paper): SELL {qty}x {buy_sym or 'N/A'}", "ORDER")
+
+        state.day_pnl += pnl_total
+        state.emit(
+            f"S10 closed [{reason}] — entry=₹{entry_ltp:.1f} exit=₹{exit_combined:.1f} "
+            f"P&L=₹{pnl_total:.0f}", "OK")
+
+        # Update DB record
+        db = SessionLocal()
+        try:
+            import pytz as _pytz
+            _ist = _pytz.timezone("Asia/Kolkata")
+            ist_now = datetime.now(_ist).replace(tzinfo=None)
+            trade_id = state.position.get("trade_id")
+            if trade_id:
+                tbl = state.position.get("trade_table", "shadow")
+                if tbl == "shadow":
+                    t_rec = db.query(ShadowTrade).filter(ShadowTrade.id == trade_id).first()
+                    if t_rec:
+                        t_rec.exit_combined = exit_combined
+                        t_rec.exit_time = ist_now
+                        t_rec.exit_reason = reason
+                        t_rec.pnl = pnl_total
+                        t_rec.is_open = False
+                        db.commit()
+                else:
+                    t_rec = db.query(Trade).filter(Trade.id == trade_id).first()
+                    if t_rec:
+                        t_rec.exit_combined = exit_combined
+                        t_rec.exit_time = ist_now
+                        t_rec.exit_reason = reason
+                        t_rec.pnl = pnl_total
+                        t_rec.is_open = False
+                        db.commit()
+        finally:
+            db.close()
+
+        state.position = None
+        state.sl_state.reset()
+        return
+
     exit_combined = atm.current if atm else state.position["entry_combined"]
 
     # Build closing legs (reverse of entry)

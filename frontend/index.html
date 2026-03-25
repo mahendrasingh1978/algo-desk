@@ -862,7 +862,7 @@ function _applyClaudeBadges(a) {
   if (!a) return;
   var rec   = a.recommended_strategies || [];
   var avoid = a.avoid_strategies || [];
-  ['S1','S2','S3','S4','S5','S6','S7','S8','S9'].forEach(function(code) {
+  ['S1','S2','S3','S4','S5','S6','S7','S8','S9','S10'].forEach(function(code) {
     var el = document.getElementById('sp-'+code);
     if (!el) return;
     // Remove old badges
@@ -1708,6 +1708,7 @@ function showAutoForm(auto) {
     {code:'S4',name:'Iron Condor',desc:'Range-bound days'},
     {code:'S6',name:'Theta Strangle',desc:'High IV days'},
     {code:'S9',name:'Expiry Crush',desc:'Thursday only'},
+    {code:'S10',name:'Gap Directional',desc:'Buy CE/PE on gap day'},
     {code:'S5',name:'Ratio Spread',desc:'Advanced — downtrend'},
   ];
   var stratPicker = strategies.map(function(s) {
@@ -1773,6 +1774,24 @@ function showAutoForm(auto) {
     + '<option value="99">Off (no VIX guard)</option>'
     + '</select>'
     + '<div class="field-hint">Skip signals if India VIX is above this at open. Requires VIX data from broker.</div></div>'
+    + '</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>Skip Day — Gap % <span style="color:var(--amber);font-size:10px">Guard 5</span></label>'
+    + '<select id="af-gapskip">'
+    + '<option value="0" selected>Off</option>'
+    + '<option value="1.0">1.0% gap</option>'
+    + '<option value="1.5">1.5% gap</option>'
+    + '<option value="2.0">2.0% gap</option>'
+    + '</select>'
+    + '<div class="field-hint">Suspend SELL strategies if today\'s open gap ≥ this %. S10 (buy) still runs.</div></div>'
+    + '<div class="field"><label>Skip Day — Prev Move % <span style="color:var(--amber);font-size:10px">Guard 5</span></label>'
+    + '<select id="af-prevskip">'
+    + '<option value="0" selected>Off</option>'
+    + '<option value="1.5">1.5%</option>'
+    + '<option value="2.0">2.0%</option>'
+    + '<option value="3.0">3.0%</option>'
+    + '</select>'
+    + '<div class="field-hint">Suspend SELL strategies if yesterday moved ≥ this %. Use with gap filter or alone.</div></div>'
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30% quick exit</option><option value="40">40%</option><option value="50" selected>50% standard</option><option value="60">60% hold longer</option></select></div>'
@@ -1866,6 +1885,8 @@ async function saveAuto(mode) {
       drift_max_pct: parseFloat(document.getElementById('af-driftmax').value)||1.5,
       vix_max: parseFloat(document.getElementById('af-vixmax').value)||17,
       position_sizing: (document.getElementById('af-sizing')||{}).value||'fixed',
+      gap_skip_pct: parseFloat((document.getElementById('af-gapskip')||{}).value)||0,
+      prev_day_skip_pct: parseFloat((document.getElementById('af-prevskip')||{}).value)||0,
     }
   };
   try {
@@ -3219,7 +3240,7 @@ function buildHelpPage() {
   // How strategies combine
   + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">How multiple strategies work together</div></div><div class="card-body">'
   + '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Select multiple strategies in one automation. Every 60 seconds during market hours the engine checks conditions in <strong style="color:var(--text)">priority order</strong>. The first one whose condition is met <strong style="color:var(--green)">fires and places the trade</strong>. All others are skipped. One trade per automation per day.</p>'
-  + '<div class="alert alert-info" style="margin-bottom:10px"><strong>Priority order:</strong> S7 \u2192 S1 \u2192 S8 \u2192 S2 \u2192 S3 \u2192 S4 \u2192 S6 \u2192 S9 \u2192 S5</div>'
+  + '<div class="alert alert-info" style="margin-bottom:10px"><strong>Priority order:</strong> S7 \u2192 S1 \u2192 S8 \u2192 S2 \u2192 S3 \u2192 S4 \u2192 S6 \u2192 S9 \u2192 S5 \u2192 S10</div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;font-size:12px;line-height:1.8">'
   + '<strong style="color:var(--text)">Example: S1 + S8 + S2 selected</strong><br>'
   + '<span style="color:var(--text2)">Gap day \u2192 </span><span style="color:var(--amber)">S8 fires at 9:22 AM</span><span style="color:var(--text2)"> (S1 and S2 skipped)</span><br>'
