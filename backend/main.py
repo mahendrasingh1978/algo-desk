@@ -325,23 +325,23 @@ def estimate_margin(symbol: str, lots: int, lot_size: int,
 PLAN_CONFIG = {
     "FREE": {
         "live_trading":   False,
-        "strategies":     ["S1","S2","S3","S4","S6","S7","S8","S9","S5"],  # all in paper
+        "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9","S10"],  # all in paper
         "max_automations": 3,
         "shadow_mode":    True,
         "label":          "Free",
-        "description":    "Paper trading · All 9 strategies simulated · No live orders",
+        "description":    "Paper trading · All 10 strategies simulated · No live orders",
     },
     "STARTER": {
         "live_trading":   True,
-        "strategies":     ["S1","S2","S3","S8"],
+        "strategies":     ["S1","S2","S3","S8","S10"],
         "max_automations": 2,
         "shadow_mode":    True,
         "label":          "Starter",
-        "description":    "Live trading · 4 core strategies · 2 automations",
+        "description":    "Live trading · 5 core strategies · 2 automations",
     },
     "PRO": {
         "live_trading":   True,
-        "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9"],
+        "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9","S10"],
         "max_automations": 10,
         "shadow_mode":    True,
         "label":          "Pro",
