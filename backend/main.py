@@ -1376,17 +1376,30 @@ def market_status(
             "updated": sym_cache.get("updated"),
         }
 
-    # Fall back to primary NIFTY cache
-    cache = _user_cache(user.id)
+    # Fall back to primary NIFTY cache ONLY if this is the default symbol
+    default_sym = "NSE:NIFTY50-INDEX"
+    if symbol == default_sym:
+        cache = _user_cache(user.id)
+        return {
+            "spot":    cache.get("spot", 0),
+            "atm":     cache.get("atm", 0),
+            "symbol":  symbol,
+            "sym_short": sym_short,
+            "chain":   cache.get("chain", {}),
+            "status":  cache.get("status", "waiting"),
+            "message": cache.get("message", "Connect your broker to see live data."),
+            "updated": cache.get("updated"),
+        }
+    # For other symbols, return empty — no automation uses this symbol yet
     return {
-        "spot":    cache.get("spot", 0),
-        "atm":     cache.get("atm", 0),
+        "spot":    0,
+        "atm":     0,
         "symbol":  symbol,
         "sym_short": sym_short,
-        "chain":   cache.get("chain", {}),
-        "status":  cache.get("status", "waiting"),
-        "message": cache.get("message", "Connect your broker to see live data."),
-        "updated": cache.get("updated"),
+        "chain":   {},
+        "status":  "waiting",
+        "message": f"No active automation for {sym_short} — add one to see live data.",
+        "updated": None,
     }
 
 
@@ -1548,7 +1561,8 @@ def list_automations(user: User = Depends(get_current_user),
          "mode": a.mode, "status": a.status, "config": a.config,
          "shadow_mode": a.shadow_mode,
          "telegram_alerts": a.telegram_alerts,
-         "is_running": bool(active_engines.get(user.id, {}).get(a.id))}
+         "is_running": bool(active_engines.get(user.id, {}).get(a.id)),
+         "guard_status": getattr(active_engines.get(user.id, {}).get(a.id), "guard_status", "")}
         for a in autos]}
 
 class SaveAutoReq(BaseModel):
@@ -1763,18 +1777,21 @@ def engine_status(user: User = Depends(get_current_user),
         for t in shadow_today
     ]
     return {
-        "running":      True,
-        "mode":         "IN_TRADE" if state.position else "MONITORING",
-        "engine_mode":  state.config.get("mode", "paper"),
-        "spot":         state.spot_history[-1] if state.spot_history else 0,
-        "atm":          state.atm_strike,
-        "combined":     atm.current if atm else 0,
-        "vwap":         atm.vwap_val if atm else 0,
-        "ema75":        atm.ema75 if atm else 0,
-        "position":     state.position,
-        "day_pnl":      state.day_pnl,
-        "log":          state.log[-10:],
-        "today_trades": shadow_history,
+        "running":       True,
+        "mode":          "IN_TRADE" if state.position else "MONITORING",
+        "engine_mode":   state.config.get("mode", "paper"),
+        "spot":          state.spot_history[-1] if state.spot_history else 0,
+        "atm":           state.atm_strike,
+        "combined":      atm.current if atm else 0,
+        "vwap":          atm.vwap_val if atm else 0,
+        "ema75":         atm.ema75 if atm else 0,
+        "position":      state.position,
+        "day_pnl":       state.day_pnl,
+        "log":           state.log[-10:],
+        "today_trades":  shadow_history,
+        "guard_status":  getattr(state, "guard_status", ""),
+        "events_suspended": getattr(state, "events_suspended", False),
+        "ai_suspended":  getattr(state, "ai_suspended", False),
     }
 
 # ── Trades ────────────────────────────────────────────────────
@@ -1832,19 +1849,27 @@ def get_unified_trades(
         r = reason.upper()
         if "PROFIT_TARGET" in r:
             return {"type": "PROFIT_TARGET", "detail": reason,
-                    "friendly": "✅ Profit target hit — premium decayed 50%",
+                    "friendly": "✅ Profit target — premium decayed 50%",
+                    "outcome": "WIN"}
+        elif "PROFIT_LOCK" in r:
+            return {"type": "PROFIT_LOCK", "detail": reason,
+                    "friendly": "🔒 Profit lock — premium rebounded to locked level",
                     "outcome": "WIN"}
         elif "TRAILING_SL" in r:
             return {"type": "TRAILING_SL", "detail": reason,
                     "friendly": "🔄 Trailing SL — premium bounced from low",
                     "outcome": "MANAGED"}
-        elif "VWAP_SL" in r:
+        elif "VWAP_SL" in r or "VWAP SL" in r:
             return {"type": "VWAP_SL", "detail": reason,
                     "friendly": "📊 VWAP SL — premium rose above VWAP",
                     "outcome": "LOSS"}
         elif "MAX_LOSS" in r:
             return {"type": "MAX_LOSS", "detail": reason,
-                    "friendly": "🛑 Max loss backstop — 30% limit hit",
+                    "friendly": "🛑 Max loss backstop hit",
+                    "outcome": "LOSS"}
+        elif "EMA75_SL" in r or "EMA75 SL" in r:
+            return {"type": "EMA75_SL", "detail": reason,
+                    "friendly": "📉 EMA75 SL — premium rose above EMA",
                     "outcome": "LOSS"}
         elif "AUTO_EXIT" in r:
             return {"type": "AUTO_EXIT", "detail": reason,
@@ -1936,7 +1961,7 @@ def get_unified_trades(
                 "vwap":         sl.get("vwap", 0),
                 "ema75":        sl.get("ema75", 0),
                 "trailing_low": sl.get("trailing_low", 0),
-                "trailing_sl":  sl.get("trailing_sl", 0),
+                "sl_type":      sl.get("sl_type", ""),
                 "candles":      sl.get("candles", 0),
             },
             # P&L
@@ -2898,12 +2923,15 @@ def get_backtest(user: User = Depends(get_current_user),
         # By strategy
         s = by_strategy.setdefault(code, {"code": code, "wins": 0, "losses": 0,
                                           "pnl": 0.0, "count": 0,
-                                          "avg_entry": 0.0, "_entry_sum": 0.0})
+                                          "avg_entry": 0.0, "_entry_sum": 0.0,
+                                          "best": None, "worst": None})
         s["count"] += 1
         s["pnl"]   += pnl
         s["_entry_sum"] += t.entry_combined or 0.0
         if is_win: s["wins"]   += 1
         else:      s["losses"] += 1
+        if s["best"]  is None or pnl > s["best"]:  s["best"]  = pnl
+        if s["worst"] is None or pnl < s["worst"]: s["worst"] = pnl
 
         # By weekday
         try:
@@ -2933,14 +2961,16 @@ def get_backtest(user: User = Depends(get_current_user),
 
         # By exit reason (simplified label)
         raw_reason = (t.exit_reason or "OTHER").upper()
-        if   "PROFIT"   in raw_reason: label = "Profit Target"
-        elif "TRAILING" in raw_reason: label = "Trailing SL"
-        elif "VWAP"     in raw_reason: label = "VWAP SL"
-        elif "EMA"      in raw_reason: label = "EMA75 SL"
-        elif "MAX_LOSS" in raw_reason: label = "Max Loss SL"
-        elif "AUTO"     in raw_reason: label = "Auto Exit"
-        elif "MARKET"   in raw_reason: label = "Market Close"
-        else:                          label = "Other"
+        if   "PROFIT_LOCK"   in raw_reason: label = "Profit Lock"
+        elif "PROFIT_TARGET" in raw_reason: label = "Profit Target"
+        elif "PROFIT"        in raw_reason: label = "Profit Target"
+        elif "TRAILING"      in raw_reason: label = "Trailing SL"
+        elif "VWAP"          in raw_reason: label = "VWAP SL"
+        elif "EMA75"         in raw_reason: label = "EMA75 SL"
+        elif "MAX_LOSS"      in raw_reason: label = "Max Loss"
+        elif "AUTO"          in raw_reason: label = "Auto Exit"
+        elif "MARKET"        in raw_reason: label = "Market Close"
+        else:                               label = "Other"
         by_exit[label] = by_exit.get(label, 0) + 1
 
         # By month
@@ -2954,14 +2984,16 @@ def get_backtest(user: User = Depends(get_current_user),
     for code, s in sorted(by_strategy.items()):
         cnt = s["count"]
         strat_list.append({
-            "code":      code,
-            "count":     cnt,
-            "wins":      s["wins"],
-            "losses":    s["losses"],
-            "win_rate":  round(s["wins"] / cnt * 100, 1) if cnt else 0,
-            "total_pnl": round(s["pnl"], 2),
-            "avg_pnl":   round(s["pnl"] / cnt, 2) if cnt else 0,
-            "avg_entry": round(s["_entry_sum"] / cnt, 1) if cnt else 0,
+            "code":       code,
+            "count":      cnt,
+            "wins":       s["wins"],
+            "losses":     s["losses"],
+            "win_rate":   round(s["wins"] / cnt * 100, 1) if cnt else 0,
+            "total_pnl":  round(s["pnl"], 2),
+            "avg_pnl":    round(s["pnl"] / cnt, 2) if cnt else 0,
+            "avg_entry":  round(s["_entry_sum"] / cnt, 1) if cnt else 0,
+            "best_trade": round(s["best"] or 0, 0),
+            "worst_trade":round(s["worst"] or 0, 0),
         })
 
     weekday_list = [by_weekday[k] for k in sorted(by_weekday)]
@@ -3125,7 +3157,7 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
             sl_tracking = {
                 "current":      current,
                 "trailing_low": sl.trailing_low,
-                "trailing_sl":  sl.trailing_sl,
+                "sl_type":      sl.sl_type,
                 "candles":      candle_count,
                 "vwap":         round(vwap, 2),
                 "ema75":        round(ema75_val, 2),
@@ -3862,6 +3894,7 @@ async def _run_engine(user_id: str, auto: Automation,
                         state.emit(
                             f"⚠️ Trading suspended today — Event: {names}. "                            f"To trade anyway, toggle suspend off in Event Calendar.", "WARN")
                         state.events_suspended = True
+                        state.guard_status = f"Event Gate — {names}"
                     else:
                         state.events_suspended = False
                 except Exception:
@@ -3905,6 +3938,7 @@ async def _run_engine(user_id: str, auto: Automation,
                                     f"Disable AI trading gate in Profile to override.",
                                     "WARN")
                                 state.ai_suspended = True
+                                state.guard_status = f"AI Gate — Skip today (Risk: {risk_lvl})"
                             elif news_suspend and risk_blocks and assess.event_warning:
                                 # News/event override — high risk day with a warning
                                 state.emit(
@@ -3912,6 +3946,7 @@ async def _run_engine(user_id: str, auto: Automation,
                                     f"Risk={risk_lvl}. Toggle 'Suspend on high-risk days' in Profile to override.",
                                     "WARN")
                                 state.ai_suspended = True
+                                state.guard_status = f"AI News Gate — {assess.event_warning[:60]}"
                             else:
                                 state.ai_suspended = False
                                 if state.ai_avoid:

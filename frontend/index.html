@@ -1017,6 +1017,7 @@ function showApp() {
   }
   nav('dashboard');
   startTicker();
+  loadClaudeAssessment();
   try {
     api('GET', '/api/brokers/definitions').then(function(d){ brokerDefs = d.brokers||[]; });
   } catch(e) {}
@@ -1061,7 +1062,7 @@ function nav(id) {
     bn_more.className = 'bn-item' + (morePages.includes(id) ? ' active' : '');
   }
   // Lazy render pages
-  if (id==='dashboard') renderDashboard();
+  if (id==='dashboard') { renderDashboard(); if (!_claudeAssessment) loadClaudeAssessment(); updateTicker(); }
   if (id==='brokers') renderBrokers();
   if (id==='automate') renderAutomate();
   if (id==='live') renderLive();
@@ -1168,8 +1169,16 @@ async function updateTicker() {
         }
       }
     } else {
-      el.textContent = d.status==='waiting' ? 'No broker' : '—';
+      // No data for this symbol — update topbar and dashboard KPIs
+      var shortLbl = (d.sym_short || 'NIFTY').replace('NIFTY','NF').replace('BANKNIFTY','BNK').replace('FINNIFTY','FNF').replace('SENSEX','SX');
+      el.textContent = shortLbl + ' —';
       el.className = 'tb-price waiting';
+      if (sym === _dashSymbol) {
+        var sv2 = document.getElementById('dash-spot-val');
+        var av2 = document.getElementById('dash-atm-val');
+        if (sv2) sv2.textContent = '\u2014';
+        if (av2) av2.textContent = d.message || 'No data — add automation for this symbol';
+      }
     }
   } catch(e) {}
 }
@@ -1673,6 +1682,7 @@ function _renderAutoList(autos) {
       + '<div style="font-size:14px;font-weight:600;margin-bottom:4px">'+esc(a.name)+'</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+esc((a.symbol||'').split(':')[1]||a.symbol||'')+'</div>'
       + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">'+stratBadges+'</div>'
+      + (a.guard_status ? '<div style="font-size:11px;color:var(--amber);padding:5px 8px;background:rgba(255,171,64,.1);border-radius:4px;margin-bottom:8px">🛡️ '+esc(a.guard_status)+'</div>' : '')
       + '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2)">'
       + '<span>Lots: '+(cfg.lots||1)+'</span>'
       + '<span>Size: '+(cfg.lot_size||75)+'</span>'
@@ -1990,6 +2000,16 @@ async function _refreshLive() {
       + '<div class="kpi-sub">CE + PE</div></div>'
       + '</div>';
 
+    // Guard rail alert (if any guard is blocking)
+    var guardHtml = '';
+    var guardStatus = engRes.guard_status || '';
+    if (guardStatus) {
+      guardHtml = '<div class="alert alert-warn" style="margin-bottom:12px;display:flex;align-items:center;gap:8px">'
+        + '<span style="font-size:16px">🛡️</span>'
+        + '<div><strong>Guard Rail Active</strong><div style="font-size:12px;margin-top:2px">'+esc(guardStatus)+'</div></div>'
+        + '</div>';
+    }
+
     // Engine status bar
     var statusBar = '<div class="card" style="margin-bottom:12px"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">'
       + '<div style="display:flex;align-items:center;gap:8px">'+(isRunning?'<div class="dot green pulse"></div>':'<div class="dot gray"></div>')+' <span style="font-size:13px;font-weight:600">'+(isRunning?'Engine Running':'Engine Idle')+'</span> '+modeBadgeHtml+'</div>'
@@ -2055,7 +2075,7 @@ async function _refreshLive() {
       + ((!engRes.log||!engRes.log.length)?'<div style="color:var(--text2);font-size:12px;padding:8px 0">No log entries yet</div>':'')
       + '</div></div>';
 
-    el.innerHTML = mktHtml + statusBar + posHtml + reconHtml + todayHtml + logHtml;
+    el.innerHTML = mktHtml + guardHtml + statusBar + posHtml + reconHtml + todayHtml + logHtml;
   } catch(e) {
     var el2 = document.getElementById('live-content');
     if (el2) el2.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -2267,21 +2287,55 @@ async function loadUnifiedTrades() {
             // Exit
             + (isOpen
               ? '<div style="color:var(--amber)">Position open \u2014 monitoring SL every 60s</div>'
-              : '<div style="margin-bottom:8px;padding-top:8px;border-top:1px solid var(--border)">'
-                + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">&#9632; WHY EXITED</div>'
-                + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
-                + '<div><span style="color:var(--text2)">Exit combined: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
-                + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
-                + '<div style="grid-column:span 2;color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+esc((ep.friendly)||t.exit_reason||'\u2014')+'</div>'                + (t.ai_insight ? '<div style="grid-column:span 2;margin-top:6px;padding:6px 8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:4px;font-size:11px;color:rgba(99,102,241,.9)"><span style="font-size:10px">✦ AI</span> '+esc(t.ai_insight)+'</div>' : '')
-                + '</div>'
-                + (t.sl_at_exit&&t.sl_at_exit.candles>0
-                  ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2)">'
-                    + '<span>VWAP \u20b9'+((t.sl_at_exit.vwap||0).toFixed(1))+'</span>'
-                    + '<span>EMA75 \u20b9'+((t.sl_at_exit.ema75||0).toFixed(1))+'</span>'
-                    + '<span>Trail low \u20b9'+((t.sl_at_exit.trailing_low||0).toFixed(1))+'</span>'
-                    + '<span>'+t.sl_at_exit.candles+' candles</span>'
-                    + '</div>' : '')
-                + '</div>'
+              : (function() {
+                  var ep2 = t.exit_parsed||{};
+                  var sl2 = t.sl_at_exit||{};
+                  // Time held calculation
+                  var timeHeld = '';
+                  if (t.entry_time && t.exit_time) {
+                    try {
+                      var held = Math.round((new Date(t.exit_time) - new Date(t.entry_time)) / 60000);
+                      timeHeld = held < 60 ? held+'m' : Math.floor(held/60)+'h '+(held%60)+'m';
+                    } catch(e) {}
+                  }
+                  // Exit type badge colours
+                  var exitTypeColors = {
+                    'PROFIT_TARGET':'var(--green)', 'PROFIT_LOCK':'var(--green)',
+                    'VWAP_SL':'var(--red)', 'EMA75_SL':'var(--red)',
+                    'MAX_LOSS':'var(--red)', 'FORCE_EXIT':'var(--amber)',
+                    'AUTO_EXIT':'var(--text2)', 'MARKET_CLOSE':'var(--text2)'
+                  };
+                  var exitColor = exitTypeColors[ep2.type||''] || (pnl>=0?'var(--green)':'var(--red)');
+                  // Premium decay %
+                  var decayStr = '';
+                  if (t.entry_combined && t.exit_combined) {
+                    var d = Math.round((1 - t.exit_combined / t.entry_combined) * 100);
+                    decayStr = (d>0?'\u2193':'\u2191')+Math.abs(d)+'% decay';
+                  }
+                  return '<div style="margin-bottom:8px;padding-top:8px;border-top:1px solid var(--border)">'
+                    + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">&#9632; WHY EXITED</div>'
+                    + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;margin-bottom:6px">'
+                    + '<div style="font-size:12px;font-weight:600;color:'+exitColor+';margin-bottom:4px">'+esc(ep2.friendly||t.exit_reason||'\u2014')+'</div>'
+                    + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:10px;color:var(--text2)">'
+                    + (timeHeld ? '<span>&#128337; Held '+timeHeld+'</span>' : '')
+                    + (decayStr ? '<span>'+decayStr+'</span>' : '')
+                    + (sl2.candles > 0 ? '<span>'+sl2.candles+' candles monitored</span>' : '')
+                    + '</div></div>'
+                    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
+                    + '<div><span style="color:var(--text2)">Entry: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
+                    + '<div><span style="color:var(--text2)">Exit: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
+                    + '<div><span style="color:var(--text2)">Exit time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
+                    + (sl2.sl_type ? '<div><span style="color:var(--text2)">Layer: </span>'+esc(sl2.sl_type)+'</div>' : '')
+                    + '</div>'
+                    + (sl2.candles > 0
+                      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2);padding-top:4px">'
+                        + (sl2.vwap > 0 ? '<span>VWAP \u20b9'+sl2.vwap.toFixed(1)+'</span>' : '')
+                        + (sl2.ema75 > 0 ? '<span>EMA75 \u20b9'+sl2.ema75.toFixed(1)+'</span>' : '')
+                        + (sl2.trailing_low > 0 ? '<span>Premium low \u20b9'+sl2.trailing_low.toFixed(1)+'</span>' : '')
+                        + '</div>' : '')
+                    + (t.ai_insight ? '<div style="margin-top:6px;padding:6px 8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:4px;font-size:11px;color:rgba(99,102,241,.9)"><span style="font-size:10px">✦ AI</span> '+esc(t.ai_insight)+'</div>' : '')
+                    + '</div>';
+                })()
             )
             // P&L
             + '<div style="padding-top:8px;border-top:1px solid var(--border)">'
@@ -3206,6 +3260,7 @@ var STRATS = {
   S6:{color:'#9090b0',name:'Theta Decay Wide Condor',when:'9:45 \u2013 10:30 AM',market:'High IV, elevated premium',hedge:'sell\u00b11/buy\u00b14',fires:'High IV days',condition:'Premium at or above ORB high at 9:45 AM. IV is elevated, premium has not decayed.',orders:'Sell CE 1 strike OTM + PE 1 strike OTM. Buy \u00b14 wide wings (max premium).',margin:'~\u20b930-40K per lot',tip:'Sell while IV is high and wait for IV crush + theta decay. Best after events like RBI policy.'},
   S9:{color:'#ffab40',name:'Pre-Expiry Theta Crush',when:'11:00 AM \u2013 12:00 PM',market:'Thursday (expiry) only',hedge:'\u00b11 tight (auto)',fires:'Every Thursday',condition:'Expiry day only. ATM options lose 50\u201370% in the last 2 hours as theta crushes.',orders:'Sell ATM CE + PE. Buy \u00b11 tight hedge (movement very limited near expiry).',margin:'~\u20b930-40K per lot',tip:'Run as a separate automation. Tight hedge because expiry day movement is minimal.'},
   S5:{color:'#ff5252',name:'Ratio Spread (Advanced)',when:'9:30 \u2013 11:00 AM',market:'Strong confirmed downtrend',hedge:'\u00b13 partial',fires:'Rarely \u2014 strong downtrend only',condition:'Combined premium well below EMA75. Strong sustained downtrend confirmed over multiple candles.',orders:'Sell 2x ATM CE + PE (double lots for more premium). Buy 1x \u00b13 hedge each side.',margin:'~\u20b960-80K per lot',tip:'Advanced only. Uses double lots so partial hedge means more exposure. Only when very confident.'},
+  S10:{color:'#00e5ff',name:'Gap Directional Buy',when:'9:22 \u2013 9:45 AM',market:'Strong gap-up or gap-down day',hedge:'None (single leg BUY)',fires:'On strong gap days only',condition:'Market gaps >0.8% from prev close. Buy CE on gap-up (long bullish), buy PE on gap-down (long bearish). Directional bet on gap continuation.',orders:'BUY ATM CE (gap-up) or BUY ATM PE (gap-down). Single leg, no hedge needed \u2014 buying = defined risk (cost of premium).',margin:'~\u20b98-15K per lot (premium cost only)',tip:'Only strategy that BUYS options. Max loss = premium paid. S10 runs even when selling strategies are suspended on gap days.'},
 };
 
 var HEDGES = {
@@ -3262,25 +3317,31 @@ function buildHelpPage() {
   + '</div></div>'
 
   // SL explained
-  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Stop loss \u2014 three automatic layers</div></div><div class="card-body">'
-  + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">All exits based on <strong style="color:var(--text)">combined premium (CE + PE)</strong> monitored every 60 seconds. Never spot price. Never individual legs.</p>'
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Stop loss \u2014 four automatic layers</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">All exits based on <strong style="color:var(--text)">combined premium (CE + PE)</strong> monitored every 60 seconds. Never spot price. Never individual legs. S10 (buy strategy) has its own separate SL.</p>'
   + '<div style="display:flex;flex-direction:column;gap:8px">'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--green)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:4px">Layer 1 \u2014 Trailing SL (primary protection)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Once combined decays 15% from entry (you are in profit), a trailing SL activates. It tracks the lowest combined seen. If combined then bounces back 20% from that low \u2192 exit and lock in profit. The more it decays, the tighter the trail.</div>'
-  + '<div style="font-size:11px;color:var(--text2);margin-top:4px"><strong style="color:var(--text)">Example:</strong> Entry \u20b9200. Decays to \u20b9170 (15% down, trailing activates). Trailing SL = 170 \u00d7 1.20 = \u20b9204. If combined rises back to \u20b9204 \u2192 exit.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:4px">Layer 1 \u2014 Ratchet Profit Lock (stepped guarantee)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Once the premium decays to a profit milestone, the engine locks in that profit. If premium then bounces back up to the locked level \u2192 exit. Three steps:</div>'
+  + '<div style="font-size:11px;color:var(--text2);margin-top:6px;display:grid;gap:3px">'
+  + '<div>\u25b6 <strong style="color:var(--green)">15% decay</strong> \u2192 SL moves to entry (breakeven guaranteed)</div>'
+  + '<div>\u25b6 <strong style="color:var(--green)">25% decay</strong> \u2192 SL at entry \u00d7 0.90 (10% profit locked)</div>'
+  + '<div>\u25b6 <strong style="color:var(--green)">35% decay</strong> \u2192 SL at entry \u00d7 0.75 (25% profit locked)</div>'
+  + '</div>'
+  + '<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">Example:</strong> Entry \u20b9600. Decays to \u20b9450 (25% down) \u2192 profit lock at \u20b9540. If market spikes back to \u20b9540 \u2192 exit with 10% profit locked. Lock never resets back once set.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--blue)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP SL (dynamic market exit)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined closes above VWAP \u2192 exit. VWAP is calculated from combined premium values from 9:15 AM, not from spot price. After 75 candles, if EMA75 drops below VWAP, uses EMA75 as a tighter exit level.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP SL (dynamic market exit, 5% buffer)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above VWAP \u00d7 1.05 (5% buffer) \u2192 exit. VWAP tracks combined premium from 9:15 AM. After 75 candles, EMA75 is used as a tighter level if it drops below VWAP.</div>'
+  + '<div style="font-size:11px;color:var(--amber);margin-top:4px">\u26a0\ufe0f VWAP SL is suppressed when a profit lock is active (prevents exiting at a loss when profit is already locked). Re-enables if premium rebounds 15%+ from its low.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:4px">Layer 3 \u2014 Max Loss Backstop (last resort)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises 30% above entry combined \u2192 hard exit. Fully relative. Entry \u20b9200 \u2192 backstop at \u20b9260. Configure 20\u201340% in Advanced settings.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:4px">Layer 3 \u2014 Max Loss Backstop (always fires)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above entry + max_loss% \u2192 hard exit. Always fires regardless of profit lock. Entry \u20b9600 with 30% limit \u2192 backstop at \u20b9780. Configure 20\u201340% in Advanced settings. Gaps can breach this level \u2014 it is a target, not a guaranteed fill.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--amber)">'
   + '<div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:4px">Profit Target (auto-exit on win)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Exit when combined decays 50% from entry (industry standard). Entry \u20b9200 \u2192 exit at \u20b9100. You captured 50% of maximum premium. Configure 30\u201360% in Advanced settings.</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Exit when combined decays 50% from entry. Entry \u20b9600 \u2192 exit at \u20b9300. You captured 50% of maximum possible premium. Configure 30\u201360% in Advanced settings.</div>'
   + '</div>'
   + '</div></div></div>'
 
@@ -3336,6 +3397,27 @@ function buildHelpPage() {
   + '</div>'
   + '<div class="alert alert-warn">Setup: Profile &#8594; AI Trading Assistant &#8594; enter your free Gemini API key from aistudio.google.com/apikey &#8594; select model &#8594; Save. Cost: &#8377;0 on free tier (1500 requests/day).</div>'
   + '</div></div>'
+
+  // Guard rails
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">&#127697;&#65039; Guard Rails — automatic protection</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">Guard rails prevent the engine from trading when conditions are unfavourable. They run automatically every cycle. When a guard is active, it is shown on the Automate and Live Monitor pages.</p>'
+  + '<div style="display:flex;flex-direction:column;gap:6px">'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--red)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">VIX Guard</div><div style="font-size:11px;color:var(--text2)">If India VIX is at or above your Max VIX setting at open, all selling signals are suspended for the day. High VIX = expensive options = SL hits more likely.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--amber)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Drift Guard</div><div style="font-size:11px;color:var(--text2)">If NIFTY spot drifts more than Max Spot Drift % from the morning open, all signals suspend for the day. Catches crash days (e.g. -3.26%) where IV expansion ruins theta decay trades.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--blue)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Gap Skip Guard</div><div style="font-size:11px;color:var(--text2)">If today gaps more than Gap Skip % from yesterday — all SELLING strategies suspend. S10 (buy) still runs. Protects against selling into gap-inflated IV.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--purple)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Event Calendar Gate</div><div style="font-size:11px;color:var(--text2)">Dates marked with suspend=ON in Event Calendar block all trading. Checked at 9:15 AM each day.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid rgba(99,102,241,.8)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">AI News Gate</div><div style="font-size:11px;color:var(--text2)">AI blocks trading when risk is too high. Configured in Profile. Shows reason: "Skip today — RBI policy day, VIX elevated".</div></div>'
+  + '</div></div></div>'
+
+  // Hedge width note
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">&#128737;&#65039; Hedge Width — 1000 points for safety</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:8px">All strategies (except S9 expiry) use <strong style="color:var(--text)">±1000 point buy hedges</strong>. This means BUY legs are placed 1000 points above (CE) and 1000 points below (PE) the ATM strike.</p>'
+  + '<div style="font-size:12px;color:var(--text2);line-height:1.7">'
+  + '&#10003; BUY legs always placed <strong>before</strong> SELL legs (SEBI compliance — no naked short exposure)<br>'
+  + '&#10003; 1000pt hedges give maximum premium collection while still defining maximum risk<br>'
+  + '&#10003; Wide hedges cost very little premium (deep OTM = cheap) but guarantee limited loss<br>'
+  + '&#10003; S9 (expiry day) keeps ±150pt hedges — 1000pt OTM options have zero bids on expiry day'
+  + '</div></div></div>'
 
   + '</div></div>';
 }
@@ -3454,15 +3536,15 @@ async function renderBacktest() {
     var pnlColor  = s.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
 
     // ── Summary KPIs ──────────────────────────────────────────
-    var kpis = '<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">'
-      + kpi('Trades', d.trades_count, '')
+    var kpis = '<div class="kpi-grid four" style="margin-bottom:12px">'
+      + kpi('Trades', d.trades_count, s.wins+' wins / '+s.losses+' losses')
       + kpi('Win Rate', s.win_rate + '%', '', winColor)
       + kpi('Total P&L', pnlFmt(s.total_pnl), '', pnlColor)
       + kpi('Avg/Trade', pnlFmt(s.avg_pnl), '')
       + '</div>'
-      + '<div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">'
-      + kpi('Best Trade', pnlFmt(s.best_trade), '', 'var(--green)')
-      + kpi('Worst Trade', pnlFmt(s.worst_trade), '', 'var(--red)')
+      + '<div class="kpi-grid" style="margin-bottom:16px">'
+      + kpi('Best Trade', pnlFmt(s.best_trade), 'Single best', 'var(--green)')
+      + kpi('Worst Trade', pnlFmt(s.worst_trade), 'Single worst', 'var(--red)')
       + '</div>';
 
     // ── By Strategy table ────────────────────────────────────
@@ -3471,20 +3553,25 @@ async function renderBacktest() {
       var wrCol = wr >= 50 ? 'var(--green)' : 'var(--red)';
       var pCol  = r.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
       return '<tr>'
-        + '<td><span class="badge idle">'+esc(r.code)+'</span></td>'
-        + '<td>'+r.count+'</td>'
-        + '<td style="color:'+wrCol+'">'+wr+'%</td>'
-        + '<td style="color:'+pCol+'">'+pnlFmt(r.total_pnl)+'</td>'
-        + '<td>'+pnlFmt(r.avg_pnl)+'</td>'
-        + '<td>'+r.avg_entry.toFixed(0)+'</td>'
+        + '<td style="padding:8px 10px"><span class="badge idle">'+esc(r.code)+'</span></td>'
+        + '<td style="padding:8px 10px;text-align:center">'+r.count+'<div style="font-size:9px;color:var(--text2)">'+r.wins+'W/'+r.losses+'L</div></td>'
+        + '<td style="padding:8px 10px;text-align:center;color:'+wrCol+';font-weight:600">'+wr+'%</td>'
+        + '<td style="padding:8px 10px;text-align:right;color:'+pCol+';font-weight:600">'+pnlFmt(r.total_pnl)+'</td>'
+        + '<td style="padding:8px 10px;text-align:right">'+pnlFmt(r.avg_pnl)+'</td>'
+        + '<td style="padding:8px 10px;text-align:right;font-size:10px;color:var(--green)">'+(r.best_trade!==undefined?pnlFmt(r.best_trade):'—')+'</td>'
+        + '<td style="padding:8px 10px;text-align:right;font-size:10px;color:var(--red)">'+(r.worst_trade!==undefined?pnlFmt(r.worst_trade):'—')+'</td>'
         + '</tr>';
     }).join('');
     var stratTable = '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">By Strategy</div></div>'
-      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
-      + '<thead><tr style="color:var(--text2);font-size:11px;border-bottom:1px solid var(--border)">'
-      + '<th style="text-align:left;padding:8px 10px">Strategy</th><th style="padding:8px 10px">Trades</th>'
-      + '<th style="padding:8px 10px">Win%</th><th style="padding:8px 10px">Total P&L</th>'
-      + '<th style="padding:8px 10px">Avg P&L</th><th style="padding:8px 10px">Avg Entry</th>'
+      + '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px">'
+      + '<thead><tr style="color:var(--text2);font-size:10px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.3px">'
+      + '<th style="text-align:left;padding:8px 10px">Strategy</th>'
+      + '<th style="padding:8px 10px;text-align:center">Trades</th>'
+      + '<th style="padding:8px 10px;text-align:center">Win %</th>'
+      + '<th style="padding:8px 10px;text-align:right">Total P&L</th>'
+      + '<th style="padding:8px 10px;text-align:right">Avg</th>'
+      + '<th style="padding:8px 10px;text-align:right">Best</th>'
+      + '<th style="padding:8px 10px;text-align:right">Worst</th>'
       + '</tr></thead><tbody>'+stratRows+'</tbody></table></div></div>';
 
     // ── By Weekday ───────────────────────────────────────────

@@ -71,74 +71,108 @@ class StrikeState:
 
 class SLState:
     """
-    Industry standard three-layer SL for short straddle/strangle.
-    ALL checks on combined premium (CE + PE) only.
-    No fixed amounts. Everything percentage-relative to entry.
+    Four-layer SL for short straddle/strangle. ALL checks on combined premium only.
 
-    Layer 1: Trailing SL — locks in gains
-    Layer 2: VWAP SL — dynamic market condition exit
-    Layer 3: Max loss backstop — defined percentage of entry
-    Profit target: exit at 50% premium decay (industry standard)
+    Layer 1: Ratchet (Profit Lock) SL — stepped profit guarantee
+             Once premium decays past milestones, SL moves BELOW entry (locks profit).
+             15% decay → SL at entry (breakeven)
+             25% decay → SL at entry×0.90 (10% profit locked)
+             35% decay → SL at entry×0.75 (25% profit locked)
+
+    Layer 2a: VWAP SL (5% buffer) — exits if premium > VWAP×1.05
+              Suppressed when current < profit_lock_sl (profit lock takes priority).
+              Rebound cap: re-enabled if premium rebounded >15% from its low
+              (prevents dead zone where VWAP fires but profit lock holds back).
+
+    Layer 2b: EMA75 SL — tighter check after 75 candles, same suppression rules.
+
+    Layer 3: Max loss backstop — always fires unconditionally regardless of profit lock.
+             Configurable per automation (20/25/30/40%).
+
+    Profit target: exit at 50% premium decay.
     """
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.entry_combined = 0.0
-        self.trailing_low   = 0.0
-        self.trailing_sl    = 0.0
-        self.candles        = 0
-        self.sl_type        = "NONE"
+        self.entry_combined  = 0.0
+        self.trailing_low    = 0.0
+        self.candles         = 0
+        self.sl_type         = "NONE"
 
     def activate(self, entry_combined: float, config: dict):
-        self.entry_combined = entry_combined
-        self.trailing_low   = entry_combined
-        max_loss_pct        = config.get("max_loss_pct", 30) / 100
-        self.trailing_sl    = entry_combined * (1 + max_loss_pct)
-        self.candles        = 0
-        self.sl_type        = "VWAP"
+        self.entry_combined  = entry_combined
+        self.trailing_low    = entry_combined
+        self.candles         = 0
+        self.sl_type         = "NONE"
+
+    def _profit_lock_sl(self, decay_pct: float) -> float:
+        """Returns the profit lock SL level for given decay. 0 = not yet active."""
+        if decay_pct >= 0.35:
+            return self.entry_combined * 0.75   # lock 25% profit
+        if decay_pct >= 0.25:
+            return self.entry_combined * 0.90   # lock 10% profit
+        if decay_pct >= 0.15:
+            return self.entry_combined * 1.00   # breakeven lock
+        return 0.0  # not yet in profit territory
 
     def update(self, current: float, vwap: float, ema75: float,
                ema_count: int, config: dict):
         self.candles += 1
-        max_loss_pct     = config.get("max_loss_pct",     30) / 100
-        trail_pct        = config.get("trail_pct",        20) / 100
-        min_profit_pct   = config.get("min_profit_pct",   15) / 100
-        vwap_buf         = config.get("vwap_buffer_pct",   2) / 100
-        ema_buf          = config.get("ema_buffer_pct",    1) / 100
-        target_pct       = config.get("profit_target_pct",50) / 100  # industry: 50% decay
+        max_loss_pct  = config.get("max_loss_pct",      30) / 100
+        vwap_buf      = config.get("vwap_buffer_pct",    5) / 100  # M10: 2%→5%
+        ema_buf       = config.get("ema_buffer_pct",     1) / 100
+        target_pct    = config.get("profit_target_pct", 50) / 100
 
-        # Update trailing low
+        # Track lowest premium seen (for ratchet and rebound cap)
         if current < self.trailing_low:
             self.trailing_low = current
-            self.trailing_sl  = self.trailing_low * (1 + trail_pct)
 
-        # ── Layer 1: Trailing SL ──────────────────────────────────
-        if (self.trailing_low <= self.entry_combined * (1 - min_profit_pct)
-                and current >= self.trailing_sl):
-            return True, (f"TRAILING_SL entry={self.entry_combined:.1f} "
-                         f"low={self.trailing_low:.1f} sl={self.trailing_sl:.1f} now={current:.1f}")
+        # Profit lock uses MAX decay ever seen (trailing_low), not current decay.
+        # This keeps the lock active when premium rebounds above current decay.
+        max_decay_pct = ((self.entry_combined - self.trailing_low) / self.entry_combined
+                         if self.entry_combined else 0)
+        profit_lock  = self._profit_lock_sl(max_decay_pct)
+        rebound_pct  = ((current - self.trailing_low) / self.trailing_low
+                        if self.trailing_low > 0 else 0)
 
-        # ── Layer 2a: VWAP SL ─────────────────────────────────────
+        # ── Layer 1: Ratchet profit lock SL (M11) ────────────────
+        # Fires when premium rises back above the locked profit level
+        if profit_lock > 0 and current >= profit_lock:
+            self.sl_type = "PROFIT_LOCK"
+            locked_pct = (1 - profit_lock / self.entry_combined) * 100
+            return True, (f"PROFIT_LOCK entry={self.entry_combined:.1f} "
+                         f"lock={profit_lock:.1f} now={current:.1f} "
+                         f"locked={locked_pct:.0f}%")
+
+        # ── Layer 2a: VWAP SL (M10: 5% buffer) ───────────────────
+        # Suppressed when below profit lock level UNLESS premium rebounded >15% from low
         if self.candles >= 3 and vwap > 0:
-            if current > vwap * (1 + vwap_buf):
-                self.sl_type = "VWAP"
-                return True, f"VWAP_SL combined={current:.1f} vwap={vwap:.1f}"
+            vwap_threshold = vwap * (1 + vwap_buf)
+            if current > vwap_threshold:
+                # Dead zone cap: allow VWAP SL if significant rebound from low
+                vwap_suppressed = profit_lock > 0 and current < profit_lock and rebound_pct < 0.15
+                if not vwap_suppressed:
+                    self.sl_type = "VWAP"
+                    return True, (f"VWAP_SL combined={current:.1f} "
+                                 f"vwap={vwap:.1f} buf={vwap_buf*100:.0f}%")
 
-        # ── Layer 2b: EMA75 SL (tighter when active & < VWAP) ────
+        # ── Layer 2b: EMA75 SL ────────────────────────────────────
         if ema_count >= 75 and ema75 > 0 and vwap > 0 and ema75 < vwap:
-            if current > ema75 * (1 + ema_buf):
-                self.sl_type = "EMA75"
-                return True, f"EMA75_SL combined={current:.1f} ema75={ema75:.1f}"
+            ema_threshold = ema75 * (1 + ema_buf)
+            if current > ema_threshold:
+                vwap_suppressed = profit_lock > 0 and current < profit_lock and rebound_pct < 0.15
+                if not vwap_suppressed:
+                    self.sl_type = "EMA75"
+                    return True, f"EMA75_SL combined={current:.1f} ema75={ema75:.1f}"
 
-        # ── Layer 3: Max loss backstop ────────────────────────────
+        # ── Layer 3: Max loss backstop (always fires) ─────────────
         if current > self.entry_combined * (1 + max_loss_pct):
             self.sl_type = "MAX_LOSS"
             return True, (f"MAX_LOSS combined={current:.1f} "
                          f"entry={self.entry_combined:.1f} limit={max_loss_pct*100:.0f}%")
 
         # ── Profit target ─────────────────────────────────────────
-        # Industry standard: exit at 50% premium decay (captured 50%)
         if current <= self.entry_combined * (1 - target_pct):
             return True, (f"PROFIT_TARGET entry={self.entry_combined:.1f} "
                          f"now={current:.1f} captured={target_pct*100:.0f}%")
@@ -160,6 +194,7 @@ class EngineState:
         self.ai_checked:    bool = False   # AI assessment checked today
         self.ai_suspended:  bool = False   # trading suspended by AI
         self.ai_avoid:      list = []      # strategies to skip per AI assessment
+        self.guard_status:  str  = ""      # current guard rail blocking signals (empty = clear)
         self.strikes:      List[StrikeState] = []
         self.orb_complete: bool = False
         self.position:     Optional[dict] = None
@@ -365,12 +400,16 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
     if not state.orb_complete or state.position or state.traded_today:
         return None
 
+    # Clear guard status at start of each check (will be set if a guard fires)
+    state.guard_status = ""
+
     t = now.time()
 
     # Guard 2 — VIX filter
     vix_open = state.config.get("vix_open", 0)       # Set from Fyers at open if available
     vix_max  = state.config.get("vix_max",  17.0)    # User-configurable, default 17
     if vix_open and vix_open >= vix_max:
+        state.guard_status = f"VIX Guard — India VIX {vix_open:.1f} ≥ {vix_max:.1f}"
         state.emit(
             f"All signals suspended — India VIX {vix_open:.1f} >= threshold {vix_max:.1f}. "            f"High IV day: risk of adverse premium expansion too high.", "INFO")
         return None
@@ -384,6 +423,7 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
         current_spot  = state.spot_history[-1]
         drift_pct     = abs(current_spot - state.spot_locked) / state.spot_locked * 100
         if drift_pct >= drift_max_pct:
+            state.guard_status = f"Drift Guard — spot moved {drift_pct:.1f}% from open"
             state.emit(
                 f"All signals suspended — spot drifted {drift_pct:.2f}% from open "                f"{state.spot_locked:.0f} → {current_spot:.0f} "                f"(threshold {drift_max_pct}%). "                f"High-drift days favour IV expansion, not theta decay.", "INFO")
             return None
@@ -416,6 +456,7 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
             _selling_suspended = True
 
     if _selling_suspended:
+        state.guard_status = f"Skip Guard — {', '.join(_skip_reasons)}"
         state.emit(
             f"Selling signals suspended — {', '.join(_skip_reasons)}. "
             f"S10 directional buy still active if enabled.", "INFO")
@@ -454,7 +495,7 @@ def check_sl(state: EngineState) -> Optional[str]:
         state.emit(
             f"Position: combined={atm.current:.1f} vwap={atm.vwap_val:.1f} "
             f"entry={state.sl_state.entry_combined:.1f} "
-            f"trail_sl={state.sl_state.trailing_sl:.1f} "
+            f"trail_low={state.sl_state.trailing_low:.1f} "
             f"sl_type={state.sl_state.sl_type}", "INFO")
     return None
 
