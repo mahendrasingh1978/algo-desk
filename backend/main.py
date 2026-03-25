@@ -861,17 +861,17 @@ async def _market_data_service():
                         except Exception as sym_e:
                             log.debug(f"[{user.email}] {sym} fetch error: {sym_e}")
 
-                        # Feed this user's running engine if active
-                        eng = active_engines.get(user.id)
-                        if eng and eng.is_running:
-                            eng.spot_history.append(result["spot"])
-                            if eng.strikes:
-                                for sk in eng.strikes:
-                                    cd = result["chain"].get(sk.strike)
-                                    if cd:
-                                        sk.update(cd["combined"],
-                                                  ce_ltp=cd.get("ce_ltp", 0),
-                                                  pe_ltp=cd.get("pe_ltp", 0))
+                        # Feed all running engines for this user
+                        for eng in _all_engines(user.id):
+                            if eng and eng.is_running:
+                                eng.spot_history.append(result["spot"])
+                                if eng.strikes:
+                                    for sk in eng.strikes:
+                                        cd = result["chain"].get(sk.strike)
+                                        if cd:
+                                            sk.update(cd["combined"],
+                                                      ce_ltp=cd.get("ce_ltp", 0),
+                                                      pe_ltp=cd.get("pe_ltp", 0))
                                         sk.ce_symbol = cd.get("ce_symbol","")
                                         sk.pe_symbol = cd.get("pe_symbol","")
                                         if dtime(9,15) <= t <= dtime(9,21):
@@ -922,9 +922,16 @@ async def _auto_resume_engines():
     await asyncio.sleep(30)
     db = SessionLocal()
     try:
+        # ── Reset stale RUNNING states from before restart ───────
+        # Capture the list first, then reset to IDLE, then resume selectively
+        to_resume = db.query(Automation).filter(Automation.status=="RUNNING").all()
+        for auto in to_resume:
+            auto.status = "IDLE"
+        db.commit()
+        log.info(f"Startup: reset {len(to_resume)} stale RUNNING automation(s) to IDLE")
+
         # ── Resume running live automations ─────────────────────
-        running = db.query(Automation).filter(Automation.status=="RUNNING").all()
-        for auto in running:
+        for auto in to_resume:
             user = db.query(User).filter(
                 User.id==auto.user_id, User.is_active==True).first()
             if not user:
@@ -934,7 +941,7 @@ async def _auto_resume_engines():
                 auto.status = "IDLE"; db.commit(); continue
             config = {**auto.config, "strategies":auto.strategies, "mode":auto.mode}
             state = EngineState(config)
-            active_engines[user.id] = state
+            _set_engine(user.id, auto.id, state)
             asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
             log.info(f"Auto-resumed: {user.email} / {auto.name}")
 
@@ -1540,7 +1547,7 @@ def list_automations(user: User = Depends(get_current_user),
          "mode": a.mode, "status": a.status, "config": a.config,
          "shadow_mode": a.shadow_mode,
          "telegram_alerts": a.telegram_alerts,
-         "is_running": a.id in active_engines}
+         "is_running": bool(active_engines.get(user.id, {}).get(a.id))}
         for a in autos]}
 
 class SaveAutoReq(BaseModel):
@@ -1627,17 +1634,12 @@ def update_automation(auto_id: str, req: SaveAutoReq,
 @app.delete("/api/automations/{auto_id}")
 async def delete_automation(auto_id: str, user: User = Depends(get_current_user),
                              db: Session = Depends(get_db)):
-    # Stop engine if running — cannot delete a running automation safely
-    eng = active_engines.get(user.id)
+    # Stop this specific engine if running
+    eng = _get_engine(user.id, auto_id)
     if eng and eng.is_running:
-        auto = db.query(Automation).filter(
-            Automation.id == auto_id,
-            Automation.user_id == user.id).first()
-        if auto and auto.status == "RUNNING":
-            eng.is_running = False
-            auto.status = "IDLE"
-            db.commit()
-            await asyncio.sleep(1)  # Let engine loop notice
+        eng.is_running = False
+        await asyncio.sleep(1)  # Let engine loop notice
+    _del_engine(user.id, auto_id)
 
     # Force-clear status on the automation regardless
     auto = db.query(Automation).filter(
@@ -1647,6 +1649,14 @@ async def delete_automation(auto_id: str, user: User = Depends(get_current_user)
         auto.status = "IDLE"
         db.commit()
 
+    # ── Fix FK constraint: null out automation_id in trade history ──
+    # Preserves trade history but removes the reference blocking deletion
+    db.query(Trade).filter(Trade.automation_id == auto_id).update(
+        {"automation_id": None}, synchronize_session=False)
+    db.query(ShadowTrade).filter(ShadowTrade.automation_id == auto_id).update(
+        {"automation_id": None}, synchronize_session=False)
+    db.commit()
+
     db.query(Automation).filter(
         Automation.id == auto_id,
         Automation.user_id == user.id).delete(synchronize_session=False)
@@ -1655,8 +1665,33 @@ async def delete_automation(auto_id: str, user: User = Depends(get_current_user)
 
 # ── Engine ────────────────────────────────────────────────────
 
-active_engines: dict = {}      # user_id -> EngineState
+active_engines: dict = {}      # user_id -> {auto_id: EngineState}
 ws_clients: dict = {}          # user_id -> [WebSocket]
+
+# ── Engine helpers ─────────────────────────────────────────────
+def _get_engine(user_id: str, auto_id: str = None):
+    """Get engine state. If auto_id given return that specific one, else first running."""
+    engines = active_engines.get(user_id, {})
+    if auto_id:
+        return engines.get(auto_id)
+    for st in engines.values():
+        if st.is_running:
+            return st
+    return next(iter(engines.values()), None)
+
+def _set_engine(user_id: str, auto_id: str, state):
+    if user_id not in active_engines:
+        active_engines[user_id] = {}
+    active_engines[user_id][auto_id] = state
+
+def _del_engine(user_id: str, auto_id: str):
+    if user_id in active_engines:
+        active_engines[user_id].pop(auto_id, None)
+        if not active_engines[user_id]:
+            del active_engines[user_id]
+
+def _all_engines(user_id: str):
+    return list(active_engines.get(user_id, {}).values())
 
 @app.post("/api/engine/start")
 async def start_engine(req: dict, user: User = Depends(get_current_user),
@@ -1674,7 +1709,7 @@ async def start_engine(req: dict, user: User = Depends(get_current_user),
 
     config = {**auto.config, "strategies": auto.strategies, "mode": auto.mode}
     state  = EngineState(config)
-    active_engines[user.id] = state
+    _set_engine(user.id, auto_id, state)
 
     asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
 
@@ -1685,8 +1720,9 @@ async def start_engine(req: dict, user: User = Depends(get_current_user),
 @app.post("/api/engine/stop")
 async def stop_engine(user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
+    for eng in _all_engines(user.id):
+        eng.is_running = False
     if user.id in active_engines:
-        active_engines[user.id].is_running = False
         del active_engines[user.id]
     db.query(Automation).filter(
         Automation.user_id == user.id,
@@ -1697,16 +1733,16 @@ async def stop_engine(user: User = Depends(get_current_user),
 
 @app.post("/api/engine/force-exit")
 async def force_exit(user: User = Depends(get_current_user)):
-    if user.id in active_engines:
-        state = active_engines[user.id]
-        if state.position:
-            state.position["force_exit"] = True
+    # Force exit on the engine that currently has an open position
+    for eng in _all_engines(user.id):
+        if eng.position:
+            eng.position["force_exit"] = True
     return {"ok": True}
 
 @app.get("/api/engine/status")
 def engine_status(user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    state = active_engines.get(user.id)
+    state = _get_engine(user.id)
     if not state:
         return {"running": False, "mode": "IDLE", "engine_mode": None,
                 "position": None, "day_pnl": 0}
@@ -2205,8 +2241,10 @@ async def reset_all_automation_status(
     ).update({"status": "IDLE"}, synchronize_session=False)
     db.commit()
     # Also stop any active engine for this user
-    eng = active_engines.get(user.id)
-    if eng: eng.is_running = False
+    for eng in _all_engines(user.id):
+        eng.is_running = False
+    if user.id in active_engines:
+        del active_engines[user.id]
     return {"ok": True, "reset_count": updated,
             "message": f"{updated} automation(s) reset to IDLE"}
 
@@ -2313,7 +2351,7 @@ def admin_stats(admin: User = Depends(require_admin),
     shadow_today = db.query(ShadowTrade).filter(ShadowTrade.trade_date == today).count()
 
     # Running engines
-    running = len([uid for uid, eng in active_engines.items() if eng.is_running])
+    running = sum(1 for engs in active_engines.values() for eng in engs.values() if eng.is_running)
 
     return {
         "total_users":       len(users),
@@ -2514,7 +2552,7 @@ async def telegram_webhook(req: dict, db: Session = Depends(get_db)):
         )
 
     elif cmd == "status":
-        eng = active_engines.get(matched_user.id)
+        eng = _get_engine(matched_user.id)
         cache = _user_cache(matched_user.id)
         spot = cache.get("spot", 0)
         mkt_status = cache.get("status", "waiting")
@@ -2535,10 +2573,13 @@ async def telegram_webhook(req: dict, db: Session = Depends(get_db)):
             )
 
     elif cmd == "stop":
-        eng = active_engines.get(matched_user.id)
-        if eng and eng.is_running:
-            eng.is_running = False
-            del active_engines[matched_user.id]
+        running_engs = [e for e in _all_engines(matched_user.id) if e.is_running]
+        eng = running_engs[0] if running_engs else None
+        if running_engs:
+            for e in running_engs:
+                e.is_running = False
+            if matched_user.id in active_engines:
+                del active_engines[matched_user.id]
             db.query(Automation).filter(
                 Automation.user_id == matched_user.id,
                 Automation.status == "RUNNING"
@@ -2586,7 +2627,7 @@ async def telegram_webhook(req: dict, db: Session = Depends(get_db)):
                 from engine import EngineState
                 config = {**auto.config, "strategies": auto.strategies, "mode": auto.mode}
                 state = EngineState(config)
-                active_engines[matched_user.id] = state
+                _set_engine(matched_user.id, auto.id, state)
                 asyncio.create_task(_run_engine(matched_user.id, auto, state, conn, db))
                 auto.status = "RUNNING"
                 db.commit()
@@ -3185,7 +3226,7 @@ async def dashboard_summary(user: User = Depends(get_current_user),
     # Per-automation status
     auto_status = []
     for a in autos:
-        eng = active_engines.get(user.id + ":" + a.id) or active_engines.get(user.id)
+        eng = _get_engine(user.id, a.id)
         a_today = [t for t in today_trades if t.automation_id == a.id]
         a_shadow = [t for t in today_shadow if t.automation_id == a.id]
         a_pnl = sum(t.net_pnl or 0 for t in a_today if not t.is_open)
@@ -3715,7 +3756,7 @@ async def websocket_endpoint(websocket, user_id: str):
     await websocket.accept()
     try:
         while True:
-            state = active_engines.get(user_id)
+            state = _get_engine(user_id)
             if state:
                 atm = state.atm
                 data = {
