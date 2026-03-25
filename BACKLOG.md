@@ -36,6 +36,30 @@
 
 ---
 
+## 📱 UI / UX FIXES
+
+- [ ] **U1 — Mobile responsive: top content cut off** — Top of page is clipped on mobile browsers (Safari/Chrome). Likely missing `safe-area-inset-top` handling for notched phones or incorrect viewport meta/padding. Fix: add `padding-top: env(safe-area-inset-top)` to top nav, ensure `<meta name="viewport">` includes `viewport-fit=cover`. Test on iPhone Safari and Android Chrome.
+
+- [ ] **U2 — Symbol button not loading symbol data + ATM** — Clicking a symbol button in the Trader page does not populate the symbol's market data or ATM strike. Each symbol button should fetch and display that symbol's live spot price, ATM strike, and chain data. Fix: wire symbol button click to call the market data endpoint for that specific symbol and update the display.
+
+- [ ] **U3 — Home page AI feature shows nothing** — AI section on home page is empty. Add a short AI market summary (2–3 lines max) at the bottom of the home page — today's market outlook, active guard rails, and whether strategies are cleared to trade. Pulled from the morning assessment already stored in DB. Keep it concise, no clutter.
+
+- [ ] **U4 — Guard rails: consolidate into one section + show which stopped automation** — Currently AI guard rails and other guards (VIX, drift, gap, prev-day, skip-day) are shown in separate places. Consolidate all guard rails into one "Guard Rails" section per automation. When an automation stops due to a guard rail, clearly show which one triggered (e.g. "Stopped: VWAP SL — combined 617 > VWAP 603"). Both in the automation card and in the engine log panel.
+
+- [ ] **U5 — Trade details: richer exit information** — Trade exit currently shows minimal info. Improve to show: exit reason label (VWAP SL / Profit Lock / Max Loss / Profit Target / Manual), exit premium vs entry premium, P&L in ₹ and %, time held, which SL layer fired and at what level. Keep layout clean and professional — use a structured card not a raw text dump. Entry details (why entered, signal conditions) already good — match that quality for exits.
+
+- [ ] **U6 — Stuck automations cannot be deleted (recurring bug)** — Automations that are not running sometimes get stuck and cannot be deleted from the UI. Root cause likely: delete endpoint checks `is_running` flag in DB which is stale (engine crashed or server restarted without clearing flag). Fix: (1) on server start, reset all `is_running=true` automations to `is_running=false`; (2) delete endpoint should allow deletion regardless of `is_running` state with a warning; (3) add a "Force Delete" option in UI for stuck automations.
+
+- [ ] **U7 — Calendar: simplify UX + integrate with guard rails** — Calendar toggle button does not stop the automation — requires going into Edit to disable dates. Fix: (1) make calendar dates directly tappable to enable/disable skip on that date without opening edit form; (2) show a clear ON/OFF toggle per date in the calendar view; (3) when automation is stopped due to a skip date, show "Stopped: Skip Date [date]" in the guard rails section (U4) and on the automation card — same as other guard rail stops.
+
+- [ ] **U8 — Paper history / backtest page: mobile layout + more useful data** — Boxes are cut off on mobile. Page currently shows only graphs. Make it fully responsive (horizontal scroll or stacked cards on mobile). Add useful data alongside graphs: per-strategy win rate, average profit/loss, best trade, worst trade, total P&L by strategy, trade count. Make it actionable — a trader should be able to see at a glance which strategies are working in paper mode.
+
+- [ ] **U9 — Help page: full refresh with latest features + strategy exit conditions** — Help page is outdated — missing S10, skip day filters, guard rail changes, ratchet SL, 1000pt hedge. Rule going forward: every new feature added to the app must also be documented in the Help page in the same release. For each strategy section, add clear exit conditions: what triggers exit (VWAP SL, profit lock, profit target, hard time exit), in plain simple language a non-technical trader can understand. No jargon.
+
+- [ ] **U10 — Auto-refresh market data on app open (no manual Test click needed)** — Currently the Trader page requires manually clicking "Test" to fetch market data before anything populates. Fix: on page load (and on returning to Trader tab), automatically fetch market data and refresh every 60 seconds during market hours (9:15–15:30). Outside market hours show last known data with a timestamp. Remove or repurpose the "Test" button — if kept, rename it to "Refresh Now". Also review the Strike Price display shown after clicking Test — clarify its purpose or remove if not useful for the trader.
+
+---
+
 ## 🟢 LOW PRIORITY / FUTURE
 
 - [x] **L1 — Mobile PWA** — manifest.json + sw.js service worker + Apple meta tags. Install: Share → Add to Home Screen
