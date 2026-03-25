@@ -46,11 +46,18 @@ class StrikeState:
     ema75:     float = 0.0
     _ema_count: int  = 0
 
+    # Individual option LTPs (for S10 directional buy SL tracking)
+    ce_ltp:    float = 0.0
+    pe_ltp:    float = 0.0
+
     @property
     def current(self):
         return self.combined_history[-1] if self.combined_history else 0.0
 
-    def update(self, combined: float, volume: float = 1.0):
+    def update(self, combined: float, volume: float = 1.0,
+               ce_ltp: float = 0.0, pe_ltp: float = 0.0):
+        self.ce_ltp = ce_ltp if ce_ltp else combined / 2
+        self.pe_ltp = pe_ltp if pe_ltp else combined / 2
         self.combined_history.append(combined)
         self._vwap_pv += combined * volume
         self._vwap_v  += volume
@@ -313,14 +320,43 @@ def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
     ai_avoid = set(getattr(state, 'ai_avoid', []))
     if ai_avoid:
         enabled = enabled - ai_avoid
+
+    # ── Guard 5 — Skip day filter ──────────────────────────────────
+    # Suspends all SELLING strategies on gap/volatile days.
+    # S10 (directional buy) is exempt and runs regardless.
+    _selling_suspended = False
+    _skip_reasons      = []
+    _gap_skip_pct      = state.config.get("gap_skip_pct", 0)
+    _prev_skip_pct     = state.config.get("prev_day_skip_pct", 0)
+    _prev_c            = state.config.get("prev_close", 0)
+
+    if _gap_skip_pct and _gap_skip_pct > 0 and _prev_c and state.spot_locked:
+        _gap_abs = abs(state.spot_locked - _prev_c) / _prev_c * 100
+        if _gap_abs >= _gap_skip_pct:
+            _skip_reasons.append(f"gap {_gap_abs:.1f}% ≥ {_gap_skip_pct:.1f}%")
+            _selling_suspended = True
+
+    if _prev_skip_pct and _prev_skip_pct > 0:
+        _prev_move = _prev_day_move_pct(state)
+        if _prev_move >= _prev_skip_pct:
+            _skip_reasons.append(f"prev day moved {_prev_move:.1f}% ≥ {_prev_skip_pct:.1f}%")
+            _selling_suspended = True
+
+    if _selling_suspended:
+        state.emit(
+            f"Selling signals suspended — {', '.join(_skip_reasons)}. "
+            f"S10 directional buy still active if enabled.", "INFO")
+
     for code, fn in [
         ("S7",_s7),("S1",_s1),("S8",_s8),
         ("S2",_s2),("S3",_s3),("S4",_s4),
         ("S6",_s6),("S9",_s9),("S5",_s5),
+        ("S10",_s10),
     ]:
-        if code in enabled:
-            sig = fn(state, t, now)
-            if sig: return sig
+        if code not in enabled: continue
+        if _selling_suspended and code != "S10": continue  # selling strategies skip on gap/volatile days
+        sig = fn(state, t, now)
+        if sig: return sig
     return None
 
 
@@ -502,6 +538,26 @@ def _s8(state, t, now):
             f"S8 skipped — yesterday moved {prev_move:.1f}% "
             f"(>{2.0}% threshold). Gap likely extends, not fades.", "INFO")
         return None
+
+    # Direction-aware filter: if gap is CONTINUING (not fading), skip.
+    # Gap up + spot still rising fast → momentum not exhausted → don't fade.
+    # Gap down + spot still falling fast → same logic.
+    gap_up = state.spot_locked > prev
+    if _spot_rising_fast(state, window=5, threshold=0.2):
+        if gap_up:
+            state.emit(
+                f"S8 skipped — gap-up day ({gap_pct:.2f}%) but spot still rising. "
+                f"Gap continuing, fade not safe.", "INFO")
+            return None
+    if not gap_up and len(state.spot_history) >= 5:
+        recent = state.spot_history[-5:]
+        falling = (recent[-1] - recent[0]) / recent[0] * 100 < -0.2
+        if falling:
+            state.emit(
+                f"S8 skipped — gap-down day ({gap_pct:.2f}%) but spot still falling. "
+                f"Gap continuing, fade not safe.", "INFO")
+            return None
+
     sb = _sb(state)
     # Wider hedge for gap days (±3 strikes = Iron Condor)
     legs = _build_legs("S8", atm, sb, hedge_width=3)
@@ -510,7 +566,7 @@ def _s8(state, t, now):
         "structure":"Iron Condor (ATM sell, ±3 hedge for gap buffer)",
         "strike": atm.strike,
         "combined": atm.current,
-        "reason": f"Gap {gap_pct:.2f}% — elevated premium, wider hedge",
+        "reason": f"Gap {gap_pct:.2f}% fading — elevated premium, wider hedge",
         "margin_note": "Iron Condor: max defined risk",
         **legs,
     }
@@ -717,6 +773,68 @@ def _s9(state, t, now):
         "reason": f"Expiry day — rapid ATM theta decay 11:00-12:00 | hedge=±{hedge}",
         "margin_note": f"Hedge ±{hedge} — {"wider after big move" if hedge > 2 else "tight expiry hedge"}",
         **legs,
+    }
+
+
+def _s10(state, t, now):
+    """
+    S10 — Gap Directional Buy
+    ==========================
+    Clear gap day (>1%). Buy ATM CE (gap-up) or ATM PE (gap-down).
+    Momentum trade — ride the gap direction for first 90 minutes.
+
+    Structure: Single-leg BUY (CE or PE at ATM)
+    Fire window: 9:20–9:25 only (first-candle momentum)
+    Exit: 11:00 AM hard cut OR SL (premium -40% OR spot reversal 30pts)
+
+    This is a BUY strategy, so:
+    - is_buy = True in the returned signal
+    - direction: "CE" or "PE"
+    - SL is tracked in _run_engine differently from sell strategies
+    """
+    if not (dtime(9,20) <= t <= dtime(9,25)): return None
+    atm = state.atm
+    if not atm: return None
+    prev = state.config.get("prev_close", 0)
+    if not prev or not state.spot_locked: return None
+
+    gap_pct = (state.spot_locked - prev) / prev * 100  # signed gap
+    abs_gap = abs(gap_pct)
+
+    # Only fire on clear gaps ≥1%
+    if abs_gap < 1.0: return None
+
+    # Never trade S10 if gap is so large that selling is suspended (>skip threshold)
+    # Use the same skip thresholds from config but allow S10 up to 2.5%
+    gap_skip_pct = state.config.get("gap_skip_pct", 0)
+    if gap_skip_pct and abs_gap >= gap_skip_pct and abs_gap > 2.5:
+        state.emit(
+            f"S10 skipped — gap {abs_gap:.1f}% exceeds safety limit. "
+            f"Extreme gap days have too much intraday risk.", "INFO")
+        return None
+
+    direction = "CE" if gap_pct > 0 else "PE"
+    buy_symbol = atm.ce_symbol if direction == "CE" else atm.pe_symbol
+    entry_ltp  = atm.ce_ltp    if direction == "CE" else atm.pe_ltp
+
+    if not buy_symbol or entry_ltp <= 0:
+        state.emit(f"S10 skipped — no {direction} symbol or zero LTP at ATM {atm.strike}", "INFO")
+        return None
+
+    return {
+        "code":      "S10",
+        "name":      "Gap Directional Buy",
+        "structure": f"Single-leg BUY {direction} at ATM {atm.strike}",
+        "strike":    atm.strike,
+        "combined":  entry_ltp,   # for position tracking (single leg)
+        "is_buy":    True,
+        "direction": direction,
+        "buy_symbol": buy_symbol,
+        "entry_ltp":  entry_ltp,
+        "reason":     (f"Gap {gap_pct:+.2f}% — BUY {direction} for momentum. "
+                       f"Hard exit 11:00 AM."),
+        "margin_note": "BUY only — max loss = premium paid",
+        # No sell_ce/sell_pe/buy_ce/buy_pe — handled separately in _open_position
     }
 
 
