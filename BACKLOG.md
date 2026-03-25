@@ -32,7 +32,7 @@
 - [x] **M2 — Multi-symbol market data** — `user_symbol_cache` + fetches all symbols from user's automations. `/api/market/all-symbols` endpoint added.
 - [x] **M3 — Automation edit** — PUT `/api/automations/{id}` endpoint + Edit button in UI + form pre-fill
 - [x] **M4 — Performance page** — best_day/worst_day code confirmed correct — needs live data to validate
-- [ ] **M5 — Git → deploy cycle test** — Claude Code connected, verify full push → deploy workflow
+- [x] **M5 — Git → deploy cycle test** — Claude Code connected, verify full push → deploy workflow. ✅ Confirmed working — multiple deploys completed this session.
 
 ---
 
