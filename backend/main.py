@@ -164,21 +164,22 @@ HEDGE_MARGIN_PCT = {
     2: 0.05,   # ±2 standard Iron Fly
     3: 0.045,  # ±3 Iron Condor — margin benefit from wider hedge
     4: 0.04,   # ±4 Wide Condor — widest hedge
+   20: 0.035,  # ±1000pt OTM hedge — near max margin relief (hedge cost ≈ ₹0)
     0: 0.06,   # default / no hedge specified
 }
 
 # Strategy-specific margin config
 # Each strategy has: hedge_width, structure, typical_iv_pct, premium_pct_of_spot
 STRATEGY_MARGIN_CONFIG = {
-    "S1": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.014, "label": "ORB Breakdown"},
-    "S7": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.014, "label": "All-Strike Fly"},
-    "S8": {"hedge": 3, "structure": "Iron Condor",     "premium_pct": 0.010, "label": "Gap Fade"},
-    "S2": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.013, "label": "VWAP Squeeze"},
-    "S3": {"hedge": 2, "structure": "Iron Fly",        "premium_pct": 0.012, "label": "Breakout Rev."},
-    "S4": {"hedge": 3, "structure": "Iron Condor",     "premium_pct": 0.009, "label": "Iron Condor"},
-    "S6": {"hedge": 4, "structure": "Wide Condor",     "premium_pct": 0.011, "label": "Theta Strangle"},
-    "S9": {"hedge": 1, "structure": "Tight Iron Fly",  "premium_pct": 0.008, "label": "Expiry Crush"},
-    "S5": {"hedge": 3, "structure": "Ratio Spread",    "premium_pct": 0.018, "label": "Ratio Spread"},
+    "S1": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.014, "label": "ORB Breakdown"},
+    "S7": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.014, "label": "All-Strike Fly"},
+    "S8": {"hedge": 20, "structure": "Iron Condor (±1000pt)",    "premium_pct": 0.010, "label": "Gap Fade"},
+    "S2": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.013, "label": "VWAP Squeeze"},
+    "S3": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.012, "label": "Breakout Rev."},
+    "S4": {"hedge": 20, "structure": "Iron Condor (±1000pt)",    "premium_pct": 0.009, "label": "Iron Condor"},
+    "S6": {"hedge": 20, "structure": "Wide Condor (±1000pt)",    "premium_pct": 0.011, "label": "Theta Strangle"},
+    "S9": {"hedge":  3, "structure": "Tight Iron Fly (±150pt)",  "premium_pct": 0.008, "label": "Expiry Crush"},
+    "S5": {"hedge": 20, "structure": "Ratio Spread (±1000pt)",   "premium_pct": 0.018, "label": "Ratio Spread"},
 }
 
 def estimate_margin(symbol: str, lots: int, lot_size: int,
@@ -3959,7 +3960,7 @@ async def _run_engine(user_id: str, auto: Automation,
             if t >= dtime(9, 15) and not state.atm_strike:
                 state.spot_locked = spot
                 state.atm_strike  = nearest_strike(spot)
-                sides = state.config.get("strike_sides", 3)
+                sides = state.config.get("strike_sides", 20)  # ±1000pt window (20 strikes × 50pts)
                 gap   = state.config.get("strike_round", 50)
                 for i in range(-sides, sides + 1):
                     sk = StrikeState(
@@ -4194,8 +4195,10 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
     legs_to_place = []
     leg_map = []
 
-    for leg, side in [("sell_ce","SELL"),("sell_pe","SELL"),
-                      ("buy_ce","BUY"),("buy_pe","BUY")]:
+    # BUY hedge legs placed FIRST — hedge must be in place before selling
+    # Prevents naked short exposure and ensures margin relief from first order
+    for leg, side in [("buy_ce","BUY"),("buy_pe","BUY"),
+                      ("sell_ce","SELL"),("sell_pe","SELL")]:
         sym = signal.get(leg)
         if sym:
             legs_to_place.append({"symbol":sym, "side":side, "qty":qty})

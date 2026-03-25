@@ -290,31 +290,31 @@ def _sb(state: EngineState) -> dict:
 
 
 def _build_legs(strategy: str, sell_strike: StrikeState,
-                sb: dict, hedge_width: int = 2) -> dict:
+                sb: dict, hedge_width: int = 20) -> dict:
     """
     Build order legs for a strategy.
     Always includes hedge wings to:
     - Define maximum risk
-    - Reduce margin requirement (~50% reduction)
-    - Comply with SEBI requirements
-    
-    Industry standard hedge widths:
-    - Tight hedge (±100pt / 2 strikes): Iron Fly — max protection, lower premium
-    - Medium hedge (±200pt / 4 strikes): Iron Condor — balance
-    - Wide hedge (±300pt / 6 strikes): Wide condor — more premium, more risk
+    - Reduce margin requirement
+    - Comply with SEBI requirements (hedge must be in place before sell)
+
+    Hedge width in number of strikes (50pts each):
+    - 20 strikes = ±1000pts OTM: near-zero cost hedge, max premium collected
+    - S9 expiry day: use 3 strikes (±150pt) — 1000pt OTM has zero bids on expiry
     """
     offset = sell_strike.offset
+    # Find nearest available hedge strike at or beyond target width
     hedge_ce = sb.get(offset + hedge_width) or sb.get(offset + hedge_width - 1) or sell_strike
     hedge_pe = sb.get(offset - hedge_width) or sb.get(offset - hedge_width + 1) or sell_strike
     return {
-        "sell_ce":    sell_strike.ce_symbol,
-        "sell_pe":    sell_strike.pe_symbol,
-        "buy_ce":     hedge_ce.ce_symbol,
-        "buy_pe":     hedge_pe.pe_symbol,
-        "sell_strike": sell_strike.strike,
+        "sell_ce":       sell_strike.ce_symbol,
+        "sell_pe":       sell_strike.pe_symbol,
+        "buy_ce":        hedge_ce.ce_symbol,
+        "buy_pe":        hedge_pe.pe_symbol,
+        "sell_strike":   sell_strike.strike,
         "buy_ce_strike": hedge_ce.strike,
         "buy_pe_strike": hedge_pe.strike,
-        "hedge_width":  hedge_width,
+        "hedge_width":   hedge_width,
     }
 
 
@@ -474,7 +474,7 @@ def _s7(state, t, now):
     atm = state.atm
     if not atm: return None
     sb = _sb(state)
-    legs = _build_legs("S7", atm, sb, hedge_width=2)
+    legs = _build_legs("S7", atm, sb, hedge_width=20)
     return {
         "code":"S7", "name":"All-Strike Iron Butterfly",
         "structure":"Iron Fly (ATM sell, ±2 hedge)",
@@ -548,7 +548,7 @@ def _s1(state, t, now):
 
     morning_atm_strike.fired = True
     sb = _sb(state)
-    legs = _build_legs("S1", morning_atm_strike, sb, hedge_width=2)
+    legs = _build_legs("S1", morning_atm_strike, sb, hedge_width=20)
     return {
         "code":"S1", "name":"ORB Breakdown Iron Fly",
         "structure":"Iron Fly (morning ATM sell, ±2 hedge)",
@@ -615,7 +615,7 @@ def _s8(state, t, now):
 
     sb = _sb(state)
     # Wider hedge for gap days (±3 strikes = Iron Condor)
-    legs = _build_legs("S8", atm, sb, hedge_width=3)
+    legs = _build_legs("S8", atm, sb, hedge_width=20)
     return {
         "code":"S8", "name":"Gap Fade Iron Condor",
         "structure":"Iron Condor (ATM sell, ±3 hedge for gap buffer)",
@@ -698,7 +698,7 @@ def _s2(state, t, now):
     atm_to_use = next((s for s in state.strikes
                        if s.strike == cur_atm), atm)
     sb = _sb(state)
-    legs = _build_legs("S2", atm_to_use, sb, hedge_width=2)
+    legs = _build_legs("S2", atm_to_use, sb, hedge_width=20)
     spike_high = max(recent_10)
     return {
         "code":"S2", "name":"VWAP Squeeze Iron Fly",
@@ -728,7 +728,7 @@ def _s3(state, t, now):
     recent_high = max(atm.combined_history[-15:])  # 15 candles (was 5 — too short)
     if recent_high < atm.vwap_val * 1.05 or atm.current >= atm.vwap_val: return None
     sb = _sb(state)
-    legs = _build_legs("S3", atm, sb, hedge_width=2)
+    legs = _build_legs("S3", atm, sb, hedge_width=20)
     return {
         "code":"S3", "name":"Breakout Reversal Iron Fly",
         "structure":"Iron Fly (ATM, ±2 hedge)",
@@ -759,12 +759,12 @@ def _s4(state, t, now):
     sb = _sb(state)
     sell_ce  = sb.get(1, atm)
     sell_pe  = sb.get(-1, atm)
-    buy_ce   = sb.get(3) or sb.get(2, atm)
-    buy_pe   = sb.get(-3) or sb.get(-2, atm)
+    buy_ce   = sb.get(21) or sb.get(20) or sb.get(3) or sb.get(2, atm)  # ±1000pt hedge
+    buy_pe   = sb.get(-21) or sb.get(-20) or sb.get(-3) or sb.get(-2, atm)
     combined = sell_ce.current + sell_pe.current
     return {
         "code":"S4", "name":"Iron Condor",
-        "structure":"Iron Condor (sell ±1, buy ±3 wings)",
+        "structure":"Iron Condor (sell ±1, buy ±1000pt wings)",
         "strike": atm.strike,
         "combined": combined,
         "sell_ce": sell_ce.ce_symbol, "sell_pe": sell_pe.pe_symbol,
@@ -772,6 +772,7 @@ def _s4(state, t, now):
         "sell_strike": atm.strike,
         "buy_ce_strike": buy_ce.strike,
         "buy_pe_strike": buy_pe.strike,
+        "hedge_width": 20,
         "reason": f"Range-bound {rng*100:.1f}% — Iron Condor optimal",
         "margin_note": "Fully defined risk, lowest margin",
     }
@@ -793,12 +794,12 @@ def _s6(state, t, now):
     if atm.current < atm.orb_high * 1.05: return None  # fire only when IV elevated (combined above ORB)
     sb = _sb(state)
     sell_ce = sb.get(1, atm); sell_pe = sb.get(-1, atm)
-    buy_ce  = sb.get(4) or sb.get(3, atm)
-    buy_pe  = sb.get(-4) or sb.get(-3, atm)
+    buy_ce  = sb.get(21) or sb.get(20) or sb.get(4) or sb.get(3, atm)  # ±1000pt hedge
+    buy_pe  = sb.get(-21) or sb.get(-20) or sb.get(-4) or sb.get(-3, atm)
     combined = sell_ce.current + sell_pe.current
     return {
         "code":"S6", "name":"Theta Decay Wide Condor",
-        "structure":"Wide Iron Condor (sell ±1, buy ±4 wings)",
+        "structure":"Wide Iron Condor (sell ±1, buy ±1000pt wings)",
         "strike": atm.strike,
         "combined": combined,
         "sell_ce": sell_ce.ce_symbol, "sell_pe": sell_pe.pe_symbol,
@@ -806,7 +807,8 @@ def _s6(state, t, now):
         "sell_strike": atm.strike,
         "buy_ce_strike": buy_ce.strike,
         "buy_pe_strike": buy_pe.strike,
-        "reason": f"Elevated IV — sell wide condor, buy ±4 wings",
+        "hedge_width": 20,
+        "reason": f"Elevated IV — sell wide condor, buy ±1000pt wings",
         "margin_note": "Fully defined, premium elevated",
     }
 
@@ -928,15 +930,16 @@ def _s5(state, t, now):
     if not atm or atm._ema_count < 20: return None
     if atm.current >= atm.ema75 * 0.95: return None
     sb = _sb(state)
-    buy_hedge = sb.get(3) or sb.get(2, atm)
+    buy_hedge = sb.get(20) or sb.get(3) or sb.get(2, atm)  # ±1000pt hedge
     return {
         "code":"S5", "name":"Ratio Spread (Advanced)",
-        "structure":"Sell 2x ATM CE+PE, buy 1x OTM hedge each side",
+        "structure":"Sell 2x ATM CE+PE, buy 1x ±1000pt hedge each side",
         "strike": atm.strike,
         "combined": atm.current,
         "sell_ce": atm.ce_symbol, "sell_pe": atm.pe_symbol,
         "buy_ce": buy_hedge.ce_symbol, "buy_pe": buy_hedge.pe_symbol,
         "lots_multiplier": 2,
+        "hedge_width": 20,
         "reason": f"Strong downtrend — combined {atm.current:.1f} << EMA {atm.ema75:.1f}",
         "margin_note": "⚠️ Advanced: partial hedge only",
     }
