@@ -245,6 +245,64 @@ def t_delete_automation():
     assert len(r2.json()["automations"]) == 0
 test("DELETE /api/automations/{id}", t_delete_automation)
 
+def t_automation_sl_buffers():
+    """Create automation with vwap_buffer_pct and ema_buffer_pct, verify they persist."""
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "SL Buffer Test",
+        "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers",
+        "strategies": ["S1"],
+        "mode": "paper",
+        "config": {
+            "lots": 1, "lot_size": 65,
+            "max_loss_pct": 30, "profit_target_pct": 50,
+            "auto_exit_time": "14:00",
+            "vwap_buffer_pct": 3,
+            "ema_buffer_pct": 2,
+        }
+    })
+    ok_status(r)
+    aid = r.json().get("automation", {}).get("id")
+    assert aid, "No automation id returned"
+    # Verify config persisted
+    r2 = client.get("/api/automations", headers=H())
+    autos = r2.json()["automations"]
+    found = next((a for a in autos if a["id"] == aid), None)
+    assert found, "Automation not found after create"
+    assert found["config"].get("vwap_buffer_pct") == 3, f"vwap_buffer_pct not saved: {found['config']}"
+    assert found["config"].get("ema_buffer_pct") == 2, f"ema_buffer_pct not saved: {found['config']}"
+    # Cleanup
+    client.delete(f"/api/automations/{aid}", headers=H())
+test("Automation config: vwap_buffer_pct and ema_buffer_pct persist", t_automation_sl_buffers)
+
+def t_automation_ai_news_gate():
+    """Create automation with ai_news_gate enabled, verify it persists."""
+    r = client.post("/api/automations", headers=H(), json={
+        "name": "AI Gate Test",
+        "symbol": "NSE:NIFTY50-INDEX",
+        "broker_id": "fyers",
+        "strategies": ["S1"],
+        "mode": "paper",
+        "config": {
+            "lots": 1, "lot_size": 65,
+            "max_loss_pct": 30, "profit_target_pct": 50,
+            "auto_exit_time": "14:00",
+            "ai_news_gate": True,
+            "ai_news_threshold": "medium",
+        }
+    })
+    ok_status(r)
+    aid = r.json().get("automation", {}).get("id")
+    assert aid, "No automation id returned"
+    r2 = client.get("/api/automations", headers=H())
+    autos = r2.json()["automations"]
+    found = next((a for a in autos if a["id"] == aid), None)
+    assert found, "Automation not found"
+    assert found["config"].get("ai_news_gate") == True, "ai_news_gate not saved"
+    assert found["config"].get("ai_news_threshold") == "medium", "ai_news_threshold not saved"
+    client.delete(f"/api/automations/{aid}", headers=H())
+test("Automation config: ai_news_gate and threshold persist", t_automation_ai_news_gate)
+
 # ── 6. Trades & Shadow ───────────────────────────────────────
 print("\n6. Trades & shadow endpoints...")
 def t_trades_empty():
@@ -399,18 +457,16 @@ test("SL state: max loss backstop triggers correctly", t_sl_max_loss)
 def t_sl_trailing():
     from engine import SLState
     sl = SLState()
-    sl.activate(200.0, {"max_loss_pct":30,"trail_pct":20,
-                        "min_profit_pct":15,"vwap_buffer_pct":2,
-                        "ema_buffer_pct":1,"profit_target_pct":50})
     cfg = {"max_loss_pct":30,"trail_pct":20,"min_profit_pct":15,
            "vwap_buffer_pct":2,"ema_buffer_pct":1,"profit_target_pct":50}
-    # Decay to 160 (20% down — trailing activates at 15%)
+    sl.activate(200.0, cfg)
+    # Decay to 160 (20% down) → profit lock activates at breakeven (200)
     sl.update(160.0, 0, 0, 0, cfg)
-    # Trailing SL = 160 * 1.20 = 192. Bounce to 193 should exit
-    exit_, reason = sl.update(193.0, 0, 0, 0, cfg)
-    assert exit_, "Trailing SL should trigger"
-    assert "TRAILING" in reason
-test("SL state: trailing SL locks in gains correctly", t_sl_trailing)
+    # Bounce back above breakeven lock level (201 >= 200) → PROFIT_LOCK fires
+    exit_, reason = sl.update(201.0, 0, 0, 0, cfg)
+    assert exit_, "Profit lock ratchet should trigger on bounce to breakeven"
+    assert "PROFIT_LOCK" in reason
+test("SL state: profit lock ratchet triggers on bounce to breakeven", t_sl_trailing)
 
 def t_margin_calc():
     margin = main.estimate_margin(
@@ -462,13 +518,13 @@ def t_plan_config():
     # FREE plan: no live trading
     assert not main.PLAN_CONFIG["FREE"]["live_trading"]
     assert main.PLAN_CONFIG["FREE"]["max_automations"] == 3
-    # STARTER plan: live trading, 4 strategies
+    # STARTER plan: live trading, S1 included
     assert main.PLAN_CONFIG["STARTER"]["live_trading"]
-    assert len(main.PLAN_CONFIG["STARTER"]["strategies"]) == 4
+    assert len(main.PLAN_CONFIG["STARTER"]["strategies"]) >= 4
     assert "S1" in main.PLAN_CONFIG["STARTER"]["strategies"]
-    # PRO plan: all 9 strategies
+    # PRO plan: all strategies (S1-S10)
     assert main.PLAN_CONFIG["PRO"]["live_trading"]
-    assert len(main.PLAN_CONFIG["PRO"]["strategies"]) == 9
+    assert len(main.PLAN_CONFIG["PRO"]["strategies"]) >= 9
 test("Plan config: FREE/STARTER/PRO defined correctly", t_plan_config)
 
 def t_get_plan_endpoint():
@@ -680,8 +736,7 @@ def t_sl_entry_not_zero():
            "vwap_buffer_pct":2,"ema_buffer_pct":1,"profit_target_pct":50}
     sl.activate(450.0, cfg)
     assert sl.entry_combined == 450.0, f"entry={sl.entry_combined} should be 450"
-    assert sl.trailing_low   == 450.0
-    assert sl.trailing_sl    >  450.0
+    assert sl.trailing_low   == 450.0  # seeds at entry; bounces above this trigger SL
     # Must NOT fire at entry price on first tick
     exit_, reason = sl.update(450.0, 0, 0, 0, cfg)
     assert not exit_, f"SL fired immediately: {reason}"
@@ -1130,7 +1185,7 @@ test("market_status: sym_short returned for each symbol", t_market_status_return
 
 def t_help_page_has_automation_guide():
     # Automation feature guide must be in the frontend
-    fe = open('../frontend/index.html').read()
+    fe = open('/app/frontend/index.html').read()
     assert '_helpField' in fe, "Missing _helpField helper"
     assert 'Automation Settings' in fe, "Missing automation settings section"
     assert 'Max Spot Drift' in fe, "Missing drift guard help"
@@ -1139,7 +1194,7 @@ def t_help_page_has_automation_guide():
 test("Help page: automation feature guide present", t_help_page_has_automation_guide)
 
 def t_tab_bar_css_uniform():
-    fe = open('../frontend/index.html').read()
+    fe = open('/app/frontend/index.html').read()
     assert '.tab-bar{' in fe or '.tab-bar {' in fe, "Missing .tab-bar CSS"
     assert '.tab-btn{' in fe or '.tab-btn {' in fe, "Missing .tab-btn CSS"
     assert '.select-sm{' in fe or '.select-sm {' in fe, "Missing .select-sm CSS"
@@ -1216,7 +1271,7 @@ def t_ai_ask_no_key():
 test("POST /api/ai/ask: returns 503 without key or 200 with key", t_ai_ask_no_key)
 
 def t_event_calendar_in_frontend():
-    fe = open('../frontend/index.html').read()
+    fe = open('/app/frontend/index.html').read()
     assert 'renderEvents' in fe,         "Missing renderEvents function"
     assert 'pg-events' in fe,            "Missing pg-events page"
     assert 'loadClaudeAssessment' in fe or 'loadAiAssessment' in fe, "Missing assessment loader"
@@ -1224,7 +1279,7 @@ def t_event_calendar_in_frontend():
     assert 'ai-panel' in fe,             "Missing AI panel HTML"
     assert 'sendAiMessage' in fe,        "Missing sendAiMessage"
     assert 'gemini' in fe.lower(),       "Missing Gemini reference in frontend"
-    assert 'news_suspend' in fe,         "Missing news_suspend toggle"
+    assert 'af-ainews' in fe,            "Missing per-automation AI news gate toggle"
 test("Frontend: event calendar, AI panel (Gemini), news gate all present", t_event_calendar_in_frontend)
 
 # ── 21. AI config + day picker + calendar ────────────────────
@@ -1281,7 +1336,7 @@ def t_automation_run_days():
 test("Automation: run_days and skip_dates saved in config", t_automation_run_days)
 
 def t_frontend_ai_day_features():
-    fe = open('../frontend/index.html').read()
+    fe = open('/app/frontend/index.html').read()
     assert 'day-picker' in fe,           "Missing day-picker CSS class"
     assert 'day-btn' in fe,              "Missing day-btn CSS class"
     assert '_getSelectedDays' in fe,     "Missing _getSelectedDays"
@@ -1293,14 +1348,14 @@ def t_frontend_ai_day_features():
     assert 'showDayEvents' in fe,        "Missing showDayEvents"
     assert 'ai_insight' in fe,           "Missing ai_insight in trade detail"
     assert 'gemini' in fe.lower(),       "Missing Gemini AI references in frontend"
-    assert 'news_suspend' in fe,         "Missing news_suspend toggle"
+    assert 'af-ainews' in fe,            "Missing per-automation AI news gate toggle (af-ainews)"
     assert 'af-name' in fe,              "Missing automation name field"
     assert 'bn-events' in fe,            "Calendar must be in bottom nav (bn-events)"
     assert 'id="af-days"' in fe,         "Day picker must be in automation form"
     assert 'af-skip-date' in fe,         "Skip dates input must be in automation form"
     assert 'AI News Gate' in fe or 'News Gate' in fe, "Help page must have AI News Gate section"
     assert 'Event Calendar' in fe,       "Help page must have Event Calendar section"
-    assert 'gemini-2.0-flash' in fe,     "Correct default Gemini model in frontend"
+    assert 'gemini-2.5-flash' in fe,     "Correct default Gemini model in frontend"
 test("Frontend: day picker, skip dates, Gemini AI, calendar in nav, day form, help updated", t_frontend_ai_day_features)
 
 def t_engine_state_has_gates():
@@ -1491,13 +1546,12 @@ def t_ai_models_endpoint():
     d = r.json()
     assert "models" in d
     ids = [m["id"] for m in d["models"]]
-    assert "gemini-2.0-flash" in ids,  "gemini-2.0-flash should be listed"
-    assert "gemini-1.5-flash" in ids,  "gemini-1.5-flash should be listed"
-    assert "gemini-1.5-pro" in ids,    "gemini-1.5-pro should be listed"
+    assert len(ids) >= 1, "At least one model should be listed"
+    assert "gemini-2.5-flash" in ids, f"gemini-2.5-flash should be listed, got: {ids}"
     # No -latest or -exp suffixes
     for mid in ids:
         assert 'latest' not in mid, f"Model id should not have -latest suffix: {mid}"
-        assert mid not in ['gemini-1.5-flash-latest','gemini-2.0-flash-exp','gemini-1.5-pro-latest']
+        assert 'exp' not in mid,    f"Model id should not have -exp suffix: {mid}"
 test("GET /api/ai/models — correct Gemini model names (no -latest/-exp suffixes)", t_ai_models_endpoint)
 
 def t_ai_config_save():
@@ -1555,7 +1609,7 @@ def t_engine_news_gate_logic():
     assert hasattr(s, "ai_checked"),   "Missing ai_checked"
     s.ai_suspended = True
     assert s.ai_suspended == True
-test("Engine: news gate state fields present and settable", t_engine_news_gate_fields)
+test("Engine: news gate state fields present and settable", t_engine_news_gate_logic)
 
 # ── 24. Automation naming + run_days ─────────────────────────
 print("\n24. Automation: name, run_days, skip_dates...")

@@ -327,14 +327,17 @@ details[open] summary{color:var(--text)}
 @media(max-width:767px){
   #sidebar{display:none}
   #bottomnav{display:flex}
-  /* Cards full width, no horizontal overflow */
   .card{border-radius:10px}
   .field-row{grid-template-columns:1fr}
   .kpi-grid.four{grid-template-columns:1fr 1fr}
-  /* Tables scroll horizontally */
   .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  /* Automate form strategy grid 3 col on phone */
   .strategy-grid{grid-template-columns:repeat(3,1fr)}
+  /* Form improvements on mobile */
+  .btn-row{flex-wrap:wrap}
+  .btn-row .btn{min-height:44px}
+  select,input[type=text],input[type=number],input[type=time],input[type=date]{min-height:42px;font-size:16px}
+  /* Cards */
+  .guard-banner{padding:8px}
 }
 
 /* Tablet portrait (600–767px) — still bottom nav */
@@ -366,6 +369,42 @@ details[open] summary{color:var(--text)}
   #bottomnav{height:calc(44px + env(safe-area-inset-bottom))}
   .bn-item{padding:4px 12px}
   #content{padding:10px;padding-bottom:calc(50px + env(safe-area-inset-bottom))}
+}
+/* ── FORM TABS ─────────────────────────── */
+.form-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.form-tab{background:none;border:none;color:var(--text2);font-size:13px;font-weight:500;padding:10px 16px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s}
+.form-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.form-tab:hover{color:var(--text)}
+/* ── SKIP-DATE CALENDAR ─────────────────── */
+.skip-cal-wrap{margin-top:8px}
+.skip-cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.skip-cal-nav button{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;cursor:pointer;font-size:13px}
+.skip-cal-nav span{font-size:13px;font-weight:600}
+.skip-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.skip-cal-hdr{text-align:center;font-size:10px;color:var(--text2);padding:4px 0;font-weight:600}
+.skip-cal-day{text-align:center;padding:6px 2px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid transparent;transition:background .1s}
+.skip-cal-day:hover{background:var(--bg3)}
+.skip-cal-day.today{border-color:var(--primary);color:var(--primary);font-weight:700}
+.skip-cal-day.skip{background:rgba(244,67,54,.18);color:var(--red);border-color:var(--red);font-weight:700}
+.skip-cal-day.other-month{color:var(--text2);opacity:.4}
+.skip-cal-day.weekend{color:var(--text2)}
+/* ── GUARD RAIL ROWS ────────────────────── */
+.guard-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.guard-row:last-child{border-bottom:none}
+.guard-icon{font-size:20px;min-width:28px;text-align:center;margin-top:2px}
+.guard-info{flex:1;min-width:0}
+.guard-label{font-size:13px;font-weight:600;margin-bottom:2px}
+.guard-desc{font-size:11px;color:var(--text2);margin-bottom:6px;line-height:1.4}
+/* ── AUTOMATION CARD IMPROVEMENTS ──────── */
+.guard-banner{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:rgba(255,171,64,.12);border:1px solid rgba(255,171,64,.35);border-radius:8px;margin-bottom:8px}
+.guard-banner-icon{font-size:14px;flex-shrink:0;margin-top:1px}
+.guard-banner-text{font-size:11px;color:var(--amber);line-height:1.4;flex:1}
+.guard-banner-label{font-weight:700;font-size:11px}
+/* ── MOBILE FORM IMPROVEMENTS ──────────── */
+@media(max-width:767px){
+  .form-tab{font-size:12px;padding:8px 12px}
+  .guard-row{flex-direction:column;gap:6px}
+  .skip-cal-day{padding:5px 1px;font-size:11px}
 }
 </style>
 </head>
@@ -923,6 +962,121 @@ function _renderSkipDates() {
   el.innerHTML = html;
 }
 
+// ── TAPPABLE SKIP CALENDAR ────────────────────────────────────────
+var _calYear = new Date().getFullYear();
+var _calMonth = new Date().getMonth(); // 0-based
+
+function toggleSkipDate(dateStr) {
+  var idx = _skipDates.indexOf(dateStr);
+  if (idx >= 0) {
+    _skipDates.splice(idx, 1);
+  } else {
+    _skipDates.push(dateStr);
+    _skipDates.sort();
+  }
+  _renderSkipCalendar();
+  _renderSkipDates();
+}
+
+function _prevCalMonth() {
+  _calMonth--;
+  if (_calMonth < 0) { _calMonth = 11; _calYear--; }
+  _renderSkipCalendar();
+}
+function _nextCalMonth() {
+  _calMonth++;
+  if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+  _renderSkipCalendar();
+}
+
+function _renderSkipCalendar() {
+  var wrap = document.getElementById('skip-calendar');
+  if (!wrap) return;
+  var today = new Date();
+  var todayStr = today.toISOString().slice(0,10);
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var days = ['S','M','T','W','T','F','S'];
+  var firstDay = new Date(_calYear, _calMonth, 1);
+  var lastDay = new Date(_calYear, _calMonth+1, 0);
+  var startDow = firstDay.getDay(); // 0=Sun
+  // build header
+  var html = '<div class="skip-cal-nav">'
+    + '<button onclick="_prevCalMonth()">&#8592;</button>'
+    + '<span>'+monthNames[_calMonth]+' '+_calYear+'</span>'
+    + '<button onclick="_nextCalMonth()">&#8594;</button>'
+    + '</div>'
+    + '<div class="skip-cal">'
+    + days.map(function(d){ return '<div class="skip-cal-hdr">'+d+'</div>'; }).join('');
+  // blank cells before first day
+  for (var i=0; i<startDow; i++) html += '<div></div>';
+  // day cells
+  for (var d=1; d<=lastDay.getDate(); d++) {
+    var mm = String(_calMonth+1).padStart(2,'0');
+    var dd = String(d).padStart(2,'0');
+    var ds = _calYear+'-'+mm+'-'+dd;
+    var dow = new Date(_calYear, _calMonth, d).getDay();
+    var cls = 'skip-cal-day';
+    if (dow===0||dow===6) cls += ' weekend';
+    if (ds === todayStr) cls += ' today';
+    if (_skipDates.indexOf(ds) >= 0) cls += ' skip';
+    html += '<div class="'+cls+'" data-date="'+ds+'" onclick="toggleSkipDate(\''+ds+'\')">'+d+'</div>';
+  }
+  html += '</div>';
+  // skip list below calendar
+  html += '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px" id="skip-cal-list">';
+  if (_skipDates.length) {
+    _skipDates.forEach(function(sd) {
+      html += '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;'
+            + 'background:rgba(244,67,54,.15);border:1px solid var(--red);border-radius:99px;font-size:11px;color:var(--red)">'
+            + esc(sd)
+            + '<button data-date="'+esc(sd)+'" onclick="toggleSkipDate(this.dataset.date)" '
+            + 'style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">×</button>'
+            + '</span>';
+    });
+  } else {
+    html += '<span style="font-size:11px;color:var(--text2)">No skip dates — tap a date above to add</span>';
+  }
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+// ── FORM TAB SWITCHER ─────────────────────────────────────────────
+var _activeFormTab = 'setup';
+function showFormTab(tabId, btn) {
+  _activeFormTab = tabId;
+  ['ft-setup','ft-schedule','ft-guards'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = (id === 'ft-'+tabId) ? '' : 'none';
+  });
+  document.querySelectorAll('.form-tab').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  // Re-render skip calendar when guards tab opens (calendar now lives in guards tab)
+  if (tabId === 'guards') _renderSkipCalendar();
+  // Show live guard status for current automation if running
+  if (tabId === 'guards') _updateGuardLiveStatus();
+}
+
+function _updateGuardLiveStatus() {
+  var statusEl = document.getElementById('guard-live-status');
+  if (!statusEl || !_editAutoId) { if (statusEl) statusEl.style.display = 'none'; return; }
+  var cached = (_autosCache || []).find(function(a){ return a.id === _editAutoId; });
+  if (!cached) { statusEl.style.display = 'none'; return; }
+  var gs = cached.guard_status || '';
+  var isRunning = cached.is_running || cached.status === 'RUNNING';
+  if (!isRunning) { statusEl.style.display = 'none'; return; }
+  if (gs) {
+    statusEl.style.display = '';
+    statusEl.innerHTML = '<div class="guard-banner"><div class="guard-banner-icon">🛡️</div>'
+      + '<div class="guard-banner-text"><div class="guard-banner-label">Currently Blocking</div>'
+      + esc(gs) + '</div></div>';
+  } else {
+    statusEl.style.display = '';
+    statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:8px;font-size:11px;color:var(--green)">'
+      + '<span>✅</span> All guards clear — signals are active'
+      + '</div>';
+  }
+}
+
 function _loadAutoFormSchedule(cfg) {
   // Restore day picker state from existing automation config
   if (!cfg) return;
@@ -947,19 +1101,14 @@ function toggleAiKeyVisibility() {
 }
 
 async function saveAiConfig() {
-  var key       = (document.getElementById('ai-key-input').value||'').trim();
-  var model     = document.getElementById('ai-model').value||'gemini-1.5-flash';
-  var trading   = document.getElementById('ai-use-trading').checked;
-  var analysis  = document.getElementById('ai-use-analysis').checked;
-  var newsEl    = document.getElementById('ai-news-suspend');
-  var threshEl  = document.getElementById('ai-news-threshold');
-  var newsSusp  = newsEl  ? newsEl.checked  : true;
-  var newsThresh= threshEl? threshEl.value  : 'high';
+  var key      = (document.getElementById('ai-key-input').value||'').trim();
+  var model    = document.getElementById('ai-model').value||'gemini-2.5-flash';
+  var trading  = document.getElementById('ai-use-trading').checked;
+  var analysis = document.getElementById('ai-use-analysis').checked;
   try {
     var r = await api('POST', '/api/ai/config', {
       api_key: key, model: model,
-      use_for_trading: trading, use_for_analysis: analysis,
-      news_suspend_enabled: newsSusp, news_risk_threshold: newsThresh
+      use_for_trading: trading, use_for_analysis: analysis
     });
     toast(r.ok ? 'AI settings saved ✅' : 'Settings saved (no key set)', 'success');
     renderProfile();
@@ -1682,7 +1831,7 @@ function _renderAutoList(autos) {
       + '<div style="font-size:14px;font-weight:600;margin-bottom:4px">'+esc(a.name)+'</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+esc((a.symbol||'').split(':')[1]||a.symbol||'')+'</div>'
       + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">'+stratBadges+'</div>'
-      + (a.guard_status ? '<div style="font-size:11px;color:var(--amber);padding:5px 8px;background:rgba(255,171,64,.1);border-radius:4px;margin-bottom:8px">🛡️ '+esc(a.guard_status)+'</div>' : '')
+      + (a.guard_status ? '<div class="guard-banner"><div class="guard-banner-icon">🛡️</div><div class="guard-banner-text"><div class="guard-banner-label">BLOCKED BY GUARD RAIL</div>'+esc(a.guard_status)+'</div></div>' : '')
       + '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2)">'
       + '<span>Lots: '+(cfg.lots||1)+'</span>'
       + '<span>Size: '+(cfg.lot_size||75)+'</span>'
@@ -1731,98 +1880,176 @@ function showAutoForm(auto) {
 
   var formTitle = _editAutoId ? 'Edit Automation' : 'New Automation';
   el.style.display = 'block';
+  _activeFormTab = 'setup';
   el.innerHTML = '<hr class="divider"><div class="section-title">'+formTitle+'</div>'
     + '<div class="card"><div class="card-body">'
-    + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional — auto-generated if blank)</span></label><input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%" value="'+(auto&&auto.name?esc(auto.name):'')+'"></div>'
+    // ── Tab buttons ────────────────────────────────────────────────
+    + '<div class="form-tabs">'
+    + '<button class="form-tab active" onclick="showFormTab(\'setup\',this)">⚙️ Setup</button>'
+    + '<button class="form-tab" onclick="showFormTab(\'schedule\',this)">📅 Schedule</button>'
+    + '<button class="form-tab" onclick="showFormTab(\'guards\',this)">🛡️ Guard Rails</button>'
+    + '</div>'
+    // ══ TAB 1: SETUP ══════════════════════════════════════════════
+    + '<div id="ft-setup">'
+    + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional)</span></label>'
+    + '<input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%" value="'+(auto&&auto.name?esc(auto.name):'')+'"></div>'
+    + '<div class="field-row">'
     + '<div class="field"><label>Symbol</label><select id="af-sym">'+symOptions+'</select></div>'
     + '<div class="field"><label>Broker</label><select id="af-broker">'+brokerOptions+'</select></div>'
-    + '<div class="field"><label>Strategies <span style="font-size:10px;color:var(--text2);font-weight:400">(select one or more — first match each day fires)</span></label>'
+    + '</div>'
+    + '<div class="field"><label>Strategies <span style="font-size:10px;color:var(--text2);font-weight:400">— first match each day fires</span></label>'
     + '<div class="strategy-grid" style="margin-top:8px">'+stratPicker+'</div></div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Lots</label><input type="number" id="af-lots" value="1" min="1" max="10"><div class="field-hint">Contracts per trade</div></div>'
-    + '<div class="field"><label>Lot Size</label><input type="number" id="af-lotsize" value="65"><div class="field-hint">NIFTY: 65 (Jan 2026 SEBI), BankNifty: 30, FinNifty: 60</div></div>'
+    + '<div class="field"><label>Lot Size</label><input type="number" id="af-lotsize" value="65"><div class="field-hint">NIFTY: 65 · BankNifty: 30</div></div>'
     + '</div>'
     + '<div class="field-row">'
     + '<div class="field"><label>Auto Exit</label><input type="time" id="af-exit" value="14:00"><div class="field-hint">Force close at this time</div></div>'
-    + '<div class="field"><label>Max Loss %</label><select id="af-maxloss"><option value="20">20% tight</option><option value="25">25% conservative</option><option value="30" selected>30% standard</option><option value="40">40% relaxed</option></select></div>'
+    + '<div class="field"><label>Max Loss %</label><select id="af-maxloss"><option value="20">20% tight</option><option value="25">25%</option><option value="30" selected>30% standard</option><option value="40">40% relaxed</option></select></div>'
     + '</div>'
     + '<div class="field-row">'
-    + '<div class="field"><label>Max Trades Per Day</label><select id="af-maxtrades"><option value="1" selected>1 (recommended)</option><option value="2">2</option><option value="3">3</option><option value="0">Unlimited</option></select><div class="field-hint">Industry standard: 1 trade per automation per day</div></div>'
+    + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30%</option><option value="40">40%</option><option value="50" selected>50%</option><option value="60">60%</option></select></div>'
+    + '<div class="field"><label>Max Trades / Day</label><select id="af-maxtrades"><option value="1" selected>1 (recommended)</option><option value="2">2</option><option value="3">3</option><option value="0">Unlimited</option></select></div>'
     + '</div>'
-    + '<div class="section-title" style="margin-top:4px;font-size:11px">&#128197; Trading Schedule</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>Position Sizing</label><select id="af-sizing"><option value="fixed" selected>Fixed lots (safe)</option><option value="kelly">Kelly Criterion</option></select><div class="field-hint">Keep Fixed until you have 20+ trades.</div></div>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)">'
+    + '<div><div style="font-size:13px;font-weight:500">Shadow Mode</div><div style="font-size:11px;color:var(--text2)">Run paper simulation daily, store results</div></div>'
+    + '<label class="toggle"><input type="checkbox" id="af-shadow" checked><div class="toggle-track"></div></label>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)">'
+    + '<div><div style="font-size:13px;font-weight:500">Telegram Alerts</div><div style="font-size:11px;color:var(--text2)">Paper mode alerts labelled as simulation</div></div>'
+    + '<label class="toggle"><input type="checkbox" id="af-tg" checked><div class="toggle-track"></div></label>'
+    + '</div>'
+    + '</div>'
+    // ══ TAB 2: SCHEDULE ═══════════════════════════════════════════
+    + '<div id="ft-schedule" style="display:none">'
     + '<div class="field"><label>Days to Run <span style="font-size:10px;color:var(--text2);font-weight:400">— tap to toggle</span></label>'
-    + '<div class="day-picker" id="af-days" style="margin-top:6px">'
+    + '<div class="day-picker" id="af-days" style="margin-top:8px">'
     + '<button class="day-btn active" data-day="0" onclick="toggleDay(this)">Mon</button>'
     + '<button class="day-btn active" data-day="1" onclick="toggleDay(this)">Tue</button>'
     + '<button class="day-btn active" data-day="2" onclick="toggleDay(this)">Wed</button>'
     + '<button class="day-btn active" data-day="3" onclick="toggleDay(this)">Thu</button>'
     + '<button class="day-btn active" data-day="4" onclick="toggleDay(this)">Fri</button>'
     + '</div>'
-    + '<div class="field-hint">Deselect expiry day (Thu) if you want to avoid S9 entirely. Most traders run all 5 days.</div></div>'
-    + '<div class="field"><label>Skip Specific Dates <span style="font-size:10px;color:var(--text2);font-weight:400">— RBI, budget, holidays</span></label>'
-    + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">'
-    + '<input type="date" id="af-skip-date" style="flex:1">'
-    + '<button class="btn btn-ghost btn-sm" onclick="addSkipDate()">+ Add</button>'
+    + '<div class="field-hint">Deselect Thursday to skip expiry (S9). Most traders run all 5 days.</div></div>'
+    + '<div class="alert alert-info" style="margin-top:8px;font-size:11px">Skip specific dates (RBI days, holidays, budget) in the <strong>Guard Rails</strong> tab. Switch there to add them.</div>'
     + '</div>'
-    + '<div id="af-skip-list" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>'
-    + '<div class="field-hint">Add dates you know in advance — RBI policy days, budget, market holidays. Engine will skip automatically.</div></div>'
-    + '<div class="section-title" style="margin-top:4px;font-size:11px">Signal Guards (Risk Filters)</div>'
-    + '<div class="field-row">'
-    + '<div class="field"><label>Max Spot Drift % <span style="color:var(--amber);font-size:10px">Guard</span></label>'
-    + '<select id="af-driftmax">'
-    + '<option value="1.0">1.0% tight</option>'
-    + '<option value="1.5" selected>1.5% standard</option>'
-    + '<option value="2.0">2.0% relaxed</option>'
-    + '<option value="99">Off (no drift guard)</option>'
-    + '</select>'
-    + '<div class="field-hint">Suspend signals if spot moves more than this % from open. Today NIFTY moved 3.26% — would have skipped all trades.</div></div>'
-    + '<div class="field"><label>Max VIX <span style="color:var(--amber);font-size:10px">Guard</span></label>'
-    + '<select id="af-vixmax">'
-    + '<option value="15">15 conservative</option>'
-    + '<option value="17" selected>17 standard</option>'
-    + '<option value="20">20 relaxed</option>'
-    + '<option value="99">Off (no VIX guard)</option>'
-    + '</select>'
-    + '<div class="field-hint">Skip signals if India VIX is above this at open. Requires VIX data from broker.</div></div>'
+    // ══ TAB 3: GUARD RAILS ════════════════════════════════════════
+    + '<div id="ft-guards" style="display:none">'
+    // Live guard status (shown when editing a running automation)
+    + '<div id="guard-live-status" style="display:none;margin-bottom:12px"></div>'
+    + '<div style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.5">'
+    + 'Guard rails automatically block trading when market conditions are risky. '
+    + 'Configure all guards here. When a guard fires, the automation card shows exactly which guard blocked trading and why.'
     + '</div>'
-    + '<div class="field-row">'
-    + '<div class="field"><label>Skip Day — Gap % <span style="color:var(--amber);font-size:10px">Guard 5</span></label>'
-    + '<select id="af-gapskip">'
-    + '<option value="0" selected>Off</option>'
-    + '<option value="1.0">1.0% gap</option>'
-    + '<option value="1.5">1.5% gap</option>'
-    + '<option value="2.0">2.0% gap</option>'
-    + '</select>'
-    + '<div class="field-hint">Suspend SELL strategies if today\'s open gap ≥ this %. S10 (buy) still runs.</div></div>'
-    + '<div class="field"><label>Skip Day — Prev Move % <span style="color:var(--amber);font-size:10px">Guard 5</span></label>'
-    + '<select id="af-prevskip">'
-    + '<option value="0" selected>Off</option>'
-    + '<option value="1.5">1.5%</option>'
-    + '<option value="2.0">2.0%</option>'
-    + '<option value="3.0">3.0%</option>'
-    + '</select>'
-    + '<div class="field-hint">Suspend SELL strategies if yesterday moved ≥ this %. Use with gap filter or alone.</div></div>'
+    // VIX guard
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">📊</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">VIX Guard</div>'
+    + '<div class="guard-desc">Skip all signals if India VIX is above this level at market open. High VIX = volatile, unpredictable markets — best to stay out.</div>'
+    + '<select id="af-vixmax" style="margin-top:4px"><option value="15">15 — conservative</option><option value="17" selected>17 — standard</option><option value="20">20 — relaxed</option><option value="99">Off (no VIX guard)</option></select>'
+    + '</div></div>'
+    // Drift guard
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">↕️</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Drift Guard</div>'
+    + '<div class="guard-desc">Suspend signals if spot moves more than this % from open during the day. Protects against trending days where premium selling is dangerous.</div>'
+    + '<select id="af-driftmax" style="margin-top:4px"><option value="1.0">1.0% — tight</option><option value="1.5" selected>1.5% — standard</option><option value="2.0">2.0% — relaxed</option><option value="99">Off (no drift guard)</option></select>'
+    + '</div></div>'
+    // Gap skip guard
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">⚡</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Gap Day Guard</div>'
+    + '<div class="guard-desc">Suspend SELL strategies on days when market opens with a large gap. Gap days are unpredictable for premium sellers. S10 (buy) still runs.</div>'
+    + '<select id="af-gapskip" style="margin-top:4px"><option value="0" selected>Off</option><option value="1.0">1.0% gap</option><option value="1.5">1.5% gap</option><option value="2.0">2.0% gap</option></select>'
+    + '</div></div>'
+    // Prev move guard
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">📅</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Prev-Day Move Guard</div>'
+    + '<div class="guard-desc">Skip SELL strategies if yesterday\'s close-to-close move was large. Big moves often carry momentum into the next day, making selling risky.</div>'
+    + '<select id="af-prevskip" style="margin-top:4px"><option value="0" selected>Off</option><option value="1.5">1.5%</option><option value="2.0">2.0%</option><option value="3.0">3.0%</option></select>'
+    + '</div></div>'
+    // AI news gate
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">🤖</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">AI News Gate</div>'
+    + '<div class="guard-desc">Gemini AI reads morning news at 9:15. If market risk is above your threshold, all signals are suspended for the day. Requires Gemini API key in Profile.</div>'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'
+    + '<label class="toggle" style="flex-shrink:0"><input type="checkbox" id="af-ainews"><div class="toggle-track"></div></label>'
+    + '<span style="font-size:12px;color:var(--text2)">Enable AI News Gate</span>'
     + '</div>'
-    + '<div class="field-row">'
-    + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30% quick exit</option><option value="40">40%</option><option value="50" selected>50% standard</option><option value="60">60% hold longer</option></select></div>'
-    + '<div class="field"><label>Position Sizing <span style="color:var(--amber);font-size:10px">Beta</span></label><select id="af-sizing"><option value="fixed" selected>Fixed lots (safe)</option><option value="kelly">Kelly Criterion (auto-size)</option></select><div class="field-hint">Kelly uses your historical win rate to size positions. Keep Fixed until you have 20+ trades.</div></div>'
+    + '<div id="af-ainews-opts" style="margin-top:8px;display:none">'
+    + '<label style="font-size:12px;font-weight:500">Block when risk is:</label>'
+    + '<select id="af-aithreshold" style="margin-top:4px"><option value="high">High risk only (least blocking)</option><option value="medium" selected>Medium or higher</option><option value="any">Any flag (most protective)</option></select>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px">'
-    + '<div><div style="font-size:13px;font-weight:500">Shadow Mode</div><div style="font-size:11px;color:var(--text2)">Run paper simulation daily, store results</div></div>'
-    + '<label class="toggle"><input type="checkbox" id="af-shadow" checked><div class="toggle-track"></div></label>'
+    + '</div></div>'
+    // ── SL Tuning ──────────────────────────────────────────────
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:6px">Exit Tuning — Stop Loss Levels</div>'
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">📉</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">VWAP SL Buffer %</div>'
+    + '<div class="guard-desc">Layer 2a: exit if combined premium rises above VWAP × (1 + buffer). Lower = tighter exit. Higher = more room for noise before stopping out. Default 5%.</div>'
+    + '<select id="af-vwapbuf" style="margin-top:4px"><option value="2">2% — tight</option><option value="3">3%</option><option value="5" selected>5% — standard</option><option value="7">7%</option><option value="10">10% — relaxed</option></select>'
+    + '</div></div>'
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">📊</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">EMA75 SL Buffer %</div>'
+    + '<div class="guard-desc">After 75 candles, EMA75 replaces VWAP as the exit level. Buffer controls sensitivity. Keep at 1% — EMA75 is already a responsive indicator. Default 1%.</div>'
+    + '<select id="af-emabuf" style="margin-top:4px"><option value="0.5">0.5%</option><option value="1" selected>1% — standard</option><option value="2">2%</option><option value="3">3% — relaxed</option></select>'
+    + '</div></div>'
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:6px">Date Overrides</div>'
+    // Event calendar gate
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">🗓️</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Event Calendar Gate</div>'
+    + '<div class="guard-desc">Specific events (RBI policy, budget, earnings) can be marked as "suspend trading" in the Event Calendar. When that day arrives, all automations pause automatically.</div>'
+    + '<div style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="hideAutoForm();nav(\'events\')">Open Event Calendar →</button></div>'
+    + '</div></div>'
+    // Skip dates calendar
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">🚫</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Skip Dates <span style="font-size:10px;color:var(--text2);font-weight:400">— tap any date to block it</span></div>'
+    + '<div class="guard-desc">Mark specific dates to skip (shown in red). Engine auto-skips these days. Add RBI policy days, budget, Diwali muhurat, market holidays.</div>'
+    + '<div class="skip-cal-wrap" id="skip-calendar" style="margin-top:8px"></div>'
+    + '</div></div>'
+    + '<div class="alert" style="margin-top:12px;font-size:11px;background:rgba(99,102,241,.1);border-color:rgba(99,102,241,.3);color:var(--text2)">'
+    + '💡 When any guard blocks trading, the automation card shows exactly which guard fired and why — so you always know why a trade was skipped.'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:16px">'
-    + '<div><div style="font-size:13px;font-weight:500">Telegram Alerts</div><div style="font-size:11px;color:var(--text2)">Paper mode alerts labelled as simulation</div></div>'
-    + '<label class="toggle"><input type="checkbox" id="af-tg" checked><div class="toggle-track"></div></label>'
     + '</div>'
-    + '<div class="alert alert-warn" style="margin-bottom:12px"><svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Start in Paper mode. Review Results page after 1 week before going Live.</div>'
+    // ── Save buttons (always visible) ────────────────────────────
+    + '<div class="alert alert-warn" style="margin-top:16px;margin-bottom:12px"><svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Start in Paper mode first. Review Results after 1 week before going Live.</div>'
     + '<div class="btn-row">'
     + (_editAutoId
         ? '<button class="btn btn-primary" style="flex:1" onclick="saveAuto(\'paper\')">&#9998; Update</button>'
         : '<button class="btn btn-ghost" style="flex:1" onclick="saveAuto(\'paper\')">Save as Paper</button><button class="btn btn-danger" style="flex:1" onclick="saveAuto(\'live\')">Go Live</button>')
     + '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">Cancel</button>'
-    + '</div></div></div>';
+    + '</div>'
+    + '</div></div>';
   el.scrollIntoView({behavior:'smooth'});
+  // Calendar lives in Guard Rails tab — will render when user switches to it.
+  // Pre-init state so it's ready:
+  _calYear = new Date().getFullYear();
+  _calMonth = new Date().getMonth();
+  // Wire AI news gate toggle
+  var ainewsEl = document.getElementById('af-ainews');
+  if (ainewsEl) {
+    ainewsEl.addEventListener('change', function() {
+      var opts = document.getElementById('af-ainews-opts');
+      if (opts) opts.style.display = this.checked ? '' : 'none';
+    });
+  }
   // Pre-fill fields when editing
   if (auto) {
     var s = document.getElementById('af-sym'); if (s && auto.symbol) s.value = auto.symbol;
@@ -1848,6 +2075,25 @@ function showAutoForm(auto) {
     // Pre-fill skip dates
     _skipDates = (cfg.skip_dates||[]).slice();
     _renderSkipDates();
+    // Reset cal to today then re-render
+    _calYear = new Date().getFullYear();
+    _calMonth = new Date().getMonth();
+    _renderSkipCalendar();
+    // Pre-fill gap/prev skip
+    var gs = document.getElementById('af-gapskip'); if (gs && cfg.gap_skip_pct != null) gs.value = cfg.gap_skip_pct;
+    var ps = document.getElementById('af-prevskip'); if (ps && cfg.prev_day_skip_pct != null) ps.value = cfg.prev_day_skip_pct;
+    // Pre-fill AI news gate
+    var ainew = document.getElementById('af-ainews');
+    if (ainew && cfg.ai_news_gate != null) {
+      ainew.checked = !!cfg.ai_news_gate;
+      var opts = document.getElementById('af-ainews-opts');
+      if (opts) opts.style.display = cfg.ai_news_gate ? '' : 'none';
+    }
+    var ait = document.getElementById('af-aithreshold');
+    if (ait && cfg.ai_news_threshold) ait.value = cfg.ai_news_threshold;
+    // Pre-fill SL buffers
+    var vb = document.getElementById('af-vwapbuf'); if (vb && cfg.vwap_buffer_pct != null) vb.value = cfg.vwap_buffer_pct;
+    var eb = document.getElementById('af-emabuf');  if (eb && cfg.ema_buffer_pct  != null) eb.value = cfg.ema_buffer_pct;
   }
 }
 
@@ -1897,6 +2143,10 @@ async function saveAuto(mode) {
       position_sizing: (document.getElementById('af-sizing')||{}).value||'fixed',
       gap_skip_pct: parseFloat((document.getElementById('af-gapskip')||{}).value)||0,
       prev_day_skip_pct: parseFloat((document.getElementById('af-prevskip')||{}).value)||0,
+      ai_news_gate: !!(document.getElementById('af-ainews')||{}).checked,
+      ai_news_threshold: (document.getElementById('af-aithreshold')||{}).value||'medium',
+      vwap_buffer_pct: parseFloat((document.getElementById('af-vwapbuf')||{}).value)||5,
+      ema_buffer_pct: parseFloat((document.getElementById('af-emabuf')||{}).value)||1,
     }
   };
   try {
@@ -2322,10 +2572,12 @@ async function loadUnifiedTrades() {
                     + (sl2.candles > 0 ? '<span>'+sl2.candles+' candles monitored</span>' : '')
                     + '</div></div>'
                     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
-                    + '<div><span style="color:var(--text2)">Entry: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
-                    + '<div><span style="color:var(--text2)">Exit: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
+                    + '<div><span style="color:var(--text2)">Entry premium: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
+                    + '<div><span style="color:var(--text2)">Exit premium: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
+                    + (t.entry_spot ? '<div><span style="color:var(--text2)">Entry spot: </span>'+esc(String(t.entry_spot))+'</div>' : '<div></div>')
+                    + (t.exit_spot  ? '<div><span style="color:var(--text2)">Exit spot: </span>'+esc(String(t.exit_spot))+'</div>' : '<div></div>')
                     + '<div><span style="color:var(--text2)">Exit time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
-                    + (sl2.sl_type ? '<div><span style="color:var(--text2)">Layer: </span>'+esc(sl2.sl_type)+'</div>' : '')
+                    + (sl2.sl_type ? '<div><span style="color:var(--text2)">SL layer: </span>'+esc(sl2.sl_type)+'</div>' : '<div></div>')
                     + '</div>'
                     + (sl2.candles > 0
                       ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2);padding-top:4px">'
@@ -2345,7 +2597,12 @@ async function loadUnifiedTrades() {
             + '<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Charges</span><span style="color:var(--red)">-\u20b9'+(t.brokerage||0).toLocaleString('en-IN')+'</span></div>'
             + '<div style="display:flex;justify-content:space-between;font-weight:600;padding-top:4px;border-top:1px solid var(--border)">'
             + '<span>Net P&L</span><span style="font-family:var(--mono);color:'+(isOpen?'var(--text)':(t.net_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(t.net_pnl||0)+'</span>'
-            + '</div></div>'
+            + '</div>'
+            + (t.max_profit||t.max_loss ? '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:5px;padding-top:4px;border-top:1px dashed var(--border);font-size:10px;color:var(--text2)">'
+              + (t.max_profit ? '<span>Max win (expiry): <strong style="color:var(--green)">\u20b9'+Math.abs(t.max_profit).toLocaleString('en-IN')+'</strong></span>' : '')
+              + (t.max_loss   ? '<span>Max loss (defined): <strong style="color:var(--red)">\u20b9'+Math.abs(t.max_loss).toLocaleString('en-IN')+'</strong></span>' : '')
+              + '</div>' : '')
+            + '</div>'
 
             + '</div></div>'; // end detail + trade row
         });
@@ -2751,7 +3008,7 @@ async function renderProfile() {
 
       + '<div class="section-title" style="margin-top:12px">&#129302; AI Trading Assistant (Gemini)</div>'      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'      + '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.6">Connect your Google Gemini API key to enable AI morning assessments, smart news gates, strategy recommendations and trade insights. <a href="https://aistudio.google.com/apikey" target="_blank" style="color:rgba(99,102,241,.9)">Get free key at aistudio.google.com →</a> (no credit card needed for Flash model)</div>'      + '<div class="field"><label>Gemini API Key</label>'      + '<div style="display:flex;gap:8px">'      + '<input type="password" id="ai-key-input" class="ai-key-input" placeholder="AIza..." style="flex:1">'      + '<button class="btn btn-ghost btn-sm" onclick="toggleAiKeyVisibility()" id="ai-key-toggle">Show</button>'      + '</div>'      + (u.ai_key_set ? '<div style="font-size:10px;color:var(--green);margin-top:3px">✅ Key saved — leave blank to keep existing</div>' : '<div style="font-size:10px;color:var(--amber);margin-top:3px">⚠️ No key saved — AI features disabled</div>')      + '</div>'      + '<div class="field"><label>Model</label><select id="ai-model">'      + '<option value="gemini-2.5-flash"'+(u.ai_model==='gemini-2.5-flash'||!u.ai_model?' selected':'')+'>Gemini 2.5 Flash — free, recommended</option>'
       + '<option value="gemini-2.5-pro"'+(u.ai_model==='gemini-2.5-pro'?' selected':'')+'>Gemini 2.5 Pro — paid, highest quality</option>'
-      + '<option value="gemini-1.5-flash"'+(u.ai_model==='gemini-1.5-flash'?' selected':'')+'>Gemini 1.5 Flash — free, stable</option>'      + '<option value="gemini-1.5-pro"'+(u.ai_model==='gemini-1.5-pro'?' selected':'')+'>Gemini 1.5 Pro — paid, highest quality</option>'      + '</select><div class="field-hint">Flash model is free: 15 req/min, 1500/day — more than enough for AlgoDesk</div></div>'      + '<div class="section-title" style="font-size:11px;margin-top:8px;margin-bottom:6px">AI Feature Toggles</div>'      + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Morning assessment</div><div style="font-size:10px;color:var(--text2)">AI rates today\'s risk and recommends strategies at 9:15</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-trading"'+(u.ai_use_trading?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Post-trade insight</div><div style="font-size:10px;color:var(--text2)">One-line AI summary after each trade closes</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-analysis"'+(u.ai_use_analysis?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">&#128240; News &amp; Risk Gate</div><div style="font-size:10px;color:var(--text2)">Suspend trading if AI detects a high-risk event (RBI, Fed, geopolitical shock, VIX spike)</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-news-suspend" checked><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;gap:10px;padding-left:4px">'      + '<label style="font-size:11px;color:var(--text2);white-space:nowrap">Suspend when risk is:</label>'      + '<select id="ai-news-threshold" style="font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:3px 8px">'      + '<option value="high" selected>High only (conservative)</option>'      + '<option value="medium">Medium or above (strict)</option>'      + '<option value="any">Any flag (most cautious)</option>'      + '</select></div>'      + '</div>'      + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:11px;color:var(--text2);margin-bottom:12px">'      + '<strong style="color:var(--text)">How the News Gate works:</strong> Every morning at 9:15 the AI checks VIX, gap size, event calendar and any active market warnings. If it judges the day as high-risk (e.g. RBI decision, VIX spike, >2% gap after a crash) and you have this toggle ON, the engine suspends signals for the day with a log message. You can always override by toggling this off or manually starting the engine.</div>'      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'      + '<button class="btn btn-primary btn-sm" onclick="saveAiConfig()">Save AI Settings</button>'      + '<button class="btn btn-ghost btn-sm" onclick="testAiConnection()" id="ai-test-btn">Test Connection</button>'      + (u.ai_key_set ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeAiKey()">Remove Key</button>' : '')      + '</div>'      + '<div id="ai-test-result" style="margin-top:8px;font-size:11px"></div>'      + '</div></div>'      + '<div class="section-title" style="margin-top:12px">Change Password</div>'
+      + '<option value="gemini-1.5-flash"'+(u.ai_model==='gemini-1.5-flash'?' selected':'')+'>Gemini 1.5 Flash — free, stable</option>'      + '<option value="gemini-1.5-pro"'+(u.ai_model==='gemini-1.5-pro'?' selected':'')+'>Gemini 1.5 Pro — paid, highest quality</option>'      + '</select><div class="field-hint">Flash model is free: 15 req/min, 1500/day — more than enough for AlgoDesk</div></div>'      + '<div class="section-title" style="font-size:11px;margin-top:8px;margin-bottom:6px">AI Feature Toggles</div>'      + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Morning assessment</div><div style="font-size:10px;color:var(--text2)">AI rates today\'s risk and recommends strategies at 9:15</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-trading"'+(u.ai_use_trading?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '<div style="display:flex;align-items:center;justify-content:space-between">'      + '<div><div style="font-size:12px;font-weight:500">Post-trade insight</div><div style="font-size:10px;color:var(--text2)">One-line AI summary after each trade closes</div></div>'      + '<label class="toggle"><input type="checkbox" id="ai-use-analysis"'+(u.ai_use_analysis?' checked':'')+'><div class="toggle-track"></div></label></div>'      + '</div>'      + '<div class="alert alert-info" style="font-size:11px;margin-bottom:12px">&#128161; <strong>AI News Gate</strong> is per-automation. Open any automation \u2192 Guard Rails tab to enable it and set the risk threshold.</div>'      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'      + '<button class="btn btn-primary btn-sm" onclick="saveAiConfig()">Save AI Settings</button>'      + '<button class="btn btn-ghost btn-sm" onclick="testAiConnection()" id="ai-test-btn">Test Connection</button>'      + (u.ai_key_set ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="removeAiKey()">Remove Key</button>' : '')      + '</div>'      + '<div id="ai-test-result" style="margin-top:8px;font-size:11px"></div>'      + '</div></div>'      + '<div class="section-title" style="margin-top:12px">Change Password</div>'
       + '<div class="card"><div class="card-body">'
       + '<div class="field"><label>Current Password</label><input id="pw-old" type="password"></div>'
       + '<div class="field-row">'
@@ -3331,8 +3588,8 @@ function buildHelpPage() {
   + '<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">Example:</strong> Entry \u20b9600. Decays to \u20b9450 (25% down) \u2192 profit lock at \u20b9540. If market spikes back to \u20b9540 \u2192 exit with 10% profit locked. Lock never resets back once set.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--blue)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP SL (dynamic market exit, 5% buffer)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above VWAP \u00d7 1.05 (5% buffer) \u2192 exit. VWAP tracks combined premium from 9:15 AM. After 75 candles, EMA75 is used as a tighter level if it drops below VWAP.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP SL (dynamic exit \u2014 buffer configurable per automation)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above VWAP \u00d7 (1 + VWAP Buffer %) \u2192 exit. Default 5% buffer. VWAP tracks combined premium from 9:15 AM. After 75 candles, EMA75 replaces VWAP (buffer controlled separately by EMA75 Buffer %). Configure both in Guard Rails \u2192 Exit Tuning.</div>'
   + '<div style="font-size:11px;color:var(--amber);margin-top:4px">\u26a0\ufe0f VWAP SL is suppressed when a profit lock is active (prevents exiting at a loss when profit is already locked). Re-enables if premium rebounds 15%+ from its low.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)">'
@@ -3375,6 +3632,9 @@ function buildHelpPage() {
   + _helpField('Days to Run','Select which weekdays this automation is active. Deselect Thursday to skip expiry day if you do not want S9 firing.','Most traders run all 5 days. Deselect Monday if you find Monday gaps unreliable.')
   + _helpField('Skip Dates','Add specific dates to skip — RBI policy, budget, Diwali muhurat, market holidays. Engine skips automatically on those dates.','Add all RBI and US Fed dates upfront. Use Event Calendar page to pre-load 2026 dates automatically.')
   + _helpField('Automation Name','Give each automation a meaningful name so you can tell them apart. E.g. NIFTY Morning S1, BankNifty Expiry, Gap Fade Only.','Name by strategy + symbol + mode. Makes the Live Monitor and Results page much easier to read.')
+  + _helpField('VWAP SL Buffer %','Layer 2a stop loss: exit if combined premium rises above VWAP × (1 + buffer). At 5% buffer, VWAP = ₹200 → exit triggers above ₹210. Found in Guard Rails → Exit Tuning.','5% standard. Lower (2-3%) = tighter exits. Higher (7-10%) = gives more room but more risk.')
+  + _helpField('EMA75 SL Buffer %','After 75 candles EMA75 replaces VWAP as the exit level. Same logic: exit if combined > EMA75 × (1 + buffer). Found in Guard Rails → Exit Tuning.','Keep at 1%. EMA75 is already more responsive than VWAP — adding buffer on top is usually not needed.')
+  + _helpField('AI News Gate','Per-automation toggle. When ON, the engine reads the morning AI assessment at 9:15. If AI flags the day as risky above your threshold, signals are suspended for that automation. Configure in Guard Rails tab.','Set to Medium or Higher for balanced protection. Use High only if you prefer the AI to rarely block.')
   + '</div></div></div>'
 
   + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">&#128197; Event Calendar — auto-suspend on event days</div></div><div class="card-body">'
@@ -3406,7 +3666,8 @@ function buildHelpPage() {
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--amber)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Drift Guard</div><div style="font-size:11px;color:var(--text2)">If NIFTY spot drifts more than Max Spot Drift % from the morning open, all signals suspend for the day. Catches crash days (e.g. -3.26%) where IV expansion ruins theta decay trades.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--blue)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Gap Skip Guard</div><div style="font-size:11px;color:var(--text2)">If today gaps more than Gap Skip % from yesterday — all SELLING strategies suspend. S10 (buy) still runs. Protects against selling into gap-inflated IV.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--purple)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">Event Calendar Gate</div><div style="font-size:11px;color:var(--text2)">Dates marked with suspend=ON in Event Calendar block all trading. Checked at 9:15 AM each day.</div></div>'
-  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid rgba(99,102,241,.8)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">AI News Gate</div><div style="font-size:11px;color:var(--text2)">AI blocks trading when risk is too high. Configured in Profile. Shows reason: "Skip today — RBI policy day, VIX elevated".</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid rgba(99,102,241,.8)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">AI News Gate</div><div style="font-size:11px;color:var(--text2)">Per-automation. Configured in Guard Rails tab of each automation. AI reads morning context at 9:15 — if risk is above your threshold, signals suspend for that automation. Requires Gemini API key in Profile.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)"><div style="font-size:11px;font-weight:600;margin-bottom:2px">VWAP SL Buffer / EMA75 SL Buffer</div><div style="font-size:11px;color:var(--text2)">Not a blocking guard — these tune when Layer 2 stop loss fires. VWAP buffer (default 5%) controls how far above VWAP the combined must rise before stopping out. EMA75 buffer (default 1%) does the same after 75 candles. Both in Guard Rails → Exit Tuning.</div></div>'
   + '</div></div></div>'
 
   // Hedge width note
@@ -3897,13 +4158,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 
 
-</script>
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    navigator.serviceWorker.register('/sw.js').catch(function(){});
-  });
-}
 </script>
 </body>
 </html>

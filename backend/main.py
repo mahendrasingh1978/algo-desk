@@ -379,6 +379,15 @@ def _user_cache(user_id: str) -> dict:
         "message": "Connect your broker in My Brokers to see live data.",
     })
 
+def _market_open_now() -> bool:
+    """Return True if Indian market is currently open (9:15–15:30, Mon–Fri IST)."""
+    import pytz
+    from datetime import time as dtime
+    ist = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(ist)
+    return (now.weekday() < 5 and
+            dtime(9, 15) <= now.time() <= dtime(15, 30))
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("algodesk")
@@ -1127,7 +1136,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         "broker_mode": bc.mode if bc else None,
         "ai_enabled": ai_on,
         "ai_model": ai_cfg.get("model", _GEMINI_MODEL),
-        "use_for_trading": ai_cfg.get("use_for_trading", True),
+        "ai_use_trading": ai_cfg.get("use_for_trading", True),
         "ai_use_analysis": ai_cfg.get("use_for_analysis", True),
         "ai_key_set": bool(ai_cfg.get("api_key_enc", "")),
         "is_verified": user.is_verified,
@@ -1362,17 +1371,23 @@ def market_status(
         "BSE:SENSEX-INDEX":     "SENSEX",
     }.get(symbol, symbol)
 
+    # Real-time market open check — overrides stale cache status
+    mkt_open = _market_open_now()
+
     # Check per-symbol cache first (multi-symbol support)
     sym_cache = (user_symbol_cache.get(user.id) or {}).get(symbol)
     if sym_cache:
+        actual_status = "live" if mkt_open else "closed"
+        msg = (f"Live · {sym_cache.get('updated', '')} IST" if mkt_open
+               else "Market closed · Opens 9:15 AM IST")
         return {
             "spot":    sym_cache.get("spot", 0),
             "atm":     sym_cache.get("atm", 0),
             "symbol":  symbol,
             "sym_short": sym_short,
             "chain":   sym_cache.get("chain", {}),
-            "status":  sym_cache.get("status", "live"),
-            "message": f"Live · {sym_cache.get('updated', '')} IST",
+            "status":  actual_status,
+            "message": msg,
             "updated": sym_cache.get("updated"),
         }
 
@@ -1380,14 +1395,19 @@ def market_status(
     default_sym = "NSE:NIFTY50-INDEX"
     if symbol == default_sym:
         cache = _user_cache(user.id)
+        # Override cached status with real-time check
+        cached_status = cache.get("status", "waiting")
+        if cached_status == "live" and not mkt_open:
+            cached_status = "closed"
         return {
             "spot":    cache.get("spot", 0),
             "atm":     cache.get("atm", 0),
             "symbol":  symbol,
             "sym_short": sym_short,
             "chain":   cache.get("chain", {}),
-            "status":  cache.get("status", "waiting"),
-            "message": cache.get("message", "Connect your broker to see live data."),
+            "status":  cached_status,
+            "message": (cache.get("message", "Connect your broker to see live data.")
+                        if mkt_open else "Market closed · Opens 9:15 AM IST"),
             "updated": cache.get("updated"),
         }
     # For other symbols, return empty — no automation uses this symbol yet
@@ -1953,6 +1973,8 @@ def get_unified_trades(
             # Exit detail
             "exit_combined":  round(t.exit_combined or 0, 1) if t.exit_combined else None,
             "exit_time":      (_to_ist(t.exit_time)) if t.exit_time else None,
+            "exit_spot":      round(t.exit_spot, 0) if t.exit_spot else None,
+            "ai_insight":     t.ai_insight or "",
             "exit_reason":    t.exit_reason,
             "exit_parsed":    reason_parsed,
             "decay_pct":      decay_pct,
@@ -3284,13 +3306,18 @@ async def dashboard_summary(user: User = Depends(get_current_user),
     month_paper_pnl = sum(t.net_pnl or 0 for t in month_shadow)
 
     cache = _user_cache(user.id)
+    mkt_open = _market_open_now()
+    mkt_status = cache.get("status", "waiting")
+    if mkt_status == "live" and not mkt_open:
+        mkt_status = "closed"
 
     return {
         "spot":             cache.get("spot", 0),
         "atm":              cache.get("atm", 0),
-        "market_status":    cache.get("status", "waiting"),
+        "market_status":    mkt_status,
         "market_updated":   cache.get("updated"),
-        "market_message":   cache.get("message", ""),
+        "market_message":   ("Market closed · Opens 9:15 AM IST" if not mkt_open
+                             else cache.get("message", "")),
         "today_live_pnl":   round(today_live_pnl, 0),
         "today_paper_pnl":  round(today_paper_pnl, 0),
         "today_live_trades": len([t for t in today_trades if not t.is_open]),
@@ -3922,8 +3949,9 @@ async def _run_engine(user_id: str, auto: Automation,
                         if assess:
                             state.ai_avoid = assess.avoid_strategies or []
                             risk_lvl = assess.risk_level or "medium"
-                            news_suspend = ai_cfg.get("news_suspend_enabled", True)
-                            news_threshold = ai_cfg.get("news_risk_threshold", "high")
+                            # Per-automation setting takes priority; fall back to global
+                            news_suspend = config.get("ai_news_gate", ai_cfg.get("news_suspend_enabled", True))
+                            news_threshold = config.get("ai_news_threshold", ai_cfg.get("news_risk_threshold", "high"))
                             # Determine if news/risk gate should block trading
                             risk_blocks = {
                                 "any":    True,
