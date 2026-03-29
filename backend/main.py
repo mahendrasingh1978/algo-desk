@@ -5,12 +5,13 @@ All endpoints are real. State shared across pages.
 Token refreshed on every call — matches N8N approach.
 """
 
-import os, secrets, hashlib, logging, asyncio
+import os, secrets, hashlib, logging, asyncio, json
+import pytz
 from datetime import datetime, timedelta
 from typing import Optional
 
 import bcrypt
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,12 +19,15 @@ from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker, Session
 
-from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, TradingEvent, ClaudeAssessment, run_migrations
+from models import Base, User, BrokerConnection, BrokerDefinition, Automation, Trade, ShadowTrade, ResetToken, InviteLink, TradingEvent, ClaudeAssessment, ServerSettings, run_migrations
 from fyers import FyersConnection, encrypt, decrypt
 from engine import EngineState, StrikeState, check_all_strategies, check_sl, nearest_strike, get_position_size
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 # Per-user shadow engine states (paper simulation)
 shadow_engines: dict = {}  # user_id -> {auto_id -> EngineState}
@@ -171,15 +175,16 @@ HEDGE_MARGIN_PCT = {
 # Strategy-specific margin config
 # Each strategy has: hedge_width, structure, typical_iv_pct, premium_pct_of_spot
 STRATEGY_MARGIN_CONFIG = {
-    "S1": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.014, "label": "ORB Breakdown"},
-    "S7": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.014, "label": "All-Strike Fly"},
-    "S8": {"hedge": 20, "structure": "Iron Condor (±1000pt)",    "premium_pct": 0.010, "label": "Gap Fade"},
-    "S2": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.013, "label": "VWAP Squeeze"},
-    "S3": {"hedge": 20, "structure": "Iron Fly (±1000pt)",       "premium_pct": 0.012, "label": "Breakout Rev."},
+    # hedge widths match engine auto_hedges — used for accurate SPAN margin estimates
+    "S1": {"hedge":  2, "structure": "Iron Fly (±100pt)",        "premium_pct": 0.014, "label": "ORB Breakdown"},
+    "S2": {"hedge":  2, "structure": "Iron Fly (±100pt)",        "premium_pct": 0.013, "label": "VWAP Squeeze"},
+    "S3": {"hedge":  2, "structure": "Iron Fly (±100pt)",        "premium_pct": 0.012, "label": "Breakout Rev."},
     "S4": {"hedge": 20, "structure": "Iron Condor (±1000pt)",    "premium_pct": 0.009, "label": "Iron Condor"},
-    "S6": {"hedge": 20, "structure": "Wide Condor (±1000pt)",    "premium_pct": 0.011, "label": "Theta Strangle"},
-    "S9": {"hedge":  3, "structure": "Tight Iron Fly (±150pt)",  "premium_pct": 0.008, "label": "Expiry Crush"},
-    "S5": {"hedge": 20, "structure": "Ratio Spread (±1000pt)",   "premium_pct": 0.018, "label": "Ratio Spread"},
+    "S5": {"hedge":  2, "structure": "Ratio Spread (±100pt)",    "premium_pct": 0.018, "label": "Ratio Spread"},
+    "S6": {"hedge":  4, "structure": "Wide Condor (±200pt)",     "premium_pct": 0.011, "label": "Theta Strangle"},
+    "S7": {"hedge":  2, "structure": "Iron Fly (±100pt)",        "premium_pct": 0.014, "label": "All-Strike Fly"},
+    "S8": {"hedge":  3, "structure": "Iron Condor (±150pt)",     "premium_pct": 0.010, "label": "Gap Fade"},
+    "S9": {"hedge":  1, "structure": "Tight Iron Fly (±50pt)",   "premium_pct": 0.008, "label": "Expiry Crush"},
 }
 
 def estimate_margin(symbol: str, lots: int, lot_size: int,
@@ -221,7 +226,10 @@ def estimate_margin(symbol: str, lots: int, lot_size: int,
     # ATM premium (sell legs): typically 0.6-0.9% of spot per leg
     atm_premium_per_leg  = spot_price * (premium_pct / 2)
     # OTM hedge premium: typically 20-35% of ATM premium per leg
-    hedge_pct = 0.28 if hedge_width <= 2 else 0.22 if hedge_width == 3 else 0.18
+    # OTM hedge premium as a fraction of ATM premium per leg:
+    # ±1/2 tight fly: 28% of ATM  ±3 condor: 22%  ±4-5: 18%
+    # ±10+ very OTM (e.g. ±1000pt): ~3% — real premium nearly ₹0
+    hedge_pct = 0.28 if hedge_width <= 2 else 0.22 if hedge_width == 3 else 0.18 if hedge_width <= 5 else 0.03
     hedge_premium_per_leg = atm_premium_per_leg * hedge_pct
 
     # Total premium collected (net)
@@ -332,21 +340,22 @@ PLAN_CONFIG = {
         "label":          "Free",
         "description":    "Paper trading · All 10 strategies simulated · No live orders",
     },
-    "STARTER": {
-        "live_trading":   True,
-        "strategies":     ["S1","S2","S3","S8","S10"],
-        "max_automations": 2,
-        "shadow_mode":    True,
-        "label":          "Starter",
-        "description":    "Live trading · 5 core strategies · 2 automations",
-    },
     "PRO": {
         "live_trading":   True,
         "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9","S10"],
         "max_automations": 10,
         "shadow_mode":    True,
         "label":          "Pro",
-        "description":    "Live trading · All 9 strategies · 10 automations",
+        "description":    "Live trading · All 10 strategies · 10 automations · ₹5,000/mo",
+    },
+    # Legacy alias — existing STARTER users get full PRO access
+    "STARTER": {
+        "live_trading":   True,
+        "strategies":     ["S1","S2","S3","S4","S5","S6","S7","S8","S9","S10"],
+        "max_automations": 10,
+        "shadow_mode":    True,
+        "label":          "Pro",
+        "description":    "Live trading · All 10 strategies · 10 automations · ₹5,000/mo",
     },
 }
 
@@ -371,6 +380,93 @@ user_market_cache: dict = {}
 # user_id -> {symbol -> {"spot":float,"atm":int,"chain":dict,"updated":str,"status":str}}
 user_symbol_cache: dict = {}
 
+# Per-user funds cache — persists last successful balance fetch so it can be shown outside hours
+# user_id -> {"available_balance":float, "funds":dict, "matched_key":str, "cached_at":str, "mode":str}
+_funds_cache: dict = {}
+
+# ── Email (SMTP) ─────────────────────────────────────────────
+
+def _resolve_domain(email_cfg: dict, request: Request = None) -> str:
+    """Priority: email config app_domain → request Host header → APP_DOMAIN env → fallback IP."""
+    if email_cfg.get("app_domain"):
+        return email_cfg["app_domain"].strip()
+    if request:
+        host = request.headers.get("host", "").split(":")[0]
+        if host and host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+            return host
+    return os.environ.get("APP_DOMAIN", "35.87.77.90")
+
+def _get_email_config(db) -> dict:
+    """Fetch email config from server_settings. Returns {} if not configured."""
+    row = db.query(ServerSettings).filter(ServerSettings.key == "email_config").first()
+    if not row or not row.value:
+        return {}
+    return row.value
+
+def _send_email(cfg: dict, to_email: str, subject: str, html_body: str) -> tuple[bool, str]:
+    """
+    Send an email using stored SMTP config.
+    Returns (success: bool, error_message: str).
+    """
+    if not cfg.get("enabled"):
+        return False, "Email not configured"
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"{cfg.get('from_name','AlgoDesk')} <{cfg.get('from_email',cfg.get('smtp_user',''))}>"
+        msg["To"]      = to_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        host = cfg.get("smtp_host", "smtp.gmail.com")
+        port = int(cfg.get("smtp_port", 587))
+        user = cfg.get("smtp_user", "")
+        pwd  = decrypt("_server", cfg["smtp_password_enc"]) if cfg.get("smtp_password_enc") else cfg.get("smtp_password", "")
+
+        from_addr = cfg.get("from_email", user)
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(user, pwd)
+            server.sendmail(from_addr, [to_email], msg.as_string())
+        logger.info(f"Email sent to {to_email} | subject: {subject}")
+        return True, ""
+    except Exception as e:
+        logger.error(f"Email send failed to {to_email}: {e}")
+        return False, str(e)
+
+def _email_welcome(cfg: dict, to_email: str, name: str, temp_password: str, login_url: str) -> tuple:
+    """Send welcome email with temp password."""
+    subject = "Welcome to AlgoDesk — Your account is ready"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+      <h2 style="color:#4f8ef7">Welcome to AlgoDesk, {name}!</h2>
+      <p>Your account has been created. Use the credentials below to log in:</p>
+      <div style="background:#f4f4f4;border-radius:8px;padding:16px;margin:16px 0">
+        <div><strong>Email:</strong> {to_email}</div>
+        <div style="margin-top:8px"><strong>Temporary Password:</strong> <code style="background:#e0e0e0;padding:2px 6px;border-radius:4px">{temp_password}</code></div>
+      </div>
+      <p style="color:#e55">You will be asked to set a new password when you first log in.</p>
+      <a href="{login_url}" style="display:inline-block;background:#4f8ef7;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;margin-top:8px">Log in to AlgoDesk →</a>
+      <p style="margin-top:24px;font-size:12px;color:#999">If you did not expect this email, you can ignore it.</p>
+    </div>
+    """
+    return _send_email(cfg, to_email, subject, html)
+
+def _email_reset_link(cfg: dict, to_email: str, name: str, reset_url: str):
+    """Send password reset link email."""
+    subject = "AlgoDesk — Reset your password"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+      <h2 style="color:#4f8ef7">Reset your AlgoDesk password</h2>
+      <p>Hi {name}, we received a request to reset your password.</p>
+      <a href="{reset_url}" style="display:inline-block;background:#4f8ef7;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;margin:16px 0">Reset Password →</a>
+      <p style="font-size:12px;color:#999">This link expires in 24 hours. If you did not request this, you can ignore it.</p>
+      <p style="font-size:11px;color:#bbb">Link: {reset_url}</p>
+    </div>
+    """
+    return _send_email(cfg, to_email, subject, html)
+
+
 def _user_cache(user_id: str) -> dict:
     """Get a user's market cache, or a default disconnected state."""
     return user_market_cache.get(user_id, {
@@ -387,6 +483,28 @@ def _market_open_now() -> bool:
     now = datetime.now(ist)
     return (now.weekday() < 5 and
             dtime(9, 15) <= now.time() <= dtime(15, 30))
+
+def _next_market_open_msg() -> str:
+    """Return human-readable next market opening time, accounting for weekends."""
+    import pytz
+    from datetime import time as dtime, timedelta
+    ist  = pytz.timezone("Asia/Kolkata")
+    now  = datetime.now(ist)
+    wd   = now.weekday()   # 0=Mon … 6=Sun
+    t    = now.time()
+    open_t = dtime(9, 15)
+
+    if wd < 5 and t < open_t:
+        return "Opens today at 9:15 AM IST"
+    elif wd < 4 and t >= open_t:               # Mon–Thu after close
+        return "Opens tomorrow at 9:15 AM IST"
+    else:                                       # Fri after close, Sat, Sun
+        # Find next Monday
+        days_ahead = (7 - wd) % 7
+        if days_ahead == 0: days_ahead = 7      # already Mon means next Mon
+        next_day = (now + timedelta(days=days_ahead))
+        day_name = next_day.strftime("%A")      # e.g. "Monday"
+        return f"Opens {day_name} 9:15 AM IST"
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -478,7 +596,7 @@ ALGO   = "HS256"
 def make_token(email, role):
     return jwt.encode(
         {"sub": email, "role": role,
-         "exp": datetime.utcnow() + timedelta(hours=12)},
+         "exp": datetime.utcnow() + timedelta(hours=24)},
         SECRET, algorithm=ALGO)
 
 def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer),
@@ -551,9 +669,12 @@ async def _run_claude_assessment(user_id: str, db_session) -> dict:
     """
     import pytz
     ist = pytz.timezone("Asia/Kolkata")
-    today = datetime.now(ist).strftime("%Y-%m-%d")
-    dow   = datetime.now(ist).strftime("%A")  # Monday, Tuesday...
-    is_thursday = datetime.now(ist).weekday() == 3
+    _now  = datetime.now(ist)
+    today = _now.strftime("%Y-%m-%d")
+    dow   = _now.strftime("%A")  # Monday, Tuesday...
+    # NIFTY expiry is Tuesday (weekday 1), SENSEX is Thursday (weekday 3)
+    is_expiry  = _now.weekday() in (1, 3)
+    is_weekend = _now.weekday() >= 5  # Saturday=5, Sunday=6
 
     # Gather context
     cache  = _user_cache(user_id)
@@ -588,6 +709,32 @@ async def _run_claude_assessment(user_id: str, db_session) -> dict:
         for s,v in strat_stats.items() if v["n"] >= 3
     ) or "insufficient data"
 
+    # ── Weekend short-circuit — give weekly recap, not a trading recommendation ──
+    if is_weekend:
+        week_pnl = sum(t.net_pnl or 0 for t in recent_trades
+                       if t.trade_date >= (_now - timedelta(days=7)).strftime("%Y-%m-%d"))
+        week_trades = sum(1 for t in recent_trades
+                          if t.trade_date >= (_now - timedelta(days=7)).strftime("%Y-%m-%d"))
+        next_session = "Monday" if _now.weekday() == 6 else "Monday"
+        return {
+            "trade_today":             False,
+            "confidence":              "weekend",
+            "risk_level":              "low",
+            "recommended_strategies":  [],
+            "avoid_strategies":        [],
+            "suggested_hedge":         2,
+            "vix_assessment":          "Markets closed — VIX not relevant until Monday open.",
+            "gap_assessment":          f"Last 7 days: {week_trades} trades, ₹{week_pnl:+.0f} net P&L.",
+            "reason":                  (
+                f"Weekend — market is closed. "
+                f"This week: {week_trades} paper trades with ₹{week_pnl:+.0f} net. "
+                f"Win rate last 30 days: {win_rate}%. "
+                f"Next session: {next_session}."
+            ),
+            "event_warning":           "",
+            "weekend":                 True,
+        }
+
     # Check event calendar
     events_today = db_session.query(TradingEvent).filter(
         TradingEvent.user_id == user_id,
@@ -596,15 +743,19 @@ async def _run_claude_assessment(user_id: str, db_session) -> dict:
     ).all()
     event_str = ", ".join(e.event_name for e in events_today)
 
-    prompt = f"""You are an expert NIFTY 50 options trading risk advisor for an Indian retail algo trader.
+    prompt = f"""You are an expert Indian options trading risk advisor for an algo trader.
 Respond ONLY with valid JSON — no markdown, no explanation outside the JSON.
+IMPORTANT: Use ONLY the date and market data provided below. Do NOT guess or invent dates.
 
-MARKET DATA TODAY ({dow} {today}):
+TODAY IS: {dow}, {today}
+TRADING INSTRUMENT: NIFTY 50 options (NSE)
+
+MARKET DATA ({dow} {today}):
 - India VIX: {vix if vix else 'unknown'}
 - NIFTY spot: {spot if spot else 'unknown'}
 - Previous close: {prev_close if prev_close else 'unknown'}
 - Gap from prev close: {gap_pct:.2f}%
-- Day of week: {dow}{' (EXPIRY DAY)' if is_thursday else ''}
+- Day of week: {dow}{' (EXPIRY DAY — NIFTY/SENSEX weekly expiry)' if is_expiry else ''}
 - Events today: {event_str if event_str else 'None'}
 
 USER PERFORMANCE (last 30 days):
@@ -614,7 +765,7 @@ USER PERFORMANCE (last 30 days):
 
 AVAILABLE STRATEGIES: S1 (ORB Breakdown), S2 (VWAP Squeeze), S3 (Breakout Reversal),
 S4 (Iron Condor range-bound), S6 (Theta Strangle high IV), S7 (All-Strike Butterfly),
-S8 (Gap Fade), S9 (Expiry Day Theta - Thursdays only), S5 (Ratio Spread advanced)
+S8 (Gap Fade), S9 (Expiry Day Theta Crush - Tue/Thu expiry only), S5 (Ratio Spread advanced)
 
 Respond with this exact JSON structure:
 {{
@@ -692,19 +843,19 @@ async def _analyse_closed_trade(trade, user_ai_config: dict) -> str:
 
 
 def _to_ist(dt) -> str:
-    """Format datetime as HH:MM IST.
+    """Format datetime as ISO string with IST time for frontend date math.
     New records (post Jan 2026 fix) are stored as IST-naive.
     Old records were stored as UTC-naive. Heuristic: if the hour is
-    < 3 it is almost certainly UTC (market opens 9:15 IST = 3:45 UTC).
+    < 4 it is almost certainly UTC (market opens 9:15 IST = 3:45 UTC).
     In that case add 5h30m offset to convert to IST.
+    Returns full ISO string (YYYY-MM-DDTHH:MM:SS) so new Date() parses correctly.
     """
     if dt is None: return None
     h = dt.hour
-    # If hour < 4 it is very likely UTC — add IST offset (5h30m)
     if h < 4:
         from datetime import timedelta
         dt = dt + timedelta(hours=5, minutes=30)
-    return dt.strftime("%H:%M IST")
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 @app.on_event("startup")
 async def startup():
@@ -768,11 +919,25 @@ async def _market_data_service():
                                     bc_tok.refresh_token_enc = refresh_result["refresh_token_enc"]
                                 bc_tok.last_token_refresh = datetime.utcnow()
                                 db_tok.commit()
-                            # Update cache status to closed
+                            # Fetch last-known spot outside market hours so
+                            # dashboard shows price on login (not "—")
+                            _closed_spot = user_market_cache.get(user_tok.id, {}).get("spot", 0)
+                            if not _closed_spot:
+                                try:
+                                    _sq = await conn_tok.get_quotes(["NSE:NIFTY50-INDEX"])
+                                    if _sq.get("ok"):
+                                        _sq_d = _sq["quotes"].get("NSE:NIFTY50-INDEX", {})
+                                        _closed_spot = _sq_d.get("ltp", 0)
+                                        _closed_atm  = round(_closed_spot / 50) * 50 if _closed_spot else 0
+                                except Exception:
+                                    pass
+                            # Update cache status to closed (preserve vix/prev_close)
                             user_market_cache[user_tok.id] = {
                                 **user_market_cache.get(user_tok.id, {}),
+                                "spot":    _closed_spot or user_market_cache.get(user_tok.id, {}).get("spot", 0),
+                                "atm":     (round(_closed_spot/50)*50) if _closed_spot else user_market_cache.get(user_tok.id, {}).get("atm", 0),
                                 "status":  "closed",
-                                "message": "Market closed · Token refreshed · Opens 9:15 AM IST",
+                                "message": f"Market closed · {_next_market_open_msg()}",
                             }
                         except Exception as tok_e:
                             log.debug(f"Token refresh (closed): {user_tok.email}: {tok_e}")
@@ -825,7 +990,7 @@ async def _market_data_service():
 
                     # Fetch NIFTY first (primary cache)
                     result = await conn.get_spot_and_chain(
-                        "NSE:NIFTY50-INDEX", strike_count=7)
+                        "NSE:NIFTY50-INDEX", strike_count=25)
 
                     if result.get("ok"):
                         # Save refreshed tokens back to this user's DB row
@@ -838,14 +1003,21 @@ async def _market_data_service():
                             bc.last_token_refresh = datetime.utcnow()
 
                         # Update this user's personal cache (primary = NIFTY)
-                        ts = datetime.now(ist).strftime("%H:%M:%S")
+                        # Preserve daily market data (VIX, prev_close) fetched once at 9:15
+                        ts  = datetime.now(ist).strftime("%H:%M:%S")
+                        _prev_cache = user_market_cache.get(user.id, {})
                         user_market_cache[user.id] = {
-                            "spot":    result["spot"],
-                            "atm":     result["atm"],
-                            "chain":   result["chain"],
-                            "updated": ts,
-                            "status":  "live",
-                            "message": f"Live · {ts} IST",
+                            "spot":             result["spot"],
+                            "atm":              result["atm"],
+                            "chain":            result["chain"],
+                            "updated":          ts,
+                            "status":           "live",
+                            "message":          f"Live · {ts} IST",
+                            # Daily fields — preserved across ticks, set once at 9:15
+                            "vix":              _prev_cache.get("vix", 0),
+                            "prev_close":       _prev_cache.get("prev_close", 0),
+                            "prev_day_move_pct": _prev_cache.get("prev_day_move_pct", 0),
+                            "vix_date":         _prev_cache.get("vix_date", ""),
                         }
                         # Store in symbol cache too
                         if user.id not in user_symbol_cache:
@@ -854,6 +1026,47 @@ async def _market_data_service():
                             "spot": result["spot"], "atm": result["atm"],
                             "chain": result["chain"], "updated": ts, "status": "live",
                         }
+
+                        # ── Once-per-day: fetch India VIX + prev close ──
+                        # These feed Guard 2 (VIX filter), Guard 5 (gap skip),
+                        # S8 (gap fade), S10 (gap directional), AI prompt context.
+                        # No time gate — retries on any market-hours tick until fetched.
+                        # This ensures server restarts during the day still populate VIX.
+                        _today_mds = datetime.now(ist).strftime("%Y-%m-%d")
+                        if user_market_cache.get(user.id, {}).get("vix_date") != _today_mds:
+                            try:
+                                # India VIX live value
+                                _vix_res = await conn.get_quotes(["NSE:INDIAVIX-INDEX"])
+                                if _vix_res.get("ok"):
+                                    _vix_val = _vix_res["quotes"].get("NSE:INDIAVIX-INDEX", {}).get("ltp", 0)
+                                    if _vix_val:
+                                        user_market_cache[user.id]["vix"]      = round(_vix_val, 2)
+                                        user_market_cache[user.id]["vix_date"] = _today_mds
+                                        log.info(f"[{user.email}] India VIX: {_vix_val:.1f}")
+                                    else:
+                                        log.warning(f"[{user.email}] VIX returned 0 — Guard 2 inactive today")
+                                else:
+                                    log.warning(f"[{user.email}] VIX fetch failed: {_vix_res.get('message')}")
+
+                                # Previous day close via quotes API (prev_close_price field)
+                                # Avoids broken daily-history endpoint (Fyers 422 on some tokens)
+                                _nq = await conn.get_quotes(["NSE:NIFTY50-INDEX"])
+                                if _nq.get("ok"):
+                                    _nq_data = _nq["quotes"].get("NSE:NIFTY50-INDEX", {})
+                                    _prev_c   = round(_nq_data.get("prev_close", 0), 0)
+                                    _today_o  = round(_nq_data.get("open",       0), 0)
+                                    if _prev_c > 0:
+                                        # gap_pct = how much today gapped from yesterday's close
+                                        _pmove = round(abs(_today_o - _prev_c) / _prev_c * 100, 2) if _today_o > 0 else 0
+                                        user_market_cache[user.id]["prev_close"]        = _prev_c
+                                        user_market_cache[user.id]["prev_day_move_pct"] = _pmove
+                                        log.info(f"[{user.email}] Prev close: {_prev_c:.0f} | Today gap: {_pmove:.1f}%")
+                                    else:
+                                        log.warning(f"[{user.email}] Prev close returned 0 — S8/S10/Gap guards inactive")
+                                else:
+                                    log.warning(f"[{user.email}] Prev close fetch failed — S8/S10/Gap guards inactive")
+                            except Exception as _e_vix:
+                                log.warning(f"[{user.email}] VIX/prev_close fetch error: {_e_vix}")
 
                     # Fetch additional symbols (BankNifty, FinNifty etc.)
                     for sym in needed_symbols:
@@ -903,8 +1116,11 @@ async def _market_data_service():
                     else:
                         # Token or data error for this user
                         msg = result.get("message","Data fetch failed")
+                        # Preserve ALL existing daily data (vix, prev_close, atm, etc.)
+                        # — only overwrite live-tick fields so VIX/prev_close survive
+                        _err_prev = user_market_cache.get(user.id, {})
                         user_market_cache[user.id] = {
-                            "spot": user_market_cache.get(user.id,{}).get("spot",0),
+                            **_err_prev,
                             "status": "error",
                             "message": msg,
                         }
@@ -1029,7 +1245,8 @@ def login(req: LoginReq, db: Session = Depends(get_db)):
     db.commit()
     return {"token": make_token(user.email, user.role),
             "name": user.name, "email": user.email,
-            "role": user.role, "plan": user.plan}
+            "role": user.role, "plan": user.plan,
+            "must_change_password": bool(getattr(user, 'must_change_password', False))}
 
 class RegisterReq(BaseModel):
     email: str; password: str; name: str
@@ -1067,15 +1284,18 @@ class ResetReq(BaseModel):
     email: str
 
 @app.post("/api/auth/reset-request")
-def reset_request(req: ResetReq, db: Session = Depends(get_db)):
+def reset_request(req: ResetReq, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email.lower()).first()
     if user:
         token = secrets.token_urlsafe(32)
         db.add(ResetToken(user_id=user.id, token=token,
                           expires_at=datetime.utcnow() + timedelta(hours=24)))
         db.commit()
-        domain = os.environ.get("APP_DOMAIN", "localhost")
+        email_cfg = _get_email_config(db)
+        domain = _resolve_domain(email_cfg, request)
         reset_url = f"https://{domain}/?reset_token={token}"
+        if email_cfg.get("enabled"):
+            _email_reset_link(email_cfg, user.email, user.name or user.email.split("@")[0], reset_url)
         return {"ok": True, "reset_url": reset_url,
                 "message": "Reset link generated"}
     return {"ok": True, "message": "Reset link sent if account exists"}
@@ -1114,6 +1334,7 @@ def change_password(req: ChangePwReq, user: User = Depends(get_current_user),
     if len(req.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     user.password_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    user.must_change_password = False
     db.commit()
     return {"ok": True}
 
@@ -1379,7 +1600,7 @@ def market_status(
     if sym_cache:
         actual_status = "live" if mkt_open else "closed"
         msg = (f"Live · {sym_cache.get('updated', '')} IST" if mkt_open
-               else "Market closed · Opens 9:15 AM IST")
+               else f"Market closed · {_next_market_open_msg()}")
         return {
             "spot":    sym_cache.get("spot", 0),
             "atm":     sym_cache.get("atm", 0),
@@ -1407,7 +1628,7 @@ def market_status(
             "chain":   cache.get("chain", {}),
             "status":  cached_status,
             "message": (cache.get("message", "Connect your broker to see live data.")
-                        if mkt_open else "Market closed · Opens 9:15 AM IST"),
+                        if mkt_open else f"Market closed · {_next_market_open_msg()}"),
             "updated": cache.get("updated"),
         }
     # For other symbols, return empty — no automation uses this symbol yet
@@ -1482,21 +1703,34 @@ async def market_funds(user: User = Depends(get_current_user),
         return {"ok": False, "funds": {}, "available_balance": 0,
                 "message": "No broker connected — add Fyers in My Brokers"}
 
-    if conn.mode == "paper":
-        return {"ok": True, "mode": "paper", "funds": {},
-                "available_balance": 0,
-                "message": "Paper mode — no real account balance"}
-
     try:
         await conn.refresh_token()
         funds = await conn.get_funds()
     except Exception as e:
         return {"ok": False, "funds": {}, "available_balance": 0,
+                "mode": conn.mode,
                 "message": f"Could not reach Fyers: {str(e)}"}
 
-    if not funds:
+    # get_funds() returns {"_error": "msg"} on failure — surface the real reason
+    if funds.get("_error"):
+        err = funds["_error"]
+        # Return last cached balance if we have one
+        cached = _funds_cache.get(user.id)
+        if cached:
+            return {
+                "ok":               True,
+                "mode":             conn.mode,
+                "broker_connected": True,
+                "funds":            cached["funds"],
+                "available_balance": cached["available_balance"],
+                "matched_key":      cached["matched_key"],
+                "cached":           True,
+                "cached_at":        cached["cached_at"],
+                "message":          err,
+            }
         return {"ok": False, "funds": {}, "available_balance": 0,
-                "message": "Fyers returned empty funds — check token"}
+                "mode": conn.mode, "broker_connected": True,
+                "message": err}
 
     # Parse available balance — try every key Fyers might use
     available = 0
@@ -1522,14 +1756,29 @@ async def market_funds(user: User = Depends(get_current_user),
             matched_key = max(pos, key=pos.get)
             available = pos[matched_key]
 
+    ist = pytz.timezone("Asia/Kolkata")
+    cached_at = datetime.now(ist).strftime("%a %d %b, %I:%M %p")
+
+    # Save to per-user funds cache so we can serve it outside market hours
+    _funds_cache[user.id] = {
+        "available_balance": round(available, 2),
+        "funds":             funds,
+        "matched_key":       matched_key,
+        "cached_at":         cached_at,
+        "mode":              conn.mode,
+    }
+
     return {
         "ok":               True,
-        "mode":             "live",
-        "funds":            funds,          # raw keys for debugging
+        "mode":             conn.mode,
+        "broker_connected": True,
+        "funds":            funds,
         "available_balance": round(available, 2),
-        "matched_key":      matched_key,    # which key was used
+        "matched_key":      matched_key,
+        "cached":           False,
         "message":          f"Balance from '{matched_key}'" if matched_key
-                            else "Could not parse balance from Fyers response",
+                            else ("Paper mode — automations use paper trading" if conn.mode == "paper"
+                                  else "Could not parse balance from Fyers response"),
     }
 
 # ── Strategies ────────────────────────────────────────────────
@@ -1541,16 +1790,16 @@ def get_strategies(user: User = Depends(get_current_user)):
          "tier": "PRO", "auto": True,
          "description": "Fires when ALL 7 strikes break ORB low simultaneously. Highest conviction."},
         {"code": "S1", "name": "ORB Breakdown Sell",
-         "tier": "STARTER",
+         "tier": "PRO",
          "description": "Primary strategy. Any strike breaks ORB low. ATM priority."},
         {"code": "S2", "name": "VWAP Squeeze + EMA Cross",
-         "tier": "STARTER",
+         "tier": "PRO",
          "description": "S1 fallback. Premium tight below VWAP, EMA75 bearish, RSI<45."},
         {"code": "S8", "name": "Opening Gap Fade",
-         "tier": "STARTER",
+         "tier": "PRO",
          "description": "Gap >0.4% from prev close. Premium compressing."},
         {"code": "S3", "name": "Breakout Reversal",
-         "tier": "STARTER",
+         "tier": "PRO",
          "description": "Premium spikes above VWAP then reverses below."},
         {"code": "S4", "name": "Iron Condor",
          "tier": "PRO",
@@ -1889,7 +2138,7 @@ def get_unified_trades(
                     "outcome": "LOSS"}
         elif "EMA75_SL" in r or "EMA75 SL" in r:
             return {"type": "EMA75_SL", "detail": reason,
-                    "friendly": "📉 EMA75 SL — premium rose above EMA",
+                    "friendly": "📉 EMA75 SL — profit locked at EMA75 level",
                     "outcome": "LOSS"}
         elif "AUTO_EXIT" in r:
             return {"type": "AUTO_EXIT", "detail": reason,
@@ -2122,7 +2371,7 @@ def live_performance(
     profit_factor = round(gross_profit/gross_loss,2) if gross_loss else 99.0
     avg_win  = round(gross_profit/len(wins),0) if wins else 0
     avg_loss = round(-gross_loss/len(losses),0) if losses else 0
-    win_rate = len(wins)/n*100
+    win_rate = round(len(wins)/n*100, 1) if n else 0
     reward_risk = round(avg_win/abs(avg_loss),2) if avg_loss else 99.0
     expectancy = round((win_rate/100*avg_win) - ((1-win_rate/100)*abs(avg_loss)),0)
 
@@ -2189,16 +2438,32 @@ class CreateUserReq(BaseModel):
     role: str = "USER"; plan: str = "FREE"
 
 @app.post("/api/admin/users")
-def create_user(req: CreateUserReq, admin: User = Depends(require_admin),
+def create_user(req: CreateUserReq, request: Request, admin: User = Depends(require_admin),
                 db: Session = Depends(get_db)):
     email = req.email.lower().strip()
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already exists")
-    db.add(User(email=email, name=req.name,
+    user = User(email=email, name=req.name,
                 password_hash=bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode(),
                 role=req.role, plan=req.plan,
-                is_active=True, is_verified=True))
+                is_active=True, is_verified=True)
+    db.add(user)
     db.commit()
+    # Set must_change_password flag if password was provided by admin
+    user.must_change_password = True
+    db.commit()
+    # Send welcome email if email is configured
+    email_cfg = _get_email_config(db)
+    if email_cfg.get("enabled") and req.password:
+        domain = _resolve_domain(email_cfg, request)
+        login_url = f"https://{domain}/"
+        ok, err = _email_welcome(email_cfg, user.email, user.name, req.password, login_url)
+        if not ok:
+            logger.warning(f"Welcome email failed for {user.email}: {err}")
+        else:
+            logger.info(f"Welcome email sent to {user.email}")
+    else:
+        logger.info(f"Welcome email skipped for {user.email} — enabled:{email_cfg.get('enabled')} has_pass:{bool(req.password)}")
     return {"ok": True}
 
 @app.post("/api/admin/users/{user_id}/suspend")
@@ -2301,15 +2566,37 @@ async def reset_all_automation_status(
 def admin_set_plan(user_id: str, req: dict,
                    admin: User = Depends(require_admin),
                    db: Session = Depends(get_db)):
-    """Admin: change a user's plan (FREE/STARTER/PRO)."""
+    """Admin: change a user's plan (FREE/PRO)."""
     u = db.query(User).filter(User.id == user_id).first()
     if not u: raise HTTPException(404, "User not found")
     new_plan = req.get("plan", "FREE")
-    if new_plan not in PLAN_CONFIG:
+    if new_plan not in ("FREE", "PRO"):
         raise HTTPException(400, f"Invalid plan: {new_plan}")
     u.plan = new_plan
     db.commit()
     return {"ok": True, "plan": new_plan}
+
+LIFECYCLE_STAGES = ["DEMO", "PAPER", "LIVE_READY", "PAID"]
+
+@app.post("/api/admin/users/{user_id}/lifecycle")
+def admin_set_lifecycle(user_id: str, req: dict,
+                        admin: User = Depends(require_admin),
+                        db: Session = Depends(get_db)):
+    """Admin: move user through the customer journey pipeline."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u: raise HTTPException(404, "User not found")
+    stage = req.get("stage", "DEMO")
+    if stage not in LIFECYCLE_STAGES:
+        raise HTTPException(400, f"Invalid stage: {stage}. Use one of {LIFECYCLE_STAGES}")
+    u.lifecycle_stage = stage
+    # When confirmed PAID → automatically grant PRO access
+    if stage == "PAID" and u.plan == "FREE":
+        u.plan = "PRO"
+    # When moved back to DEMO/PAPER → strip live access (drop to FREE)
+    if stage in ("DEMO", "PAPER") and u.plan == "PRO":
+        u.plan = "FREE"
+    db.commit()
+    return {"ok": True, "stage": stage, "plan": u.plan}
 
 @app.delete("/api/trades/reset")
 def reset_trade_history(
@@ -2357,7 +2644,7 @@ def reset_trade_history(
 
 
 @app.post("/api/admin/users/{user_id}/reset-password")
-def admin_reset_pw(user_id: str, admin: User = Depends(require_admin),
+def admin_reset_pw(user_id: str, request: Request, admin: User = Depends(require_admin),
                    db: Session = Depends(get_db)):
     u = db.query(User).filter(User.id == user_id).first()
     if not u: raise HTTPException(404, "User not found")
@@ -2365,32 +2652,71 @@ def admin_reset_pw(user_id: str, admin: User = Depends(require_admin),
     db.add(ResetToken(user_id=u.id, token=token,
                       expires_at=datetime.utcnow() + timedelta(hours=24)))
     db.commit()
-    domain = os.environ.get("APP_DOMAIN", "localhost")
+    email_cfg = _get_email_config(db)
+    domain = _resolve_domain(email_cfg, request)
     return {"ok": True, "reset_url": f"https://{domain}/?reset_token={token}"}
 
+def _email_invite_link(to_email: str, invite_url: str, plan_label: str, db=None):
+    """Send invite link to a prospective user."""
+    try:
+        cfg = _get_email_config(db) if db else {}
+        if not cfg or not cfg.get("enabled"):
+            return
+        subject = "You're invited to AlgoDesk"
+        html = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+          <h2 style="color:#4f8ef7">You're invited to AlgoDesk</h2>
+          <p>You've been invited to join AlgoDesk — an automated options trading platform.</p>
+          <div style="background:#f4f4f4;border-radius:8px;padding:16px;margin:16px 0">
+            <div><strong>Plan:</strong> {plan_label}</div>
+          </div>
+          <a href="{invite_url}" style="display:inline-block;background:#4f8ef7;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;margin-top:8px">Create Your Account →</a>
+          <p style="margin-top:16px;font-size:12px;color:#999">This link is unique to you — do not share it.</p>
+        </div>
+        """
+        _send_email(cfg, to_email, subject, html)
+    except Exception as e:
+        logger.warning(f"Invite email failed to {to_email}: {e}")
+
 @app.post("/api/admin/invite")
-def create_invite(req: dict, admin: User = Depends(require_admin),
+def create_invite(req: dict, request: Request, admin: User = Depends(require_admin),
                   db: Session = Depends(get_db)):
     token = secrets.token_urlsafe(24)
+    plan  = req.get("plan", "FREE")
     db.add(InviteLink(token=token, created_by=admin.id,
                       role=req.get("role", "USER"),
-                      plan=req.get("plan", "FREE")))
+                      plan=plan))
     db.commit()
-    domain = os.environ.get("APP_DOMAIN", "localhost")
-    return {"ok": True,
-            "invite_url": f"https://{domain}/?invite={token}",
-            "token": token}
+    email_cfg  = _get_email_config(db)
+    domain     = _resolve_domain(email_cfg, request)
+    invite_url = f"https://{domain}/?invite={token}"
+    # Optionally email the invite directly
+    to_email   = (req.get("email") or "").strip()
+    emailed    = False
+    if to_email:
+        plan_label = "Pro — Live Trading (₹5,000/mo)" if plan == "PRO" else "Free — Paper Trading"
+        _email_invite_link(to_email, invite_url, plan_label, db)
+        emailed = True
+    return {"ok": True, "invite_url": invite_url, "token": token, "emailed": emailed}
 
 @app.get("/api/admin/stats")
 def admin_stats(admin: User = Depends(require_admin),
                 db: Session = Depends(get_db)):
     users = db.query(User).all()
     active = [u for u in users if u.is_active]
-    # Plan pricing (INR/month)
-    PLAN_PRICE = {"FREE": 0, "STARTER": 999, "PRO": 2499, "ENTERPRISE": 9999}
+
+    # Pipeline: count users at each lifecycle stage
+    pipeline = {s: sum(1 for u in active if getattr(u, "lifecycle_stage", "DEMO") == s)
+                for s in LIFECYCLE_STAGES}
+
+    # MRR = only users with stage=PAID (confirmed payment)
+    # Use recorded subscription_amount if set, otherwise configured platform price
+    default_price = _get_subscription_price(db)
+    PLAN_PRICE = {"FREE": 0, "STARTER": default_price, "PRO": default_price}
+    paid_users  = [u for u in active if getattr(u, "lifecycle_stage", "DEMO") == "PAID"]
+    mrr = sum((u.subscription_amount or default_price) for u in paid_users)
     plan_counts = {p: sum(1 for u in active if u.plan == p)
-                   for p in ["FREE", "STARTER", "PRO", "ENTERPRISE"]}
-    mrr = sum(plan_counts.get(p, 0) * PLAN_PRICE.get(p, 0) for p in PLAN_PRICE)
+                   for p in ["FREE", "STARTER", "PRO"]}
 
     # Trade counts
     from datetime import timedelta
@@ -2411,10 +2737,398 @@ def admin_stats(admin: User = Depends(require_admin),
         "trades_today":      trades_today,
         "shadow_today":      shadow_today,
         "plans":             plan_counts,
+        "pipeline":          pipeline,
+        "paid_count":        len(paid_users),
         "mrr":               mrr,
         "arr":               mrr * 12,
         "plan_price":        PLAN_PRICE,
     }
+
+@app.get("/api/admin/user-performance")
+def admin_user_performance(admin: User = Depends(require_admin),
+                            db: Session = Depends(get_db)):
+    """
+    Per-user paper + live trade performance summary for the admin panel.
+    Returns each user's P&L, win rate, trade count, strategies used, last active.
+    """
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).strftime("%Y-%m-%d")
+    week_ago  = (datetime.now(ist) - timedelta(days=7)).strftime("%Y-%m-%d")
+    month_ago = (datetime.now(ist) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    default_price = _get_subscription_price(db)
+    PLAN_PRICE = {"FREE": 0, "STARTER": default_price, "PRO": default_price}
+    current_month = datetime.now(ist).strftime("%Y-%m")
+
+    result = []
+    platform_paper_pnl   = 0.0
+    platform_live_pnl    = 0.0
+    platform_paper_total = 0
+    platform_live_total  = 0
+    platform_sub_revenue = 0.0   # sum of all recorded subscription payments
+
+    for u in users:
+        # ── Paper trades (shadow_trades) ──
+        paper_all = db.query(ShadowTrade).filter(
+            ShadowTrade.user_id == u.id,
+            ShadowTrade.is_open == False
+        ).all()
+        paper_today = [t for t in paper_all if t.trade_date == today]
+        paper_week  = [t for t in paper_all if t.trade_date >= week_ago]
+        paper_month = [t for t in paper_all if t.trade_date >= month_ago]
+
+        paper_pnl_today = sum(t.net_pnl or 0 for t in paper_today)
+        paper_pnl_week  = sum(t.net_pnl or 0 for t in paper_week)
+        paper_pnl_total = sum(t.net_pnl or 0 for t in paper_all)
+        paper_wins  = sum(1 for t in paper_all if (t.net_pnl or 0) > 0)
+        paper_n     = len(paper_all)
+        paper_win_rate = round(paper_wins / paper_n * 100, 1) if paper_n else 0
+        paper_strategies = list({t.strategy_code for t in paper_all if t.strategy_code})
+
+        # ── Live trades ──
+        live_all = db.query(Trade).filter(
+            Trade.user_id == u.id,
+            Trade.is_open == False
+        ).all()
+        live_today = [t for t in live_all if t.trade_date == today]
+        live_week  = [t for t in live_all if t.trade_date >= week_ago]
+        live_month = [t for t in live_all if t.trade_date >= month_ago]
+
+        live_pnl_today = sum(t.net_pnl or 0 for t in live_today)
+        live_pnl_week  = sum(t.net_pnl or 0 for t in live_week)
+        live_pnl_total = sum(t.net_pnl or 0 for t in live_all)
+        live_wins  = sum(1 for t in live_all if (t.net_pnl or 0) > 0)
+        live_n     = len(live_all)
+        live_win_rate = round(live_wins / live_n * 100, 1) if live_n else 0
+        live_strategies = list({t.strategy_code for t in live_all if t.strategy_code})
+
+        # ── Broker connected? ──
+        broker = db.query(BrokerConnection).filter(
+            BrokerConnection.user_id == u.id,
+            BrokerConnection.is_connected == True
+        ).first()
+
+        # ── Running automations ──
+        running_autos = sum(1 for engs in [active_engines.get(u.id, {})] for eng in engs.values() if eng.is_running)
+        total_autos   = db.query(Automation).filter(Automation.user_id == u.id).count()
+
+        # ── Last active trade ──
+        last_paper = max((t.trade_date for t in paper_all), default=None)
+        last_live  = max((t.trade_date for t in live_all), default=None)
+        last_active = max(filter(None, [last_paper, last_live]), default=None)
+
+        # ── Monthly P&L breakdown — last 6 months ──
+        monthly: dict = {}
+        for i in range(6):
+            mo = datetime.now(ist) - timedelta(days=30 * i)
+            key = mo.strftime("%Y-%m")
+            monthly[key] = {"label": mo.strftime("%b %Y"), "paper": 0.0, "live": 0.0,
+                            "paper_trades": 0, "live_trades": 0}
+        for t in paper_all:
+            mo = t.trade_date[:7] if t.trade_date and len(t.trade_date) >= 7 else None
+            if mo and mo in monthly:
+                monthly[mo]["paper"] += float(t.net_pnl or 0)
+                monthly[mo]["paper_trades"] += 1
+        for t in live_all:
+            mo = t.trade_date[:7] if t.trade_date and len(t.trade_date) >= 7 else None
+            if mo and mo in monthly:
+                monthly[mo]["live"] += float(t.net_pnl or 0)
+                monthly[mo]["live_trades"] += 1
+        monthly_list = [{"month": k, **v} for k, v in sorted(monthly.items(), reverse=True)]
+
+        # ── Subscription status ──
+        lifecycle_now = getattr(u, "lifecycle_stage", "DEMO") or "DEMO"
+        sub_expires = getattr(u, "subscription_expires_at", None)
+        days_left   = None
+        if lifecycle_now != "PAID":
+            sub_status = lifecycle_now.lower()   # "demo" | "paper" | "live_ready"
+        elif sub_expires:
+            days_left  = (sub_expires - datetime.utcnow()).days
+            sub_status = "expired" if days_left < 0 else "expiring" if days_left <= 7 else "active"
+        else:
+            sub_status = "active"
+
+        # ── Value / ROI metrics ──
+        # plan_price  = expected monthly charge for this plan
+        # amount_paid = what was actually recorded (manual now, auto later from payment gateway)
+        # Falls back to plan_price if no payment recorded yet
+        plan_price  = PLAN_PRICE.get(u.plan, 0)
+        amount_paid = getattr(u, "subscription_amount", 0) or 0
+        effective_monthly_cost = amount_paid if amount_paid > 0 else plan_price
+
+        # This month P&L
+        cm_data           = monthly.get(current_month, {"paper": 0.0, "live": 0.0})
+        this_month_paper  = round(cm_data["paper"], 2)
+        this_month_live   = round(cm_data["live"], 2)
+        this_month_net    = round(this_month_paper + this_month_live, 2)
+
+        # ROI = P&L ÷ subscription cost  (None if free / no cost)
+        def _roi(pnl, cost):
+            if not cost: return None
+            return round(pnl / cost, 2)
+
+        # Estimated months active (for all-time ROI)
+        months_active = max(1, (datetime.utcnow() - u.created_at).days // 30)
+        est_total_paid = effective_monthly_cost * months_active
+
+        # Lifecycle stage
+        lifecycle = getattr(u, "lifecycle_stage", "DEMO") or "DEMO"
+
+        # Onboarding step (1-6) — computed from activity
+        _ob_step = 1
+        if broker:                      _ob_step = 2
+        if paper_n > 0:                 _ob_step = 3
+        if paper_n >= 20:               _ob_step = 4
+        _has_live_auto = db.query(Automation).filter(
+            Automation.user_id == u.id, Automation.mode == "live"
+        ).count() > 0
+        if _has_live_auto:              _ob_step = 5
+        if live_pnl_total > 0:         _ob_step = 6
+
+        platform_paper_pnl   += paper_pnl_total
+        platform_live_pnl    += live_pnl_total
+        platform_paper_total += paper_n
+        platform_live_total  += live_n
+        # Revenue only from confirmed-PAID users
+        if lifecycle == "PAID":
+            platform_sub_revenue += amount_paid
+
+        result.append({
+            "user_id":        u.id,
+            "name":           u.name,
+            "email":          u.email,
+            "plan":           u.plan,
+            "role":           u.role,
+            "is_active":      u.is_active,
+            "lifecycle_stage": lifecycle,
+            "broker_connected": bool(broker),
+            "broker_mode": broker.mode if broker else "—",
+            "automations": {"total": total_autos, "running": running_autos},
+            "onboarding_step": _ob_step,
+            "paper": {
+                "total_trades": paper_n,
+                "today":        len(paper_today),
+                "week":         len(paper_week),
+                "month":        len(paper_month),
+                "pnl_today":    round(paper_pnl_today, 2),
+                "pnl_week":     round(paper_pnl_week, 2),
+                "pnl_month":    round(paper_pnl_total, 2),
+                "pnl_total":    round(paper_pnl_total, 2),
+                "win_rate":     paper_win_rate,
+                "strategies":   sorted(paper_strategies),
+            },
+            "live": {
+                "total_trades": live_n,
+                "today":        len(live_today),
+                "week":         len(live_week),
+                "month":        len(live_month),
+                "pnl_today":    round(live_pnl_today, 2),
+                "pnl_week":     round(live_pnl_week, 2),
+                "pnl_month":    round(live_pnl_total, 2),
+                "pnl_total":    round(live_pnl_total, 2),
+                "win_rate":     live_win_rate,
+                "strategies":   sorted(live_strategies),
+            },
+            "monthly":    monthly_list,
+            "subscription": {
+                "expires_at": sub_expires.strftime("%Y-%m-%d") if sub_expires else None,
+                "days_left":  days_left,
+                "status":     sub_status,
+                "amount":     getattr(u, "subscription_amount", 0) or 0,
+                "notes":      getattr(u, "subscription_notes", "") or "",
+            },
+            "last_active": last_active,
+            "value": {
+                # What the user pays
+                "plan_price":            plan_price,           # listed price for their plan
+                "amount_paid":           amount_paid,          # actual last payment (0 = not yet recorded)
+                "effective_monthly_cost": effective_monthly_cost,
+                "months_active":         months_active,
+                "est_total_paid":        round(est_total_paid, 2),
+                # What they've earned this calendar month
+                "this_month_paper":      this_month_paper,
+                "this_month_live":       this_month_live,
+                "this_month_net":        this_month_net,
+                # ROI — this month
+                "roi_this_month":        _roi(this_month_net, effective_monthly_cost),
+                "roi_paper_this_month":  _roi(this_month_paper, effective_monthly_cost),
+                # ROI — all time (paper + live vs estimated total paid)
+                "alltime_net_pnl":       round(paper_pnl_total + live_pnl_total, 2),
+                "roi_alltime":           _roi(paper_pnl_total + live_pnl_total, est_total_paid),
+                # Value flag: are they making more than they're paying?
+                "is_profitable":         this_month_net > effective_monthly_cost if effective_monthly_cost else None,
+            },
+        })
+
+    return {
+        "users": result,
+        "platform": {
+            "paper_pnl_total":   round(platform_paper_pnl, 2),
+            "live_pnl_total":    round(platform_live_pnl, 2),
+            "paper_trades":      platform_paper_total,
+            "live_trades":       platform_live_total,
+            "total_pnl":         round(platform_paper_pnl + platform_live_pnl, 2),
+            "sub_revenue":       round(platform_sub_revenue, 2),
+            # Value delivered vs revenue collected
+            "platform_roi":      round((platform_paper_pnl + platform_live_pnl) / platform_sub_revenue, 2)
+                                 if platform_sub_revenue else None,
+        }
+    }
+
+# ── Admin Email Config ────────────────────────────────────────
+
+class SubscriptionReq(BaseModel):
+    expires_at: str = None   # YYYY-MM-DD
+    amount: float  = None    # INR paid
+    notes:  str    = None    # payment ref / notes
+    plan:   str    = None    # optionally update plan too
+
+@app.post("/api/admin/users/{user_id}/subscription")
+def set_subscription(user_id: str, req: SubscriptionReq,
+                     admin: User = Depends(require_admin),
+                     db: Session = Depends(get_db)):
+    """Admin: manually record subscription expiry, amount paid and notes."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(404, "User not found")
+    if req.expires_at:
+        try:
+            u.subscription_expires_at = datetime.strptime(req.expires_at, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "expires_at must be YYYY-MM-DD")
+    if req.amount is not None:
+        u.subscription_amount = req.amount
+    if req.notes is not None:
+        u.subscription_notes = req.notes
+    if req.plan and req.plan in ("FREE", "PRO"):
+        u.plan = req.plan
+    db.commit()
+    return {"ok": True, "message": "Subscription updated"}
+
+@app.get("/api/admin/subscription-overview")
+def subscription_overview(admin: User = Depends(require_admin),
+                           db: Session = Depends(get_db)):
+    """Platform-level subscription health — pipeline stages, active, expiring soon, expired."""
+    users = db.query(User).filter(User.is_active == True).all()
+    now   = datetime.utcnow()
+    active_count = expiring = expired = 0
+    expiring_list: list = []
+    expired_list:  list = []
+    # Pipeline counts — one bucket per lifecycle stage
+    pipeline = {s: 0 for s in LIFECYCLE_STAGES}
+    mrr = 0.0
+    _default_price = _get_subscription_price(db)
+    for u in users:
+        stage = getattr(u, "lifecycle_stage", "DEMO") or "DEMO"
+        if stage in pipeline:
+            pipeline[stage] += 1
+        # MRR only from PAID
+        if stage == "PAID":
+            mrr += (u.subscription_amount or _default_price)
+        # Expiry alerts only matter for PAID users
+        if stage != "PAID":
+            continue
+        if not u.subscription_expires_at:
+            active_count += 1
+            continue
+        days = (u.subscription_expires_at - now).days
+        if days < 0:
+            expired += 1
+            expired_list.append({"name": u.name, "email": u.email, "plan": u.plan,
+                                  "days": days})
+        elif days <= 7:
+            expiring += 1
+            expiring_list.append({"name": u.name, "email": u.email, "plan": u.plan,
+                                   "days": days,
+                                   "expires": u.subscription_expires_at.strftime("%d %b %Y")})
+        else:
+            active_count += 1
+    return {
+        "pipeline":      pipeline,
+        "total_paid":    pipeline.get("PAID", 0),
+        "active":        active_count,
+        "expiring_soon": expiring_list,
+        "expired":       expired_list,
+        "free":          pipeline.get("DEMO", 0) + pipeline.get("PAPER", 0),
+        "mrr":           mrr,
+        "alerts":        expiring + expired,
+    }
+
+@app.get("/api/admin/email-config")
+def get_email_config(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Get current email/SMTP configuration."""
+    cfg = _get_email_config(db)
+    # Mask password in response
+    safe = {k: v for k, v in cfg.items() if k != "smtp_password_enc"}
+    safe["smtp_password_set"] = bool(cfg.get("smtp_password_enc"))
+    return {"ok": True, "config": safe}
+
+@app.post("/api/admin/email-config")
+def save_email_config(req: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Save email/SMTP configuration. Encrypts the password."""
+    cfg = dict(req)
+    # Encrypt password if provided
+    if cfg.get("smtp_password"):
+        cfg["smtp_password_enc"] = encrypt("_server", cfg.pop("smtp_password"))
+    else:
+        cfg.pop("smtp_password", None)
+        # Keep existing encrypted password if not changing
+        existing = _get_email_config(db)
+        if existing.get("smtp_password_enc"):
+            cfg["smtp_password_enc"] = existing["smtp_password_enc"]
+
+    row = db.query(ServerSettings).filter(ServerSettings.key == "email_config").first()
+    if row:
+        row.value = cfg
+        row.updated_at = datetime.utcnow()
+    else:
+        import uuid as _uuid
+        row = ServerSettings(id=str(_uuid.uuid4()), key="email_config", value=cfg)
+        db.add(row)
+    db.commit()
+    return {"ok": True, "message": "Email configuration saved"}
+
+@app.get("/api/admin/subscription-price")
+def get_subscription_price(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.query(ServerSettings).filter(ServerSettings.key == "subscription_price").first()
+    price = (row.value or {}).get("price", 5000) if row else 5000
+    return {"price": price}
+
+@app.post("/api/admin/subscription-price")
+def save_subscription_price(req: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    price = int(req.get("price", 5000))
+    row = db.query(ServerSettings).filter(ServerSettings.key == "subscription_price").first()
+    if row:
+        row.value = {"price": price}
+        row.updated_at = datetime.utcnow()
+    else:
+        import uuid as _uuid
+        row = ServerSettings(id=str(_uuid.uuid4()), key="subscription_price", value={"price": price})
+        db.add(row)
+    db.commit()
+    return {"ok": True, "price": price}
+
+def _get_subscription_price(db) -> int:
+    """Read the platform-wide default subscription price from ServerSettings."""
+    row = db.query(ServerSettings).filter(ServerSettings.key == "subscription_price").first()
+    return (row.value or {}).get("price", 5000) if row else 5000
+
+@app.post("/api/admin/email-config/test")
+def test_email_config(req: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Send a test email to verify SMTP config."""
+    cfg = _get_email_config(db)
+    if not cfg.get("enabled"):
+        raise HTTPException(400, "Email not enabled — save config first")
+    to = req.get("to") or admin.email
+    ok, err = _send_email(cfg, to,
+        "AlgoDesk — Test Email",
+        f"<div style='font-family:sans-serif;padding:24px'><h2 style='color:#4f8ef7'>AlgoDesk Email Working</h2><p>SMTP is configured correctly. Sent to: {to}</p></div>"
+    )
+    if ok:
+        return {"ok": True, "message": f"Test email sent to {to}"}
+    raise HTTPException(500, f"Email failed: {err}")
 
 # ── Telegram ──────────────────────────────────────────────────
 
@@ -3242,6 +3956,7 @@ async def _close_shadow_trade(trade_id, user_id, reason,
 
 @app.get("/api/dashboard/summary")
 async def dashboard_summary(user: User = Depends(get_current_user),
+                             symbol: str = "NSE:NIFTY50-INDEX",
                              db: Session = Depends(get_db)):
     """Combined KPIs across all user automations for dashboard."""
     import pytz
@@ -3302,8 +4017,10 @@ async def dashboard_summary(user: User = Depends(get_current_user),
 
     today_live_pnl = sum(t.net_pnl or 0 for t in today_trades if not t.is_open)
     today_paper_pnl = sum(t.net_pnl or 0 for t in today_shadow if not t.is_open)
-    month_live_pnl = sum(t.net_pnl or 0 for t in month_trades)
-    month_paper_pnl = sum(t.net_pnl or 0 for t in month_shadow)
+    month_live_pnl        = sum(t.net_pnl or 0 for t in month_trades)
+    month_paper_pnl       = sum(t.net_pnl or 0 for t in month_shadow)
+    month_live_trades_ct  = len(month_trades)
+    month_paper_trades_ct = len(month_shadow)
 
     cache = _user_cache(user.id)
     mkt_open = _market_open_now()
@@ -3311,12 +4028,61 @@ async def dashboard_summary(user: User = Depends(get_current_user),
     if mkt_status == "live" and not mkt_open:
         mkt_status = "closed"
 
+    # Use per-symbol cache when a non-default symbol is requested
+    sym_spot, sym_atm = cache.get("spot", 0), cache.get("atm", 0)
+    if symbol != "NSE:NIFTY50-INDEX":
+        sym_cache = (user_symbol_cache.get(user.id) or {}).get(symbol, {})
+        if sym_cache.get("spot", 0) > 0:
+            sym_spot = sym_cache["spot"]
+            sym_atm  = sym_cache["atm"]
+        else:
+            sym_spot, sym_atm = 0, 0   # no data for this symbol yet
+
+    # ── Onboarding progress ────────────────────────────────────
+    broker_conn = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id
+    ).first()
+    paper_total = db.query(ShadowTrade).filter(
+        ShadowTrade.user_id == user.id,
+        ShadowTrade.is_open == False
+    ).count()
+    live_total_count = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.is_open == False
+    ).count()
+    live_pnl_total = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.is_open == False
+    ).with_entities(func.sum(Trade.net_pnl)).scalar() or 0
+    has_live_auto = any(a.mode == "live" for a in autos)
+
+    # Auto-advance lifecycle (only forward, never backward)
+    current_lc = getattr(user, "lifecycle_stage", "DEMO") or "DEMO"
+    new_lc = current_lc
+    if current_lc == "DEMO" and (broker_conn or paper_total > 0):
+        new_lc = "PAPER"
+    elif current_lc == "PAPER" and paper_total >= 20:
+        new_lc = "LIVE_READY"
+    if new_lc != current_lc:
+        user.lifecycle_stage = new_lc
+        db.commit()
+
+    # Compute onboarding step 1-6
+    ob_step = 1
+    if broker_conn:                         ob_step = 2
+    if paper_total > 0:                     ob_step = 3
+    if paper_total >= 20:                   ob_step = 4
+    if has_live_auto:                       ob_step = 5
+    if live_pnl_total > 0:                  ob_step = 6
+
     return {
-        "spot":             cache.get("spot", 0),
-        "atm":              cache.get("atm", 0),
+        "spot":             sym_spot,
+        "atm":              sym_atm,
+        "vix":              round(cache.get("vix", 0), 2),
+        "prev_close":       cache.get("prev_close", 0),
         "market_status":    mkt_status,
         "market_updated":   cache.get("updated"),
-        "market_message":   ("Market closed · Opens 9:15 AM IST" if not mkt_open
+        "market_message":   (f"Market closed · {_next_market_open_msg()}" if not mkt_open
                              else cache.get("message", "")),
         "today_live_pnl":   round(today_live_pnl, 0),
         "today_paper_pnl":  round(today_paper_pnl, 0),
@@ -3325,13 +4091,24 @@ async def dashboard_summary(user: User = Depends(get_current_user),
         "open_live":        len([t for t in today_trades if t.is_open]),
         "open_paper":       len([t for t in today_shadow if t.is_open]),
         "open_positions":   len([t for t in today_trades if t.is_open]) + len([t for t in today_shadow if t.is_open]),
-        "month_live_pnl":   round(month_live_pnl, 0),
-        "month_paper_pnl":  round(month_paper_pnl, 0),
+        "month_live_pnl":    round(month_live_pnl, 0),
+        "month_paper_pnl":   round(month_paper_pnl, 0),
+        "month_live_trades":  month_live_trades_ct,
+        "month_paper_trades": month_paper_trades_ct,
         "automations":      auto_status,
         "total_automations": len(autos),
         "running_automations": len([a for a in autos if a.status=="RUNNING"]),
         "live_automations":  len([a for a in autos if a.mode=="live"]),
         "paper_automations": len([a for a in autos if a.mode=="paper"]),
+        "onboarding": {
+            "step":              ob_step,
+            "broker_connected":  bool(broker_conn),
+            "paper_trade_count": paper_total,
+            "live_trade_count":  live_total_count,
+            "live_pnl_total":    round(live_pnl_total, 0),
+            "has_live_auto":     has_live_auto,
+            "lifecycle":         new_lc,
+        },
     }
 
 
@@ -3354,29 +4131,30 @@ async def capital_check(
     conn = _get_fyers(user, db)
     strategy_list = [s.strip() for s in strategies.split(",") if s.strip()]
 
-    # Get live spot price from cache
-    cache = _user_cache(user.id)
-    spot = cache.get("spot", 0)
+    # Get live spot price — use per-symbol cache for non-NIFTY symbols
+    sym_cache = (user_symbol_cache.get(user.id) or {}).get(symbol)
+    if sym_cache and sym_cache.get("spot", 0) > 0:
+        spot = sym_cache["spot"]
+    else:
+        spot = _user_cache(user.id).get("spot", 0) if symbol == "NSE:NIFTY50-INDEX" else 0
 
-    # Fallback spot prices if cache empty
+    # Fallback spot prices if cache empty (e.g. outside market hours)
     if not spot:
         fallback_spots = {
-            "NSE:NIFTY50-INDEX":    24000,
-            "NSE:NIFTYBANK-INDEX":  52000,
-            "NSE:FINNIFTY-INDEX":   24000,
-            "BSE:SENSEX-INDEX":     80000,
+            "NSE:NIFTY50-INDEX":    23000,
+            "NSE:NIFTYBANK-INDEX":  49000,
+            "NSE:FINNIFTY-INDEX":   23500,
+            "BSE:SENSEX-INDEX":     76000,
             "NSE:MIDCPNIFTY-INDEX": 12000,
         }
-        spot = fallback_spots.get(symbol, 24000)
+        spot = fallback_spots.get(symbol, 23000)
 
     # Get registry lot size if not overridden
     reg = SYMBOL_REGISTRY.get(symbol, {})
     actual_lot_size = lot_size or reg.get("lot_size", 65)
 
-    # Strategy-specific hedge widths
-    auto_hedges = {"S9": 1, "S8": 3, "S6": 4}
-    # Use the widest hedge among selected strategies (conservative estimate)
-    hedges = [auto_hedges.get(s, hedge_width) for s in strategy_list]
+    # Strategy-specific hedge widths — sourced from STRATEGY_MARGIN_CONFIG (matches engine)
+    hedges = [STRATEGY_MARGIN_CONFIG.get(s, {}).get("hedge", hedge_width) for s in strategy_list]
     max_hedge = max(hedges) if hedges else hedge_width
 
     # Calculate margin estimate
@@ -3387,9 +4165,9 @@ async def capital_check(
     funds_error = None
     available = 0
 
-    if conn and conn.mode != "paper":
+    if conn:
         try:
-            # Always refresh token before fetching funds — expired token returns empty
+            # Always refresh token before fetching — works for both paper and live connections
             await conn.refresh_token()
             funds = await conn.get_funds()
             if not funds:
@@ -3412,9 +4190,6 @@ async def capital_check(
                         available = max(pos.values())
         except Exception as e:
             funds_error = str(e)
-    elif conn and conn.mode == "paper":
-        available = 0   # Paper — show 0 so UI shows paper state correctly
-        funds = {}
 
     can_trade = available >= margin["net_required"]
     shortfall = max(0, margin["net_required"] - available)
@@ -4001,12 +4776,25 @@ async def _run_engine(user_id: str, auto: Automation,
                 continue
 
             # Get fresh data (token auto-refreshes inside)
-            data = await conn.get_spot_and_chain(symbol)
+            data = await conn.get_spot_and_chain(symbol, strike_count=25)
 
             if not data.get("ok"):
                 state.emit(f"Data error: {data.get('message')}", "WARN")
+                state._data_fail_count = getattr(state, "_data_fail_count", 0) + 1
+                # After 5 consecutive failures (~5 min) alert user via Telegram
+                if state._data_fail_count == 5:
+                    db_tf = SessionLocal()
+                    try:
+                        u_tf = db_tf.query(User).filter(User.id == user_id).first()
+                        if u_tf:
+                            await _send_telegram_all(u_tf,
+                                f"⚠️ AlgoDesk: Broker data failing for 5+ min on automation '{auto.name}'. "
+                                f"Reason: {data.get('message','')}. Check Fyers connection.")
+                    finally:
+                        db_tf.close()
                 await asyncio.sleep(60)
                 continue
+            state._data_fail_count = 0  # reset on success
 
             # Save refreshed tokens
             db = SessionLocal()
@@ -4018,6 +4806,8 @@ async def _run_engine(user_id: str, auto: Automation,
             spot  = data["spot"]
             chain = data["chain"]
             state.spot_history.append(spot)
+            if len(state.spot_history) > 400:
+                state.spot_history = state.spot_history[-400:]
 
             # Lock ATM at 9:15
             if t >= dtime(9, 15) and not state.atm_strike:
@@ -4031,6 +4821,27 @@ async def _run_engine(user_id: str, auto: Automation,
                         offset=i, is_atm=(i == 0))
                     state.strikes.append(sk)
                 state.emit(f"ATM locked: {state.atm_strike} | Spot: {spot:.1f}", "OK")
+
+            # ── Inject VIX + prev_close into engine config ──
+            # No time gate — retries every tick until data lands in market cache.
+            # Guards 2/5 and S8/S10 silently skip if these are 0, so we warn when set.
+            _mc = user_market_cache.get(user_id, {})
+            if _mc.get("vix") and not state.config.get("vix_open"):
+                state.config["vix_open"] = _mc["vix"]
+                _vmax = state.config.get("vix_max", 17.0)
+                state.emit(
+                    f"India VIX: {_mc['vix']:.1f} "
+                    f"(Guard 2 threshold: {_vmax:.1f} — "
+                    f"{'🔴 WILL BLOCK today' if _mc['vix'] >= _vmax else '✅ within limit'})",
+                    "INFO")
+            if _mc.get("prev_close") and not state.config.get("prev_close"):
+                state.config["prev_close"]        = _mc["prev_close"]
+                state.config["prev_day_move_pct"] = _mc.get("prev_day_move_pct", 0)
+                state.emit(
+                    f"Prev close: {_mc['prev_close']:.0f} | "
+                    f"Yesterday move: {_mc.get('prev_day_move_pct', 0):.1f}% "
+                    f"(S8/S10 + Gap guard active)",
+                    "INFO")
 
             # Update strike data from chain
             if state.strikes:
@@ -4079,11 +4890,30 @@ async def _run_engine(user_id: str, auto: Automation,
                     state._strikes_refreshed = True
                     state.emit(f"Strikes refreshed at 10:30 — live ATM {live_atm} (was {state.atm_strike}, drift {drift:.0f} strikes)", "INFO")
 
-            # Reset daily gate at 9:15 each morning (new trading day)
-            if t == dtime(9, 15) and state.traded_today:
-                state.traded_today = False
-                state.trade_count  = 0
-                state.emit("Daily trade gate reset — new trading session", "INFO")
+            # ── Full day reset at 9:15 each morning ──────────────────
+            # Triggers when traded_today is True (meaning yesterday had activity)
+            # OR when atm_strike is set (meaning yesterday's state is stale)
+            if t == dtime(9, 15) and (state.traded_today or state.atm_strike):
+                state.traded_today    = False
+                state.trade_count     = 0
+                state.atm_strike      = None
+                state.spot_locked     = None
+                state.strikes         = []
+                state.orb_complete    = False
+                state.event_checked   = False
+                state.events_suspended = False
+                state.ai_checked      = False
+                state.ai_suspended    = False
+                state.ai_avoid        = []
+                state.guard_status    = ""
+                state.day_pnl         = 0.0
+                state.spot_history    = []
+                state.sl_state        = SLState()
+                state._strikes_refreshed = False
+                # Clear daily injected config values so they re-lock today
+                state.config.pop("vix_open", None)
+                state.config.pop("prev_close", None)
+                state.emit("New trading day — all daily state reset", "OK")
 
             # Auto-exit time
             exit_time = state.config.get("auto_exit_time", "14:00")
@@ -4133,15 +4963,15 @@ async def _run_engine(user_id: str, auto: Automation,
                         reason = reason or "FORCE_EXIT"
                         await _close_position(state, conn, reason,
                                                lot_sz, lots, user_id)
-                    # Telegram
-                    db2 = SessionLocal()
-                    try:
-                        u = db2.query(User).filter(User.id == user_id).first()
-                        if u and u.telegram_token:
-                            await _send_telegram(u.telegram_token, u.telegram_chat,
-                                f"🔴 Position closed: {reason}\nP&L: ₹{state.day_pnl:.0f}")
-                    finally:
-                        db2.close()
+                        db2 = SessionLocal()
+                        try:
+                            u = db2.query(User).filter(User.id == user_id).first()
+                            if u:
+                                mode_tag = "🔴 LIVE" if auto.mode == "live" else "📋 PAPER"
+                                await _send_telegram_all(u,
+                                    f"{mode_tag} Position closed\nReason: {reason}\nP&L: ₹{state.day_pnl:.0f}")
+                        finally:
+                            db2.close()
 
             # Check signals — respects max_trades_per_day config
             elif state.orb_complete:
@@ -4154,7 +4984,7 @@ async def _run_engine(user_id: str, auto: Automation,
                 signal = check_all_strategies(state, now) if not at_limit else None
                 if signal:
                     # Auto-set hedge width per strategy if not overridden
-                    auto_hedges = {"S9":1,"S8":3,"S6":4}
+                    auto_hedges = {"S9":1,"S8":3,"S6":4,"S4":20}
                     hw = auto_hedges.get(signal["code"], state.config.get("hedge_width",2))
                     signal["hedge_width"] = hw
                     state.emit(f"SIGNAL [{signal['code']}]: {signal['reason']} | hedge=±{hw}", "SIGNAL")
@@ -4623,6 +5453,12 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
                                            max(state.position.get("entry_combined",1),0.01)) * 100, 1),
                         "reason":         reason,
                         "charges_detail": charges,
+                        # SL state at exit — same fields as shadow monitor for UI parity
+                        "vwap":           round(state.atm.vwap_val if state.atm else 0, 2),
+                        "ema75":          round(state.atm.ema75 if state.atm else 0, 2),
+                        "trailing_low":   round(state.sl_state.trailing_low if hasattr(state,'sl_state') and state.sl_state else 0, 2),
+                        "sl_type":        state.sl_state.sl_type if hasattr(state,'sl_state') and state.sl_state else "",
+                        "candles":        state.sl_state.candles if hasattr(state,'sl_state') and state.sl_state else 0,
                     }
                     t.last_monitored = datetime.now()
                     t.is_open        = False
@@ -4642,6 +5478,19 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
                     t.gross_pnl     = round(pnl, 2)
                     t.brokerage     = round(charges["total"], 2)
                     t.net_pnl       = round(pnl - charges["total"], 2)
+                    t.sl_tracking   = {
+                        "exit_combined":  round(exit_combined, 2),
+                        "entry_combined": round(state.position.get("entry_combined",0), 2),
+                        "decay_pct":      round((1 - exit_combined /
+                                           max(state.position.get("entry_combined",1),0.01)) * 100, 1),
+                        "reason":         reason,
+                        "charges_detail": charges,
+                        "vwap":           round(state.atm.vwap_val if state.atm else 0, 2),
+                        "ema75":          round(state.atm.ema75 if state.atm else 0, 2),
+                        "trailing_low":   round(state.sl_state.trailing_low if hasattr(state,'sl_state') and state.sl_state else 0, 2),
+                        "sl_type":        state.sl_state.sl_type if hasattr(state,'sl_state') and state.sl_state else "",
+                        "candles":        state.sl_state.candles if hasattr(state,'sl_state') and state.sl_state else 0,
+                    }
                     t.is_open       = False
                     db.commit()
         finally:

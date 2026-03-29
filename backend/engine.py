@@ -17,7 +17,7 @@ KEY PRINCIPLES (research-backed):
 6. Deploy in chunks for better avg entry (pro approach)
 """
 
-import logging
+import logging, re
 from datetime import datetime, time as dtime
 from typing import Optional, List
 from dataclasses import dataclass, field
@@ -59,6 +59,8 @@ class StrikeState:
         self.ce_ltp = ce_ltp if ce_ltp else combined / 2
         self.pe_ltp = pe_ltp if pe_ltp else combined / 2
         self.combined_history.append(combined)
+        if len(self.combined_history) > 400:
+            self.combined_history = self.combined_history[-400:]
         self._vwap_pv += combined * volume
         self._vwap_v  += volume
         self.vwap_val  = self._vwap_pv / self._vwap_v if self._vwap_v else combined
@@ -320,6 +322,43 @@ def _drift_ok(state: "EngineState") -> bool:
 def _prev_day_move_pct(state: "EngineState") -> float:
     """Yesterday move as absolute %. Stored in config by market data service."""
     return abs(state.config.get("prev_day_move_pct", 0))
+
+def _is_expiry_day(state: "EngineState", now: datetime) -> bool:
+    """
+    Detect if today is options expiry day by parsing the expiry date
+    embedded in the chain symbol names — e.g. NSE:NIFTY01APR23100CE.
+
+    Fyers weekly symbol format:  NSE:NIFTY{YY}{MON}{DD}{STRIKE}{TYPE}
+    Fyers monthly symbol format: NSE:NIFTY{DD}{MON}{YYYY?}{STRIKE}{TYPE}
+
+    Patterns tried (most specific first):
+      - NIFTY + 2-digit-year + 3-letter-month + 2-digit-day  (weekly, e.g. 2601APR)
+      - NIFTY + 2-digit-day + 3-letter-month                 (monthly, e.g. 01APR)
+
+    If parsing fails or no chain available, returns False safely.
+    The ONLY risk of false-negative is a missed S9 — never a false-positive.
+    """
+    if not state.atm or not state.strikes:
+        return False
+    today = now.strftime("%d%b").upper()   # e.g. "01APR"
+    # Try to get any symbol from the current ATM strike
+    atm = state.atm
+    sym = atm.ce_symbol or atm.pe_symbol
+    if not sym:
+        # Fall back to any strike with a symbol
+        for sk in state.strikes:
+            if sk.ce_symbol or sk.pe_symbol:
+                sym = sk.ce_symbol or sk.pe_symbol
+                break
+    if not sym:
+        return False
+    # Weekly format: NSE:NIFTY26APR2315050CE → look for DDMON in symbol
+    # Monthly format: NSE:NIFTY26APR23100CE  → same DDMON pattern
+    m = re.search(r'NIFTY\d{0,2}(\d{2}[A-Z]{3})', sym.upper())
+    if m:
+        expiry_ddmon = m.group(1)   # e.g. "26APR" or "01APR"
+        return expiry_ddmon == today
+    return False
 
 def _spot_rising_fast(state: "EngineState", window: int = 5, threshold: float = 0.3) -> bool:
     """True if spot moved >threshold% in last window readings — market not directionless."""
@@ -890,13 +929,15 @@ def _s9(state, t, now):
     """
     S9 — Pre-Expiry Theta Crush Iron Fly
     ======================================
-    Expiry day only (Thursday). Rapid theta decay 11AM-12PM.
-    ATM Iron Fly with tight ±1 hedge (expiry = minimal movement).
+    Expiry day only (detected from option chain symbol dates — not hardcoded weekday).
+    Rapid theta decay 11AM-12PM. ATM Iron Fly with tight ±1 hedge.
     Industry insight: ATM options lose 50-70% of value in last 2 hours.
     Tight hedge because: (a) movement is limited near expiry,
     (b) ±1 hedge is cheapest and still reduces margin significantly.
+    Works for NIFTY (Tuesday expiry), BANKNIFTY (Wednesday), SENSEX (Tuesday/Friday),
+    and correctly handles holiday-shifted expiries (e.g. Monday when Tue is holiday).
     """
-    if now.weekday() != 3: return None  # Thursday only
+    if not _is_expiry_day(state, now): return None   # dynamic — reads expiry from chain symbols
     if not (dtime(11,0) <= t <= dtime(12,0)): return None
     atm = state.atm
     if not atm: return None

@@ -17,12 +17,16 @@
 - [x] **H1 — Gemini API test endpoint** — `/api/ai/test` exists and looks correct. Verify with real key after deploy.
 - [x] **H2 — precheck.py ternary quote check** — Added `)'` pattern detection to catch common JS string errors
 - [ ] **H3 — Gap day strategy enhancement** — S8 prev-day move rules need more nuance. POSTPONED until rules defined.
+- [ ] **H4 — Ghost engine prevention** — When an automation is restarted, the old `asyncio.Task` is orphaned (not cancelled). The old engine loop keeps running with its stale state, invisible to `active_engines`, and can place duplicate trades. Fix: (1) track tasks in `_engine_tasks` dict, cancel old task on restart; (2) add self-check inside `_run_engine` loop — if `active_engines[user_id][auto_id] is not state`, stop immediately. Confirmed cause of today's duplicate S4 trades.
+- [ ] **H5 — Smart re-entry: replace blanket `traded_today` gate** — Currently one trade per automation per day, hard-blocked by `traded_today=True`. `max_trades_per_day: 3` config is dead code. Fix: allow re-entry only after profitable exits (PROFIT_TARGET, PROFIT_LOCK, EMA75_SL with positive P&L). Never re-enter after MAX_LOSS or VWAP_SL at a loss. S9 (expiry theta crush) should always run independently of morning trades — it fires in a different time window with a different mechanism. `max_trades_per_day` becomes the hard ceiling. **Discuss before implementing — capital risk implications.**
 
 ---
 
 ## 🟡 MEDIUM PRIORITY
 
 - [x] **M11 — Ratchet (Profit Lock) SL + dead zone fix** — Replace Layer 1 trailing SL with a stepped profit lock (ratchet) that guarantees profit once key decay milestones are reached. Steps: 15% decay → SL at entry (breakeven); 25% decay → SL at entry×0.90 (10% locked); 35% decay → SL at entry×0.75 (25% locked); 50% → profit target exit. Interaction with Layer 2 VWAP SL: profit lock suppresses VWAP SL when premium is below profit lock level (prevents VWAP exiting at a loss when profit is locked). Dead zone risk: if VWAP is suppressed but profit lock not yet hit, premium can grind up with nothing firing. Fix: rebound cap — if premium rebounds >15% from its lowest point AND VWAP SL is triggered, allow VWAP SL to fire regardless of profit lock. Gap risk: profit lock level is a target not a guaranteed fill — market can gap through it; Layer 3 Max Loss is the ultimate hard backstop and always fires unconditionally. Layer 3 is configurable per automation (20/25/30/40%) — wider max loss setting widens the dead zone, making the rebound cap critical. Impacts S1–S9. S10 BUY strategy has its own SL logic and is unaffected.
+- [x] **M12 — Live market data feeds: VIX, prev_close, gap guards now wired** — Four engine guards/strategies were silently non-functional because their required market data was never fetched. Fixed: (1) India VIX fetched from Fyers `/data/quotes` on every market-hours tick until fetched for the day → feeds Guard 2 (VIX filter); (2) Previous day close fetched from Fyers daily history → feeds Guard 5 (gap skip), S8 (gap fade entry), S10 (gap directional buy), AI assessment gap% context; (3) `prev_day_move_pct` computed from yesterday's open→close → feeds Guard 5 and S8/S9 suppression; (4) VIX always shown in dashboard NIFTY KPI card with colour coding (green <15, amber 15–20, red ≥20) — shows "—" when not yet fetched. **Where to view live VIX: Dashboard → NIFTY KPI card → sub-line shows "ATM 23150 • VIX 14.2".** No time gate — fetches on any tick after server restart. Kelly sizing parameters (kelly_win_rate etc.) remain unfed — documented in L5 notes.
+
 - [x] **M10 — VWAP SL buffer 2% → 5%** — Layer 2a VWAP SL currently exits when combined premium > VWAP × 1.02 (only ₹12 above VWAP on a ₹600 premium). Change default `vwap_buffer_pct` from 2 to 5, giving ₹30 tolerance (VWAP × 1.05). Impacts all selling strategies S1–S9 — shared SL layer. S10 BUY strategy unaffected (has its own SL). One-line change in `engine.py` + same change in `main.py` (two places where default is set). Trade-off: wider buffer gives more recovery room but larger loss if market keeps moving — validate in paper mode before going live.
 - [x] **M9 — Hedge leg order sequence + 1000pt hedge width** — Two related fixes: (1) Order sequence: currently SELL legs placed before BUY hedge legs in `_open_position`. Must reverse — BUY hedges first, then SELL, to avoid momentary naked short, margin rejection, and SEBI compliance risk. (2) Hedge width: change from current tight hedges (±100–200pt) to ±1000pt OTM for all strategies except S9. Requires `strike_sides` config to increase from 3 → 20 so the engine tracks 41 strikes (±1000pt window) instead of 7. S9 (expiry day) to keep ±150pt hedge — 1000pt OTM options have zero bids on expiry day and won't fill.
 - [x] **M6 — S4 live ATM re-centering** — S4 Iron Condor uses morning ATM (locked at 9:15) when building the condor. On gap days, spot can be 100+ pts away by 9:30, making the CE short immediately vulnerable (today: ATM=23100 but spot=23215 → CE sold at 23150, only 65pts OTM → VWAP SL hit in 14 mins). Fix: use `_current_atm(state)` (live spot) when spot has drifted >50pts from morning ATM. Affects S4 only — S1 intentionally uses morning ATM by design.
@@ -65,6 +69,34 @@
 - [x] **L1 — Mobile PWA** — manifest.json + sw.js service worker + Apple meta tags. Install: Share → Add to Home Screen
 - [x] **L2 — Telegram bot commands** — `/api/telegram/webhook` + `/api/telegram/set-webhook`. Commands: /start /stop /status /engine /help
 - [ ] **L3 — Multiple broker support** — Zerodha/Upstox alongside Fyers. **Multi-week feature — needs full OAuth + API client**
+
+---
+
+> ⚠️ **CONFIRM BEFORE STARTING — DO NOT DEVELOP UNTIL EXPLICITLY APPROVED**
+
+- [ ] **L7 — Machine Learning: adaptive parameter calibration**
+
+  **Hard gate: minimum 50–100 completed shadow trades per strategy must be logged before any ML development begins. No exceptions.**
+
+  Once the trade history is sufficient, ML can enhance the engine in 5 areas:
+
+  1. **Dynamic entry threshold calibration** — use historical signal accuracy (e.g. ORB range hit rate for S1, squeeze detection accuracy for S2) to auto-tune signal thresholds per strategy instead of fixed constants.
+  2. **Adaptive VWAP / EMA75 SL buffer** — replace fixed `vwap_buffer_pct` (5%) and `ema_buffer_pct` (1%) with buffers that self-adjust based on recent volatility regime (ATR or rolling premium std-dev). Tighter buffer in low-vol, wider in high-vol.
+  3. **Exit timing prediction** — train a classifier on historical trade data (entry signal, strategy, time-of-day, VIX, premium decay curve) to predict optimal exit window and suppress premature SL triggers.
+  4. **Per-day strategy selection** — use daily features (gap size, prev-day move, VIX, day-of-week) to score each strategy's probability of success that day. Suppress low-probability strategies automatically instead of running all enabled strategies every day.
+  5. **Premium behaviour anomaly detection** — flag abnormal intraday premium spikes (fat-finger fills, circuit breakers, data errors) to avoid SL triggers caused by bad data rather than real market moves.
+
+  **Implementation approach when approved:**
+  - Shadow-only mode first (ML predictions logged but not acted on) for at least 2 weeks
+  - A/B comparison: ML-gated vs non-gated trades on same days
+  - Only graduate to live gating after statistically significant improvement confirmed
+  - No changes to core engine logic until user explicitly approves each ML gate individually
+
+  **Dependencies:** 50–100 trades × 9 strategies = ~450–900 paper trades minimum. At current paper-mode pace, estimate 3–6 months of data collection first.
+
+  > ⚠️ **TO START: user must explicitly say "start L7 ML development" — do not begin this work based on any other instruction.**
+
+---
 - [ ] **L4 — Backtesting page** — Run strategies against historical data. **Multi-week feature — needs historical data infra**
 - [x] **L5 — Position sizing** — Kelly criterion (`kelly_lots`, `get_position_size`) in engine.py + dropdown in automation form
 - [x] **L6 — Admin dashboard** — Revenue KPIs (MRR, ARR), usage stats (engines running, trades today), plan breakdown
@@ -123,6 +155,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v6.3 | 2026-03-26 | VWAP/EMA75 SL buffer configurable per automation, AI config consolidated to Guard Rails (removed Profile duplicate), trade view shows all entry+exit params, disk cleanup, ML backlog L7 added with hard gate |
 | v6.2 | 2026-03-25 | Ratchet profit lock SL (M11), VWAP 5% buffer (M10), 1000pt hedges + BUY-first order (M9), live ATM for S3-S9 (M6-M8), guard rail status display (U4), S10 in help (U9), AI dashboard fix (U3), trade exit details (U5), backtest responsive (U8), symbol tab fix (U2) |
 | v6.1 | 2026-03-21 | Automation edit, multi-symbol market data, PWA, Telegram commands, Kelly position sizing, admin revenue KPIs, S2 validation logging, precheck ternary fix |
 | v6 | 2026-03-21 | Gemini AI, all 9 strategy fixes, Calendar in nav, day picker, help page updated, Claude Code connected |

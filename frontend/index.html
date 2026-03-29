@@ -525,9 +525,10 @@ details[open] summary{color:var(--text)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Profile
       </div>
+      <div id="sn-admin-divider" style="display:none;font-size:9px;color:var(--text2);padding:12px 12px 4px;letter-spacing:1px;text-transform:uppercase;font-weight:600;border-top:1px solid var(--border);margin-top:6px">Administration</div>
       <div class="nav-link" id="sn-admin" style="display:none" onclick="nav('admin')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Admin
+        Admin Panel
       </div>
     </div>
     <div class="sidebar-bottom">
@@ -692,7 +693,20 @@ async function api(method, path, body) {
   }
   if (session.token) opts.headers['Authorization'] = 'Bearer ' + session.token;
   var r = await fetch(path, opts);
-  var d = await r.json();
+  var d;
+  try { d = await r.json(); } catch(_) { d = {}; }
+  if (r.status === 401) {
+    // Session expired — show non-intrusive banner and stop polling
+    var existing = document.getElementById('_session-expired-banner');
+    if (!existing) {
+      var b = document.createElement('div');
+      b.id = '_session-expired-banner';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b45309;color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600';
+      b.innerHTML = '&#9888; Session expired &mdash; <a href="/" style="color:#fde68a;text-decoration:underline">click here to log in again</a>';
+      document.body.prepend(b);
+    }
+    throw new Error('Session expired — please log in again');
+  }
   if (!r.ok) {
     var msg = d.detail || d.message || 'Request failed';
     if (Array.isArray(msg)) msg = msg.map(function(e){return e.msg||e;}).join(', ');
@@ -726,8 +740,13 @@ async function doLogin() {
   try {
     var d = await api('POST', '/api/auth/login', {email:email, password:pass});
     session.token = d.token;
-    session.user = {email:d.email, name:d.name, role:d.role, plan:d.plan};
+    session.user = {email:d.email, name:d.name, role:d.role, plan:d.plan, must_change_password: d.must_change_password || false};
     localStorage.setItem('algodesk', JSON.stringify(session));
+    if (d.must_change_password) {
+        showApp();
+        _showForcePasswordModal();
+        return;
+    }
     showApp();
   } catch(e) {
     errEl.style.display = 'flex';
@@ -775,6 +794,46 @@ async function doForgot() {
     toast('Reset link sent if account exists', 'success');
     switchAuthTab('login');
   } catch(e) { toast(e.message, 'error'); }
+}
+
+function _showForcePasswordModal() {
+    var overlay = document.createElement('div');
+    overlay.id = 'force-pw-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:32px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.4)">'
+        + '<div style="font-size:18px;font-weight:700;margin-bottom:6px">Set Your Password</div>'
+        + '<div style="font-size:12px;color:var(--text2);margin-bottom:20px">Your account was created with a temporary password. Please set a new one to continue.</div>'
+        + '<div class="field" style="margin-bottom:12px"><label>Temporary Password</label><input type="password" id="fcp-old" placeholder="Enter the temporary password you used" style="width:100%"></div>'
+        + '<div class="field" style="margin-bottom:12px"><label>New Password</label><input type="password" id="fcp-new" placeholder="At least 8 characters" style="width:100%"></div>'
+        + '<div class="field" style="margin-bottom:20px"><label>Confirm Password</label><input type="password" id="fcp-confirm" placeholder="Repeat new password" style="width:100%"></div>'
+        + '<div id="fcp-err" style="font-size:12px;color:var(--red);margin-bottom:10px;display:none"></div>'
+        + '<button class="btn btn-primary" style="width:100%" onclick="submitForcePasswordChange()">Set Password & Continue</button>'
+        + '</div>';
+    document.body.appendChild(overlay);
+    setTimeout(function(){ var el=document.getElementById('fcp-new'); if(el) el.focus(); }, 100);
+}
+
+async function submitForcePasswordChange() {
+    var op = (document.getElementById('fcp-old')||{}).value || '';
+    var np = (document.getElementById('fcp-new')||{}).value || '';
+    var cp = (document.getElementById('fcp-confirm')||{}).value || '';
+    var err = document.getElementById('fcp-err');
+    if (!op)           { err.textContent='Enter your temporary password'; err.style.display='block'; return; }
+    if (np.length < 8) { err.textContent='Password must be at least 8 characters'; err.style.display='block'; return; }
+    if (np !== cp)     { err.textContent='Passwords do not match'; err.style.display='block'; return; }
+    err.style.display = 'none';
+    try {
+        await api('POST', '/api/auth/change-password', {current_password: op, new_password: np});
+        session.user.must_change_password = false;
+        var overlay = document.getElementById('force-pw-overlay');
+        if (overlay) overlay.remove();
+        toast('Password updated — welcome to AlgoDesk!', 'success');
+        nav('dashboard');
+        initDashboard();
+    } catch(e) {
+        err.textContent = e.message || 'Failed to update password';
+        err.style.display = 'block';
+    }
 }
 
 // ── AI ASSISTANT PANEL ───────────────────────────────────────────
@@ -858,6 +917,25 @@ function _updateClaudeCards() {
 
 function _buildClaudeCard(a) {
   if (!a) return '';
+
+  // ── Weekend mode — show weekly recap, not a trading recommendation ──
+  if (a.weekend || a.confidence === 'weekend') {
+    return '<div class=”claude-header”>'
+      + '<div class=”claude-title”>✦ AI Assessment &nbsp;<span style=”font-size:10px;color:var(--text2);font-weight:400”>'+esc(a.generated_at||a.date||'')+'</span></div>'
+      + '<div style=”display:flex;gap:6px;align-items:center”>'
+      + '<span class=”claude-badge” style=”background:var(--bg3);color:var(--text2);border:1px solid var(--border)”>📅 Weekend</span>'
+      + '<button id=”claude-refresh-btn” class=”btn btn-ghost btn-sm” onclick=”refreshClaudeAssessment()” style=”font-size:10px;padding:2px 8px”>↻ Refresh</button>'
+      + '<button class=”btn btn-ghost btn-sm” onclick=”openAiPanel()” style=”font-size:10px;padding:2px 8px”>Ask →</button>'
+      + '</div></div>'
+      + '<div style=”display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px”>'
+      + '<span style=”font-size:11px;color:var(--text2)”>Markets closed — next session Monday</span>'
+      + '</div>'
+      + (a.gap_assessment ? '<div style=”font-size:12px;color:var(--text);margin-bottom:6px;font-weight:500”>'+esc(a.gap_assessment)+'</div>' : '')
+      + (a.reason ? '<div style=”font-size:11px;line-height:1.6;color:var(--text2)”>'+esc(a.reason)+'</div>' : '')
+      + (a.vix_assessment ? '<div style=”font-size:11px;color:var(--text2);margin-top:6px”>'+esc(a.vix_assessment)+'</div>' : '');
+  }
+
+  // ── Normal trading day ──
   var tradeClass = a.trade_today ? 'go' : 'stop';
   var tradeLabel = a.trade_today ? '✅ Trade Today' : '🛑 Skip Today';
   var riskColors = {low:'var(--green)', medium:'var(--amber)', high:'var(--red)'};
@@ -865,36 +943,36 @@ function _buildClaudeCard(a) {
   var confColor  = {high:'var(--green)', medium:'var(--amber)', low:'var(--red)'}[a.confidence||'medium'];
 
   var recHtml  = (a.recommended_strategies||[]).map(function(s){
-    return '<span class="strat-badge-ai best">'+esc(s)+'</span>';
+    return '<span class=”strat-badge-ai best”>'+esc(s)+'</span>';
   }).join(' ');
   var avoidHtml = (a.avoid_strategies||[]).map(function(s){
-    return '<span class="strat-badge-ai avoid">'+esc(s)+'</span>';
+    return '<span class=”strat-badge-ai avoid”>'+esc(s)+'</span>';
   }).join(' ');
 
-  return '<div class="claude-header">'
-    + '<div class="claude-title">✦ AI Assessment &nbsp;<span style="font-size:10px;color:var(--text2);font-weight:400">'+esc(a.generated_at||a.date||'')+'</span></div>'
-    + '<div style="display:flex;gap:6px;align-items:center">'
-    + '<span class="claude-badge '+tradeClass+'">'+tradeLabel+'</span>'
-    + '<button id="claude-refresh-btn" class="btn btn-ghost btn-sm" onclick="refreshClaudeAssessment()" style="font-size:10px;padding:2px 8px">↻ Refresh</button>'
-    + '<button class="btn btn-ghost btn-sm" onclick="openAiPanel()" style="font-size:10px;padding:2px 8px">Ask →</button>'
+  return '<div class=”claude-header”>'
+    + '<div class=”claude-title”>✦ AI Assessment &nbsp;<span style=”font-size:10px;color:var(--text2);font-weight:400”>'+esc(a.generated_at||a.date||'')+'</span></div>'
+    + '<div style=”display:flex;gap:6px;align-items:center”>'
+    + '<span class=”claude-badge '+tradeClass+'”>'+tradeLabel+'</span>'
+    + '<button id=”claude-refresh-btn” class=”btn btn-ghost btn-sm” onclick=”refreshClaudeAssessment()” style=”font-size:10px;padding:2px 8px”>↻ Refresh</button>'
+    + '<button class=”btn btn-ghost btn-sm” onclick=”openAiPanel()” style=”font-size:10px;padding:2px 8px”>Ask →</button>'
     + '</div></div>'
     // Risk + confidence row
-    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
-    + '<span style="font-size:11px">Risk: <strong style="color:'+riskColor+'">'+(a.risk_level||'').toUpperCase()+'</strong></span>'
-    + '<span style="font-size:11px">Confidence: <strong style="color:'+confColor+'">'+(a.confidence||'').toUpperCase()+'</strong></span>'
-    + (a.suggested_hedge ? '<span style="font-size:11px">Hedge: <strong>±'+a.suggested_hedge+' strikes</strong></span>' : '')
+    + '<div style=”display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px”>'
+    + '<span style=”font-size:11px”>Risk: <strong style=”color:'+riskColor+'”>'+(a.risk_level||'').toUpperCase()+'</strong></span>'
+    + '<span style=”font-size:11px”>Confidence: <strong style=”color:'+confColor+'”>'+(a.confidence||'').toUpperCase()+'</strong></span>'
+    + (a.suggested_hedge ? '<span style=”font-size:11px”>Hedge: <strong>±'+a.suggested_hedge+' strikes</strong></span>' : '')
     + '</div>'
     // Strategies
-    + (recHtml  ? '<div style="margin-bottom:4px;font-size:11px"><span style="color:var(--text2)">Use: </span>'+recHtml+'</div>' : '')
-    + (avoidHtml? '<div style="margin-bottom:8px;font-size:11px"><span style="color:var(--text2)">Avoid: </span>'+avoidHtml+'</div>' : '')
+    + (recHtml  ? '<div style=”margin-bottom:4px;font-size:11px”><span style=”color:var(--text2)”>Use: </span>'+recHtml+'</div>' : '')
+    + (avoidHtml? '<div style=”margin-bottom:8px;font-size:11px”><span style=”color:var(--text2)”>Avoid: </span>'+avoidHtml+'</div>' : '')
     // VIX / gap lines
-    + (a.vix_assessment ? '<div style="font-size:11px;color:var(--text2);margin-bottom:2px">'+esc(a.vix_assessment)+'</div>' : '')
-    + (a.gap_assessment ? '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">'+esc(a.gap_assessment)+'</div>' : '')
+    + (a.vix_assessment ? '<div style=”font-size:11px;color:var(--text2);margin-bottom:2px”>'+esc(a.vix_assessment)+'</div>' : '')
+    + (a.gap_assessment ? '<div style=”font-size:11px;color:var(--text2);margin-bottom:6px”>'+esc(a.gap_assessment)+'</div>' : '')
     // Main reason
-    + (a.reason ? '<div style="font-size:12px;line-height:1.5;font-style:italic;color:var(--text)">“'+esc(a.reason)+'”</div>' : '')
+    + (a.reason ? '<div style=”font-size:12px;line-height:1.5;font-style:italic;color:var(--text)”>”'+esc(a.reason)+'”</div>' : '')
     // Event warning
-    + (a.event_warning ? '<div style="margin-top:8px;padding:6px 8px;background:rgba(255,171,64,.1);border-radius:4px;font-size:11px;color:var(--amber)">⚠️ '+esc(a.event_warning)+'</div>' : '')
-    + (!a.ai_enabled ? '<div style="margin-top:8px;font-size:10px;color:var(--text2)">Set ANTHROPIC_API_KEY on server to enable AI assessment.</div>' : '');
+    + (a.event_warning ? '<div style=”margin-top:8px;padding:6px 8px;background:rgba(255,171,64,.1);border-radius:4px;font-size:11px;color:var(--amber)”>⚠️ '+esc(a.event_warning)+'</div>' : '')
+    + (!a.ai_enabled ? '<div style=”margin-top:8px;font-size:10px;color:var(--text2)”>Set ANTHROPIC_API_KEY on server to enable AI assessment.</div>' : '');
 }
 
 function _applyClaudeBadges(a) {
@@ -1146,6 +1224,7 @@ function doLogout() {
   localStorage.removeItem('algodesk');
   if (wsConn) { wsConn.close(); wsConn = null; }
   if (_tickerTimer) { clearInterval(_tickerTimer); _tickerTimer = null; }
+  if (_fundsTimer)  { clearInterval(_fundsTimer);  _fundsTimer  = null; }
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth').style.display = 'flex';
 }
@@ -1160,6 +1239,8 @@ function showApp() {
   if (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN') {
     var snadmin = document.getElementById('sn-admin');
     if (snadmin) snadmin.style.display = 'flex';
+    var snadminDiv = document.getElementById('sn-admin-divider');
+    if (snadminDiv) snadminDiv.style.display = 'block';
     // Also show in More drawer
     var moreAdmin = document.getElementById('more-admin-item');
     if (moreAdmin) moreAdmin.style.display = 'flex';
@@ -1238,21 +1319,31 @@ var _accountFunds = {available: 0, raw: {}, matched_key: null, loaded: false, er
 async function fetchAccountFunds() {
   try {
     var d = await api('GET', '/api/market/funds');
-    if (d.ok && d.mode !== 'paper') {
+    if (d.ok) {
       _accountFunds = {
-        available:   d.available_balance || 0,
-        raw:         d.funds || {},
-        matched_key: d.matched_key || null,
-        loaded:      true,
-        error:       null,
-        message:     d.message || ''
+        available:        d.available_balance || 0,
+        raw:              d.funds || {},
+        matched_key:      d.matched_key || null,
+        loaded:           true,
+        error:            null,
+        broker_connected: d.broker_connected || false,
+        mode:             d.mode || 'live',
+        cached:           d.cached || false,
+        cached_at:        d.cached_at || null,
+        message:          d.message || ''
       };
-    } else if (d.mode === 'paper') {
+    } else if (d.broker_connected) {
+      // Broker IS connected but balance service is temporarily unavailable (e.g. weekend)
       _accountFunds = {available: 0, raw: {}, matched_key: null,
-                       loaded: true, error: null, message: 'Paper mode'};
+                       loaded: true, error: d.message || 'Unavailable',
+                       broker_connected: true, mode: d.mode || 'paper',
+                       cached: false, cached_at: null,
+                       message: d.message || ''};
     } else {
       _accountFunds = {available: 0, raw: {}, matched_key: null,
                        loaded: true, error: d.message || 'No balance',
+                       broker_connected: false, mode: 'none',
+                       cached: false, cached_at: null,
                        message: d.message || ''};
     }
     // Refresh any visible balance displays
@@ -1268,7 +1359,9 @@ function _updateBalanceDisplays() {
   var chip = document.getElementById('tb-balance');
   if (chip) {
     if (_accountFunds.available > 0) {
-      chip.textContent = '₹' + Number(_accountFunds.available).toLocaleString('en-IN', {maximumFractionDigits:0});
+      var prefix = _accountFunds.cached ? '🕒 ' : '';
+      chip.textContent = prefix + '₹' + Number(_accountFunds.available).toLocaleString('en-IN', {maximumFractionDigits:0});
+      chip.title = _accountFunds.cached ? ('Cached balance — last seen ' + (_accountFunds.cached_at||'earlier')) : 'Live balance';
       chip.style.display = 'flex';
     } else {
       chip.style.display = 'none';
@@ -1282,12 +1375,14 @@ function _updateBalanceDisplays() {
 }
 
 // ── TICKER ──────────────────────────────────────────────────
+var _fundsTimer = null;
 function startTicker() {
   updateTicker();
   _tickerTimer = setInterval(updateTicker, 60000);
   // Fetch balance immediately and then every 5 minutes
   fetchAccountFunds();
-  setInterval(fetchAccountFunds, 300000);
+  if (_fundsTimer) clearInterval(_fundsTimer);
+  _fundsTimer = setInterval(fetchAccountFunds, 300000);
 }
 
 async function updateTicker() {
@@ -1453,49 +1548,75 @@ async function _loadDashFunds() {
 
   // If error or no broker
   if (_accountFunds.error && !avail) {
+    var errMsg = _accountFunds.message || _accountFunds.error || '';
+    var isAuthErr  = /session|expired|authenticated/i.test(errMsg);
+    var isConnected = _accountFunds.broker_connected;
+    var isWeekend  = errMsg.toLowerCase().indexOf('outside market') !== -1 || errMsg.toLowerCase().indexOf('unavailable') !== -1;
+    var displayMsg, showBtn;
+    if (isAuthErr) {
+      displayMsg = 'Session expired — <a href="/" style="color:var(--blue)">log in again</a> to see account balance.';
+      showBtn = false;
+    } else if (isConnected && isWeekend) {
+      displayMsg = '&#128179; Fyers balance unavailable outside market hours &mdash; broker is connected &amp; ready for Monday.';
+      showBtn = false;
+    } else if (isConnected) {
+      displayMsg = '&#128179; Balance temporarily unavailable: ' + esc(errMsg);
+      showBtn = false;
+    } else {
+      displayMsg = '&#128179; <span style="cursor:pointer;color:var(--blue)" onclick="nav(\'brokers\')">Connect Fyers</span> to see real funds and margin capacity.';
+      showBtn = true;
+    }
     fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body">'
-      + '<div style="font-size:12px;color:var(--text2)">&#128179; Account balance unavailable — '
-      + esc(_accountFunds.message || _accountFunds.error || 'Connect Fyers in My Brokers')+'</div>'
-      + '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="nav(\'brokers\')">Connect Broker</button>'
+      + '<div style="font-size:12px;color:var(--text2)">' + displayMsg + '</div>'
+      + (showBtn ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="nav(\'brokers\')">Connect Broker</button>' : '')
       + '</div></div>';
     return;
   }
 
   // Always show margin estimates — paper mode shows what funds would be needed
   try {
-    var d = await api('GET', '/api/capital/check?symbol='+encodeURIComponent(_dashSymbol)+'&lots=1&strategies=S1,S8');
+    // Pass all strategies so max_hedge reflects S4 (±20 wings), S8 (±3), etc.
+    var d = await api('GET', '/api/capital/check?symbol='+encodeURIComponent(_dashSymbol)+'&lots=1&strategies=S1,S2,S3,S4,S6,S7,S8,S9');
     var m = d.margin || {};
-    var isPaper = (d.mode === 'paper') || (_accountFunds.message === 'Paper mode') || (avail === 0);
+    // Paper mode if mode flag set OR if no real balance available
+    var isPaper    = (d.mode === 'paper') || (d.mode === 'no_broker');
+    var isNoBroker = (d.mode === 'no_broker');
     if (d.available > 0) avail = d.available;
     var canTrade = !isPaper && avail > 0 && avail >= (m.net_required || 0);
     var maxLots  = d.buffer_lots || 0;
 
     fr.innerHTML = '<div class="card" style="margin-bottom:12px">'
       + '<div class="card-header"><div class="card-title">Funds — '+esc(info.label)+'</div>'
-      + (isPaper ? '<span class="badge paper">Paper Mode</span>' : '<span class="badge '+(canTrade?'running':'idle')+'">'+(canTrade?'\u2705 Can Trade':'\u274c Low Funds')+'</span>')
+      + (isNoBroker ? '<span class="badge paper">Broker not connected</span>' : isPaper ? '<span class="badge paper">&#128203; Paper Mode</span>' : '<span class="badge '+(canTrade?'running':'idle')+'">'+(canTrade?'\u2705 Can Trade':'\u274c Low Funds')+'</span>')
       + '</div><div class="card-body">'
       + '<div class="kpi-grid" style="margin-bottom:0">'
       + '<div class="kpi"><div class="kpi-label">Account Balance</div>'
-      + '<div class="kpi-value" style="font-size:18px;color:'+(isPaper?'var(--amber)':'var(--green)')+'">'
-      + (isPaper ? '\u2014' : '\u20b9'+Number(avail).toLocaleString('en-IN'))
-      + '</div><div class="kpi-sub">'+(isPaper?'No broker (paper mode)':'Fyers account')+'</div></div>'
+      + '<div class="kpi-value" style="font-size:18px;color:'+(_accountFunds.cached?'var(--amber)':isPaper?'var(--text2)':'var(--green)')+'">'
+      + (avail > 0 ? '\u20b9'+Number(avail).toLocaleString('en-IN') : '\u2014')
+      + '</div><div class="kpi-sub" title="'+(_accountFunds.cached&&_accountFunds.cached_at?'Last fetched: '+esc(_accountFunds.cached_at):'')+'">'+
+        (avail > 0
+          ? (_accountFunds.cached
+              ? '\uD83D\uDD52 Last seen ' + esc(_accountFunds.cached_at||'earlier')
+              : 'Fyers live account')
+          : isPaper ? 'Connect broker to see balance' : 'Connect Fyers')
+      +'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">1 Lot Margin Est.</div>'
       + '<div class="kpi-value neutral" style="font-size:18px">\u20b9'+Number(m.net_required||0).toLocaleString('en-IN')+'</div>'
-      + '<div class="kpi-sub">'+esc(info.label)+' Iron Fly \u00b12</div></div>'
+      + '<div class="kpi-sub">'+esc(info.label)+' \u00b1'+(m.hedge_width||2)+' hedge ('+esc(m.structure||'Iron Fly')+')</div></div>'
       + '<div class="kpi"><div class="kpi-label">Lot Size (2026)</div>'
       + '<div class="kpi-value neutral">'+info.lot+'</div>'
       + '<div class="kpi-sub">units per contract</div></div>'
-      + '<div class="kpi"><div class="kpi-label">'+(isPaper?'Paper Capacity':'Max Lots')+'</div>'
+      + '<div class="kpi"><div class="kpi-label">'+(isPaper?'Paper Trades':'Max Lots (Live)')+'</div>'
       + '<div class="kpi-value" style="font-size:14px;color:'+(isPaper?'var(--amber)':canTrade?'var(--green)':'var(--red)')+'">'
       + (isPaper ? 'Unlimited' : canTrade ? (maxLots+1)+' lots' : 'Low funds')
-      + '</div><div class="kpi-sub">'+(isPaper?'No margin needed':'based on balance')+'</div></div>'
+      + '</div><div class="kpi-sub">'+(isPaper?'Paper runs without margin — live needs broker':'based on live balance')+'</div></div>'
       + '</div>'
       + (m.net_premium ? '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'
         + '<span>Est. premium: <strong style="color:var(--green)">\u20b9'+Number(m.net_premium).toLocaleString('en-IN')+'</strong></span>'
         + '<span>50% profit target: <strong style="color:var(--green)">\u20b9'+Number(m.profit_at_50pct||0).toLocaleString('en-IN')+'</strong></span>'
         + '<span>Max loss (defined): <strong style="color:var(--red)">\u20b9'+Number(m.max_loss||0).toLocaleString('en-IN')+'</strong></span>'
         + '</div>' : '')
-      + (isPaper ? '<div style="font-size:11px;color:var(--amber);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Paper mode \u2014 no real funds needed. <span style="color:var(--blue);cursor:pointer" onclick="nav(\'brokers\')">Connect Fyers</span> to see real balance and capacity.</div>' : '')
+      + (isPaper ? '<div style="font-size:11px;color:var(--text2);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Paper automations run without a broker \u2014 simulated trades only. Live automations need a <span style="color:var(--blue);cursor:pointer" onclick="nav(\'brokers\')">connected broker</span> and real margin. You can run both simultaneously.</div>' : '')
       + '</div></div>';
   } catch(e) {
     fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body">'
@@ -1510,15 +1631,19 @@ async function renderDashboard() {
   var el = document.getElementById('pg-dashboard');
   el.innerHTML = '<div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
   try {
-    var s = await api('GET', '/api/dashboard/summary');
+    var sym = _dashSymbol || 'NSE:NIFTY50-INDEX';
+    var s = await api('GET', '/api/dashboard/summary?symbol='+encodeURIComponent(sym));
     var spot = s.spot||0;
     var atm  = s.atm||0;
-    // Seed per-symbol cache so tab switching shows last known data
-    if (spot > 0) { _symSpotCache[_dashSymbol] = {spot:spot, atm:atm}; }
+    var vix  = s.vix||0;
+    // Seed per-symbol cache — keyed by actual requested symbol
+    if (spot > 0) { _symSpotCache[sym] = {spot:spot, atm:atm}; }
     var spotFmt = spot>0 ? '\u20b9'+Number(spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1}) : '\u2014';
     var lp=s.today_live_pnl||0, pp=s.today_paper_pnl||0;
     var ml=s.month_live_pnl||0, mp=s.month_paper_pnl||0;
     var atm=s.atm||0;
+    var _now = new Date();
+    var monthLabel = _now.toLocaleString('en-IN', {month:'long', year:'numeric'});
 
     // Auto cards
     var autoCards = '';
@@ -1530,24 +1655,25 @@ async function renderDashboard() {
       var isLive     = a.mode==='live';
       var modeBadge  = isLive ? '<span class="badge live">Live</span>' : '<span class="badge paper">Paper</span>';
       var statusDot  = a.status==='RUNNING' ? '<div class="dot green pulse"></div>' : '<div class="dot gray"></div>';
-      var stratBadges= (a.strategies||[]).slice(0,3).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join(' ');
-      // Show live P&L if live mode, paper P&L if paper mode
+      var _snames={'S1':'ORB','S2':'VWAP Squeeze','S3':'Breakout','S4':'Iron Condor','S5':'Ratio Spread','S6':'Theta Strangle','S7':'All-Strike','S8':'Gap Fade','S9':'Expiry Crush','S10':'Gap Direction'};
+      var stratBadges= (a.strategies||[]).slice(0,3).map(function(s){ return '<span class="badge strategy" title="'+s+'">'+(_snames[s]||s)+'</span>'; }).join(' ');
+      // Build P&L display: always show what's relevant for this mode
       var displayPnl    = isLive ? livePnl : paperPnl;
       var displayTrades = isLive ? liveTrades : paperTrades;
-      // If live mode also has shadow running, show both
-      var bothRow = (isLive && a.shadow_mode && paperTrades > 0)
-        ? '<div style="font-size:10px;color:var(--amber);margin-top:2px">Paper sim: '+pnlFmt(paperPnl)+' ('+paperTrades+' trades)</div>'
+      // Show shadow paper sim row if live automation also has paper data
+      var shadowRow = (isLive && paperTrades > 0)
+        ? '<div style="font-size:10px;color:var(--amber);margin-top:2px">📋 Paper sim: '+pnlFmt(paperPnl)+' ('+paperTrades+' trades)</div>'
         : '';
       autoCards += '<div class="trade-item" style="cursor:pointer" onclick="nav(\'live\')">'
         + '<div class="trade-icon" style="background:var(--bg3)">'+statusDot+'</div>'
         + '<div class="trade-info">'
         + '<div class="trade-name">'+esc(a.name)+'</div>'
         + '<div class="trade-meta" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+' '+stratBadges+'</div>'
-        + bothRow
+        + shadowRow
         + '</div>'
         + '<div class="trade-pnl">'
         + '<div class="trade-pnl-val '+pnlClass(displayPnl)+'">'+pnlFmt(displayPnl)+'</div>'
-        + '<div class="trade-pnl-sub">'+displayTrades+' trade'+(displayTrades!==1?'s':'')+(isLive?' live':' paper')+'</div>'
+        + '<div class="trade-pnl-sub">'+displayTrades+' trade'+(displayTrades!==1?'s':'')+(isLive?' \ud83d\udd34 live':' \ud83d\udcbb paper')+'</div>'
         + '</div></div>';
     });
 
@@ -1557,27 +1683,150 @@ async function renderDashboard() {
       return '<button id="dsym-'+sym.short+'" onclick="setDashSymbol(\''+sym.value+'\')" style="padding:5px 12px;border:1px solid '+(isActive?'rgba(0,230,118,.4)':'var(--border)')+';border-radius:var(--radius-sm);background:'+(isActive?'var(--green-bg)':'var(--bg3)')+';color:'+(isActive?'var(--green)':'var(--text2)')+';font-size:12px;font-weight:600;cursor:pointer;transition:all .15s">'+sym.label+'</button>';
     }).join('');
 
+    // ── Onboarding progress card ────────────────────────────────
+    var ob = s.onboarding || {};
+    var obStep = ob.step || 1;
+    var obDismissKey = 'ob_dismiss_v2_'+(session.user&&session.user.email||'');
+    var obDismissed  = localStorage.getItem(obDismissKey) === '1';
+    var paperCount   = ob.paper_trade_count || 0;
+    var obData = [
+      {n:1, title:'Account created',           desc:'You are logged in and ready to go.',                                    cta:null,               ctaFn:null,               done:true},
+      {n:2, title:'Connect your Fyers account', desc:'Link your broker so AlgoDesk can place orders on your behalf.',         cta:'Connect Broker',   ctaFn:"nav('brokers')",   done:!!ob.broker_connected},
+      {n:3, title:'Start a paper automation',   desc:'Run a strategy in paper mode — no real money, just simulation.',        cta:'Create Automation',ctaFn:"nav('automate')",  done:paperCount>0},
+      {n:4, title:'Complete 20 paper trades',   desc:'Build confidence with '+paperCount+' of 20 trades done. Keep going.',   cta:'View Results',     ctaFn:"nav('performance')",done:paperCount>=20},
+      {n:5, title:'Go live',                    desc:'Your paper results look good. Switch to live and start earning real money.', cta:'Go Live Now',  ctaFn:"nav('automate')",  done:!!ob.has_live_auto},
+      {n:6, title:'First real profit',          desc:'AlgoDesk is working for you. Goal complete.',                           cta:null,               ctaFn:null,               done:ob.live_pnl_total>0},
+    ];
+    // Compute step purely from done states (reliable, no server dependency)
+    var obFirstNotDone = obData.findIndex(function(x){ return !x.done; });
+    var obStep = obFirstNotDone === -1 ? 6 : obFirstNotDone + 1;
+    var obPct = Math.round((obStep-1)/5*100);
+    var obHtml = '';
+    if (!obDismissed && obStep <= 5) {
+      var obRows = obData.map(function(x) {
+        var isDone = x.done;
+        var isCurrent = !isDone && x.n === obStep;
+        if (isDone) {
+          return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="width:22px;height:22px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#fff;font-weight:700">\u2713</div>'
+            + '<div style="font-size:11px;color:var(--text2);text-decoration:line-through;flex:1">'+x.title+'</div>'
+            + '</div>';
+        }
+        if (isCurrent) {
+          return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin:6px -2px;background:var(--bg3);border:1px solid rgba(0,200,255,.25);border-radius:var(--radius-sm)">'
+            + '<div style="width:26px;height:26px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;color:#fff;font-weight:700;margin-top:1px">'+x.n+'</div>'
+            + '<div style="flex:1">'
+            +   '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px">'+x.title+'</div>'
+            +   '<div style="font-size:11px;color:var(--text2);margin-bottom:8px">'+x.desc+'</div>'
+            +   (x.cta ? '<button class="btn btn-primary" style="font-size:12px;padding:6px 16px" onclick="'+x.ctaFn+'">'+x.cta+' \u2192</button>' : '')
+            + '</div>'
+            + '</div>';
+        }
+        // Future step
+        return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);opacity:0.35">'
+          + '<div style="width:22px;height:22px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;color:var(--text2)">'+x.n+'</div>'
+          + '<div style="font-size:11px;color:var(--text2);flex:1">'+x.title+'</div>'
+          + '</div>';
+      }).join('');
+
+      obHtml = '<div data-ob="1" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+        + '<div>'
+        +   '<div style="font-size:13px;font-weight:700">Your setup journey</div>'
+        +   '<div style="font-size:10px;color:var(--text2);margin-top:1px">Step '+obStep+' of 6 &mdash; complete all steps to start earning</div>'
+        + '</div>'
+        + '<span style="font-size:10px;color:var(--text2);cursor:pointer;padding:4px 8px;border:1px solid var(--border);border-radius:4px" onclick="localStorage.setItem(\''+obDismissKey+'\',\'1\');this.closest(\'[data-ob]\').remove()">Hide</span>'
+        + '</div>'
+        // Progress bar — thick and labelled
+        + '<div style="margin-bottom:12px">'
+        + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:4px"><span>Progress</span><span style="color:'+(obPct>=80?'var(--green)':'var(--text2)')+'">'+obPct+'% complete</span></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;height:8px"><div style="background:linear-gradient(90deg,var(--blue),var(--green));height:8px;width:'+obPct+'%;border-radius:6px;transition:width .5s"></div></div>'
+        + '</div>'
+        + obRows
+        + '</div>';
+    }
+    if (obStep > 5 && !localStorage.getItem(obDismissKey+'_won')) {
+      obHtml = '<div data-ob="1" style="background:rgba(0,230,118,.06);border:1px solid var(--green);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px">'
+        + '<div style="font-size:28px">\ud83c\udf89</div>'
+        + '<div style="flex:1">'
+        +   '<div style="font-size:14px;font-weight:700;color:var(--green)">First live profit achieved!</div>'
+        +   '<div style="font-size:11px;color:var(--text2);margin-top:2px">Total live P&L: <strong>'+pnlFmt(ob.live_pnl_total)+'</strong> &mdash; AlgoDesk is working for you.</div>'
+        + '</div>'
+        + '<span style="font-size:10px;color:var(--text2);cursor:pointer;padding:4px 8px;border:1px solid var(--green);border-radius:4px" onclick="localStorage.setItem(\''+obDismissKey+'_won\',\'1\');this.closest(\'[data-ob]\').remove()">Dismiss</span>'
+        + '</div>';
+    }
+
     el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><div class="page-title">Dashboard</div><div class="page-sub">'+
       (s.market_status==='live' ? 'Market open &bull; Updated '+esc(s.market_updated||'') : s.market_message||'Waiting for market')+'</div></div>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'+symTabs+'</div></div>'+
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'+symTabs+'</div></div>'
+      + obHtml
+      + '<div id="dash-funds-row" style="margin-bottom:12px"></div>'+
 
       '<div class="kpi-grid">'
-      + '<div class="kpi green"><div class="kpi-label" id="dash-spot-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral" id="dash-spot-val">'+spotFmt+'</div><div class="kpi-sub" id="dash-atm-val">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+'</div></div>'
+      + '<div class="kpi green"><div class="kpi-label" id="dash-spot-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral" id="dash-spot-val">'+spotFmt+'</div><div class="kpi-sub" id="dash-atm-val">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+' &bull; <span title="India VIX — volatility index. Guard 2 blocks trading if above your vix_max threshold. Fetched from Fyers at market open." style="color:'+(vix>=20?'var(--red)':vix>=15?'var(--amber)':'var(--text2)')+'">VIX '+(vix>0?vix.toFixed(1):'—')+'</span>'+'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.live_automations||0)+' live</span> • <span style="color:var(--amber)">'+(s.paper_automations||0)+' paper</span></div></div>'
       + '<div class="kpi '+(lp>=0?'green':'red')+'"><div class="kpi-label">Today Live P&amp;L</div><div class="kpi-value '+pnlClass(lp)+'">'+pnlFmt(lp)+'</div><div class="kpi-sub">'+(s.today_live_trades||0)+' closed</div></div>'
       + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Paper P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+(s.today_paper_trades||0)+' simulated</div></div>'
       + '</div>'
 
-      + '<div class="kpi-grid">'
-      + '<div class="kpi '+(ml>=0?'green':'red')+'"><div class="kpi-label">Month Live P&amp;L</div><div class="kpi-value '+pnlClass(ml)+'">'+pnlFmt(ml)+'</div><div class="kpi-sub">Last 30 days</div></div>'
-      + '<div class="kpi '+(mp>=0?'amber':'red')+'"><div class="kpi-label">Month Paper P&amp;L</div><div class="kpi-value '+pnlClass(mp)+'">'+pnlFmt(mp)+'</div><div class="kpi-sub">Last 30 days</div></div>'
-      + '<div class="kpi '+(s.open_positions>0?'blue':'')+'"><div class="kpi-label">Open Positions</div><div class="kpi-value neutral">'+(s.open_positions||0)+'</div><div class="kpi-sub">'+(s.open_live>0?'<span style="color:var(--red)">'+s.open_live+' live</span>':'')+(s.open_live>0&&s.open_paper>0?' &bull; ':'')+(s.open_paper>0?'<span style="color:var(--amber)">'+s.open_paper+' paper</span>':'')+(s.open_positions===0?'No open trades':'')+'</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Today Trades</div><div class="kpi-value neutral">'+((s.today_live_trades||0)+(s.today_paper_trades||0))+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.today_live_trades||0)+' live</span> &bull; <span style="color:var(--amber)">'+(s.today_paper_trades||0)+' paper</span></div></div>'
-      + '</div>'
-      + '<div class="claude-card" id="claude-dash-card"><div class="claude-header"><div class="claude-title">✦ AI Assessment</div></div><div style="font-size:12px;color:var(--text2)">Loading...</div></div>'      + '<div id="dash-funds-row"></div>'
+      // ── This Month summary card ─────────────────────────────
+      + (function(){
+          var _isAdminUser = session && session.user && (session.user.role === 'SUPER_ADMIN' || session.user.role === 'ADMIN');
+          var isPro = session && session.user && session.user.plan === 'PRO' && !_isAdminUser;
+          var subCost = isPro ? (session.user.subscription_amount || 5000) : 0;
+          var netVsSub = isPro ? (ml - subCost) : null;
+          var thirdCol = isPro
+            ? ('<div style="flex:1;padding:12px">'
+              + '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Subscription</div>'
+              + '<div style="font-size:20px;font-weight:700;color:var(--amber)">\u20b9'+subCost.toLocaleString('en-IN')+'<span style="font-size:10px;font-weight:400;color:var(--text2)">/mo</span></div>'
+              + '<div style="font-size:10px;margin-top:2px;color:'+(netVsSub>=0?'var(--green)':'var(--text2)') +'">'+
+                (netVsSub !== null ? (netVsSub >= 0 ? '\u2714 Live covers sub' : '\u20b9'+Math.abs(netVsSub).toLocaleString('en-IN')+' to target') : '') +
+              '</div></div>')
+            : ('<div style="flex:1;padding:12px">'
+              + '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Open Positions</div>'
+              + '<div style="font-size:20px;font-weight:700;color:'+(s.open_positions>0?'var(--blue)':'var(--text)')+'">'+(s.open_positions||0)+'</div>'
+              + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+(s.open_live>0?'<span style="color:var(--red)">'+s.open_live+' live</span>':'')+( s.open_live>0&&s.open_paper>0?' &bull; ':'')+( s.open_paper>0?'<span style="color:var(--amber)">'+s.open_paper+' paper</span>':'')+(s.open_positions===0?'No open trades':'')+'</div>'
+              + '</div>');
+          var mlt = s.month_live_trades || 0;
+          var mpt = s.month_paper_trades || 0;
+          var liveSubLabel = mlt > 0 ? mlt+' trade'+(mlt!==1?'s':'')+' closed' : (isPro ? 'no live trades yet' : 'upgrade to trade live');
+          var paperSubLabel = mpt > 0 ? mpt+' trade'+(mpt!==1?'s':'')+' simulated' : 'no paper trades yet';
+          var goLiveNudge = (isPro && ml === 0 && mp > 0)
+            ? '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-top:1px solid var(--border);background:rgba(255,170,0,.05)">'
+              + '<div style="font-size:11px;color:var(--amber)">Paper is up '+pnlFmt(mp)+' this month \u2014 go live to earn real returns</div>'
+              + '<button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--amber);border-color:rgba(255,170,0,.3)" onclick="nav(\'automate\')">Go Live \u2192</button>'
+              + '</div>'
+            : (isPro && ml > 0 && ml >= subCost
+              ? '<div style="font-size:11px;color:var(--green);padding:8px 12px;border-top:1px solid var(--border)">\u2714 Live trading covers your subscription this month</div>'
+              : '');
+          return '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">This Month</div><span style="font-size:11px;color:var(--text2)">'+monthLabel+'</span></div>'
+            + '<div class="card-body" style="padding:0">'
+            + '<div style="display:flex;border-top:1px solid var(--border)">'
+            + '<div style="flex:1;padding:12px;border-right:1px solid var(--border)">'
+            +   '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Live P&amp;L</div>'
+            +   '<div style="font-size:20px;font-weight:700;color:'+(ml>0?'var(--green)':ml<0?'var(--red)':'var(--text2)')+'">'+pnlFmt(ml)+'</div>'
+            +   '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+liveSubLabel+'</div>'
+            + '</div>'
+            + '<div style="flex:1;padding:12px;border-right:1px solid var(--border)">'
+            +   '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Paper P&amp;L</div>'
+            +   '<div style="font-size:20px;font-weight:700;color:'+(mp>0?'var(--amber)':mp<0?'var(--red)':'var(--text2)')+'">'+pnlFmt(mp)+'</div>'
+            +   '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+paperSubLabel+'</div>'
+            + '</div>'
+            + thirdCol
+            + '</div>'
+            + goLiveNudge
+            + '</div></div>';
+        })()
       + '<div id="dash-quick-actions" style="margin-bottom:12px"></div>'
 
-      + (s.automations && s.automations.length > 0 ? '<div class="card"><div class="card-header"><div class="card-title">Automations Today</div><button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">Manage</button></div><div class="card-body" style="padding:0 16px">'+ autoCards +'</div></div>' : '<div class="card"><div class="card-body"><div class="empty"><div class="empty-icon">&#9881;</div><div class="empty-title">No automations yet</div><div class="empty-sub">Create an automation to start trading</div><button class="btn btn-primary" style="margin-top:12px" onclick="nav(\'automate\')">Create Automation</button></div></div></div>');
+      + (s.automations && s.automations.length > 0
+          ? '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Automations Today</div><button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')">Manage</button></div><div class="card-body" style="padding:0 16px">'+ autoCards +'</div></div>'
+          : '<div class="card" style="margin-bottom:12px"><div class="card-body"><div class="empty"><div class="empty-icon">'+(ob.broker_connected?'&#9881;':'&#128279;')+'</div>'
+            + '<div class="empty-title">'+(ob.broker_connected?'No automations yet':'Broker not connected')+'</div>'
+            + '<div class="empty-sub">'+(ob.broker_connected?'Create an automation and the engine will start trading on your schedule':'Connect your Fyers account first, then create an automation')+'</div>'
+            + '<button class="btn btn-primary" style="margin-top:12px" onclick="nav(\''+(ob.broker_connected?'automate':'brokers')+'\')">'+( ob.broker_connected?'Create Automation':'Connect Broker')+'</button>'
+            + '</div></div></div>')
+      + '<div class="claude-card" id="claude-dash-card"><div class="claude-header"><div class="claude-title">✦ AI Assessment</div></div><div id="claude-dash-loading" style="font-size:12px;color:var(--text2)">Loading assessment...</div></div>';
 
     // Fill quick-action cards
     var qa = document.getElementById('dash-quick-actions');
@@ -1600,35 +1849,35 @@ async function renderDashboard() {
         + '<div style="font-size:13px;font-weight:600;color:'+(todayCount>0?'var(--text)':'var(--text2)')+'">'+(todayCount||0)+' total</div>'
         + '<div style="font-size:10px;color:var(--text2);margin-top:2px)">'+(s.today_live_trades||0)+' live &bull; '+(s.today_paper_trades||0)+' paper</div>'
         + '</div></div>'
-        + '<div class="card" style="cursor:pointer" onclick="nav(\'performance\')"><div class="card-body" style="padding:12px">'
-        + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Paper Results</div>'
-        + '<div style="font-size:13px;font-weight:600;color:'+(+(s.today_paper_pnl||0)>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(s.today_paper_pnl||0)+'</div>'
-        + '<div style="font-size:10px;color:var(--text2);margin-top:2px">Today &bull; Tap for full report</div>'
-        + '</div></div>'
+        + (function(){
+            var perfVal   = ml !== 0 ? ml : mp;
+            var perfMode  = ml !== 0 ? 'live' : 'paper';
+            var perfColor = ml > 0 ? 'var(--green)' : ml < 0 ? 'var(--red)' : mp >= 0 ? 'var(--amber)' : 'var(--red)';
+            return '<div class="card" style="cursor:pointer" onclick="nav(\'performance\')"><div class="card-body" style="padding:12px">'
+              + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Performance</div>'
+              + '<div style="font-size:13px;font-weight:600;color:'+perfColor+'">'+pnlFmt(perfVal)+'</div>'
+              + '<div style="font-size:10px;color:var(--text2);margin-top:2px">Month '+perfMode+' &bull; Tap for full report</div>'
+              + '</div></div>';
+          })()
         + '</div>';
     }
 
-    // Fetch account funds (non-blocking)
-    api('GET', '/api/capital/check?symbol=NSE:NIFTY50-INDEX&lots=1').then(function(funds) {
-      var fr = document.getElementById('dash-funds-row');
-      if (!fr) return;
-      if (funds.mode === 'paper') {
-        fr.innerHTML = '';
-        return;
-      }
-      var avail = funds.available || 0;
-      fr.innerHTML = '<div class="card" style="margin-bottom:12px"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-        + '<div>'
-        + '<div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Fyers Account Balance</div>'
-        + '<div style="font-size:18px;font-weight:700;font-family:var(--display);color:var(--green);margin-top:2px">&#8377;'+Number(avail).toLocaleString('en-IN')+'</div>'
-        + '</div>'
-        + '<div style="text-align:right">'
-        + '<div style="font-size:11px;color:var(--text2)">NIFTY 1 lot margin est.</div>'
-        + '<div style="font-size:14px;font-weight:600">&#8377;'+Number((funds.margin||{}).net_required||0).toLocaleString('en-IN')+'</div>'
-        + '</div>'
-        + '<button class="btn btn-ghost btn-sm" onclick="nav(\'automate\')" style="color:var(--green)">+ New Automation</button>'
-        + '</div></div>';
-    }).catch(function(){});
+    // Load account balance at top of page (non-blocking)
+    _loadDashFunds();
+
+    // AI Assessment timeout — if not populated in 5s, show helpful empty state
+    setTimeout(function() {
+      var loadingEl = document.getElementById('claude-dash-loading');
+      if (!loadingEl) return; // already replaced by assessment
+      var card = document.getElementById('claude-dash-card');
+      if (!card) return;
+      card.innerHTML = '<div class="claude-header"><div class="claude-title">✦ AI Assessment</div></div>'
+        + '<div style="font-size:12px;color:var(--text2);line-height:1.5">'
+        + 'Get a daily market analysis before you trade. '
+        + '<span style="color:var(--blue);cursor:pointer;text-decoration:underline" onclick="nav(\'profile\')">Add your free Gemini API key</span> '
+        + 'in Profile \u2192 AI Settings to enable morning assessments, risk scoring, and strategy recommendations.'
+        + '</div>';
+    }, 5000);
 
   } catch(e) {
     el.innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -2297,7 +2546,7 @@ async function _refreshLive() {
             return '<div class="trade-item">'
               + '<div class="trade-icon" style="background:var(--bg3);font-size:14px">'+icon+'</div>'
               + '<div class="trade-info"><div class="trade-name">'+esc(t.strategy||'')+'</div><div class="trade-meta">'+esc(t.exit_reason||'Open')+'</div></div>'
-              + '<div class="trade-pnl"><div class="trade-pnl-val '+(t.is_open?'':''+pnlClass(pnl))+'">'+( t.is_open?'OPEN':pnlFmt(pnl))+'</div><div class="trade-pnl-sub">'+esc(t.entry_time||'')+'</div></div>'
+              + '<div class="trade-pnl"><div class="trade-pnl-val '+(t.is_open?'':''+pnlClass(pnl))+'">'+( t.is_open?'OPEN':pnlFmt(pnl))+'</div><div class="trade-pnl-sub">'+fmtTime(t.entry_time)+' IST</div></div>'
               + '</div>';
           }).join('')
         + '</div></div>';
@@ -2505,7 +2754,7 @@ async function loadUnifiedTrades() {
             + '<div style="flex:1;min-width:0">'
             + '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
             + '<span class="badge strategy">'+esc(t.strategy)+'</span>'+typeBadge
-            + '<span style="font-size:10px;color:var(--text2)">'+esc(t.entry_time||'')+'</span>'
+            + '<span style="font-size:10px;color:var(--text2)">'+fmtTime(t.entry_time)+' IST</span>'
             + '</div>'
             + '<div style="font-size:10px;color:var(--text2);margin-top:2px">'
             + 'ATM '+esc(String(t.atm_strike||'\u2014'))
@@ -2525,9 +2774,9 @@ async function loadUnifiedTrades() {
             + '<div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">&#9654; WHY ENTERED</div>'
             + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
             + '<div><span style="color:var(--text2)">Strategy: </span>'+esc(t.signal_name||t.strategy)+'</div>'
-            + '<div><span style="color:var(--text2)">Time: </span>'+esc(t.entry_time||'\u2014')+'</div>'
+            + '<div><span style="color:var(--text2)">Time: </span>'+fmtTime(t.entry_time)+' IST</div>'
             + '<div><span style="color:var(--text2)">ATM Strike: </span>'+esc(String(t.atm_strike||'\u2014'))+'</div>'
-            + '<div><span style="color:var(--text2)">Hedge: </span>\u00b1'+esc(String(t.hedge_width||2))+' strikes</div>'
+            + '<div><span style="color:var(--text2)">Hedge: </span>\u00b1'+esc(String(t.hedge_width||2))+' strikes ('+esc(String((t.hedge_width||2)*50))+'pt wings)</div>'
             + '<div><span style="color:var(--text2)">Combined: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
             + '<div><span style="color:var(--text2)">Spot: </span>'+esc(String(t.entry_spot||'\u2014'))+'</div>'
             + '<div style="grid-column:span 2;color:var(--text2)">Signal: '+esc(t.entry_reason||'ORB condition met')+'</div>'
@@ -2576,14 +2825,16 @@ async function loadUnifiedTrades() {
                     + '<div><span style="color:var(--text2)">Exit premium: </span><strong>\u20b9'+esc(String(t.exit_combined||'\u2014'))+'</strong></div>'
                     + (t.entry_spot ? '<div><span style="color:var(--text2)">Entry spot: </span>'+esc(String(t.entry_spot))+'</div>' : '<div></div>')
                     + (t.exit_spot  ? '<div><span style="color:var(--text2)">Exit spot: </span>'+esc(String(t.exit_spot))+'</div>' : '<div></div>')
-                    + '<div><span style="color:var(--text2)">Exit time: </span>'+esc(t.exit_time||'\u2014')+'</div>'
+                    + '<div><span style="color:var(--text2)">Exit time: </span>'+fmtTime(t.exit_time)+' IST</div>'
                     + (sl2.sl_type ? '<div><span style="color:var(--text2)">SL layer: </span>'+esc(sl2.sl_type)+'</div>' : '<div></div>')
                     + '</div>'
-                    + (sl2.candles > 0
-                      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px;font-size:10px;color:var(--text2);padding-top:4px">'
-                        + (sl2.vwap > 0 ? '<span>VWAP \u20b9'+sl2.vwap.toFixed(1)+'</span>' : '')
-                        + (sl2.ema75 > 0 ? '<span>EMA75 \u20b9'+sl2.ema75.toFixed(1)+'</span>' : '')
-                        + (sl2.trailing_low > 0 ? '<span>Premium low \u20b9'+sl2.trailing_low.toFixed(1)+'</span>' : '')
+                    + ((sl2.vwap > 0 || sl2.ema75 > 0 || sl2.trailing_low > 0)
+                      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;padding:5px 8px;background:var(--bg3);border-radius:4px;font-size:10px;color:var(--text2)">'
+                        + '<span style="font-weight:600;color:var(--text);margin-right:2px">SL levels at exit:</span>'
+                        + (sl2.vwap > 0 ? '<span>VWAP <strong style="color:var(--text)">\u20b9'+sl2.vwap.toFixed(1)+'</strong></span>' : '')
+                        + (sl2.ema75 > 0 ? '<span>EMA75 <strong style="color:var(--text)">\u20b9'+sl2.ema75.toFixed(1)+'</strong></span>' : '')
+                        + (sl2.trailing_low > 0 ? '<span>Premium low <strong style="color:var(--text)">\u20b9'+sl2.trailing_low.toFixed(1)+'</strong></span>' : '')
+                        + (sl2.candles > 0 ? '<span style="margin-left:auto">'+sl2.candles+' candles</span>' : '')
                         + '</div>' : '')
                     + (t.ai_insight ? '<div style="margin-top:6px;padding:6px 8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:4px;font-size:11px;color:rgba(99,102,241,.9)"><span style="font-size:10px">✦ AI</span> '+esc(t.ai_insight)+'</div>' : '')
                     + '</div>';
@@ -2986,7 +3237,7 @@ async function renderProfile() {
       + '</div><div><div style="font-size:15px;font-weight:600">'+esc(u.name||'')+'</div>'
       + '<div style="font-size:12px;color:var(--text2)">'+esc(u.email||'')+'</div>'
       + '<div style="margin-top:4px;display:flex;gap:6px;align-items:center">'
-      + '<span class="badge '+(plan.plan==='PRO'?'running':plan.plan==='STARTER'?'blue':'idle')+'">'+(plan.label||u.plan||'FREE')+'</span>'
+      + '<span class="badge '+(plan.plan==='PRO'||plan.plan==='STARTER'?'running':'idle')+'">'+(plan.label||u.plan||'FREE')+'</span>'
       + '<span style="font-size:11px;color:var(--text2)">'+esc(plan.description||'')+'</span>'
       + '</div></div></div>'
       + '<div class="field-row">'
@@ -3085,6 +3336,27 @@ async function enableTgCommands(id) {
 }
 
 // ── ADMIN ─────────────────────────────────────────────────────
+var _adminTab = 'users';
+
+function switchAdminTab(tab) {
+  _adminTab = tab;
+  ['users','revenue','settings'].forEach(function(t) {
+    var d = document.getElementById('admin-tab-'+t);
+    if (d) d.style.display = (t===tab?'block':'none');
+    var b = document.getElementById('admin-tabBtn-'+t);
+    if (b) { b.style.background = t===tab?'var(--green-bg)':''; b.style.color = t===tab?'var(--green)':'var(--text2)'; b.style.borderColor = t===tab?'rgba(0,230,118,.4)':'var(--border)'; }
+  });
+}
+
+function toggleAdminUser(uid) {
+  var d = document.getElementById('admin-user-detail-'+uid);
+  var c = document.getElementById('admin-user-chevron-'+uid);
+  if (!d) return;
+  var open = d.style.display !== 'none';
+  d.style.display = open ? 'none' : 'block';
+  if (c) c.textContent = open ? '▼' : '▲';
+}
+
 async function renderAdmin() {
   var el = document.getElementById('pg-admin');
   if (!session.user || (session.user.role !== 'SUPER_ADMIN' && session.user.role !== 'ADMIN')) {
@@ -3092,52 +3364,360 @@ async function renderAdmin() {
   }
   el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div>';
   try {
-    var [usersRes, statsRes] = await Promise.all([
+    var [usersRes, statsRes, perfRes, emailRes, subRes, subPriceRes] = await Promise.all([
       api('GET', '/api/admin/users'),
-      api('GET', '/api/admin/stats')
+      api('GET', '/api/admin/stats'),
+      api('GET', '/api/admin/user-performance'),
+      api('GET', '/api/admin/email-config').catch(function(){ return {ok:false, config:{}}; }),
+      api('GET', '/api/admin/subscription-overview').catch(function(){ return {}; }),
+      api('GET', '/api/admin/subscription-price').catch(function(){ return {price:5000}; })
     ]);
-    var users = usersRes.users||[];
-    var stats = statsRes||{};
+    var platformSubPrice = subPriceRes.price || 5000;
+    var users   = usersRes.users || [];
+    var subOv   = subRes || {};
+    var stats   = statsRes || {};
+    var perf    = perfRes.users || [];
+    var platf   = perfRes.platform || {};
+    var emailCfg = emailRes.config || {};
 
-    var planColors = {FREE:'idle', STARTER:'blue', PRO:'running'};
+    // Index perf by user_id for easy lookup
+    var perfMap = {};
+    perf.forEach(function(p){ perfMap[p.user_id] = p; });
 
+    var planColors = {FREE:'idle', STARTER:'running', PRO:'running'};
+    var lcStages   = ['DEMO','PAPER','LIVE_READY','PAID'];
+    var lcLabel    = {DEMO:'Demo',PAPER:'Paper Testing',LIVE_READY:'Live Ready',PAID:'Paid ✓'};
+    var lcColor    = {DEMO:'var(--text2)',PAPER:'var(--amber)',LIVE_READY:'var(--blue)',PAID:'var(--green)'};
+
+    // ── Per-user combined card (management + performance) ──
     var userRows = users.map(function(u) {
-      var planBadge = '<span class="badge '+(planColors[u.plan]||'idle')+'">'+(u.plan||'FREE')+'</span>';
+      var p = perfMap[u.id] || {};
+      var paper = p.paper || {};
+      var live  = p.live  || {};
+      var sub   = p.subscription || {};
+      var val   = p.value || {};
+      var planBadge   = '<span class="badge '+(planColors[u.plan]||'idle')+'">'+(u.plan||'FREE')+'</span>';
       var statusBadge = '<span class="badge '+(u.is_active?'running':'idle')+'">'+(u.is_active?'Active':'Suspended')+'</span>';
-      var roleBadge = u.role !== 'USER' ? '<span class="badge shadow">'+u.role+'</span>' : '';
-      return '<div class="card" style="margin-bottom:8px"><div class="card-body" style="padding:10px 14px">'
-        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">'
-        + '<div><div style="font-size:13px;font-weight:600">'+esc(u.name||'—')+'</div>'
-        + '<div style="font-size:11px;color:var(--text2);margin-top:2px">'+esc(u.email||'')+'</div>'
-        + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">'+statusBadge+' '+planBadge+' '+roleBadge+'</div>'
-        + '</div>'
-        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex-shrink:0">'
-        // Plan upgrade/downgrade
-        + '<select onchange="setPlan(\''+u.id+'\',this.value)" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px">'
-        + '<option value="FREE"'+(u.plan==='FREE'?' selected':'')+'>Free</option>'
-        + '<option value="STARTER"'+(u.plan==='STARTER'?' selected':'')+'>Starter</option>'
-        + '<option value="PRO"'+(u.plan==='PRO'?' selected':'')+'>Pro</option>'
-        + '</select>'
-        + (u.is_active
-          ? '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="suspendUser(\''+u.id+'\')">Suspend</button>'
-          : '<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="activateUser(\''+u.id+'\')">Activate</button>')
-        + '</div></div></div></div>';
+      var roleBadge   = u.role !== 'USER' ? '<span class="badge shadow">'+u.role+'</span>' : '';
+      var brokerBadge = p.broker_connected
+        ? '<span class="badge '+(p.broker_mode==='paper'?'shadow':'blue')+'">'+esc(p.broker_mode==='paper'?'Paper broker':'Live broker')+'</span>'
+        : '<span class="badge idle">No broker</span>';
+      var engBadge = (p.automations&&p.automations.running)
+        ? '<span class="badge running">⚡ '+p.automations.running+' running</span>' : '';
+      var lc = p.lifecycle_stage || u.lifecycle_stage || 'DEMO';
+      var lcBadgeColor = lc==='PAID'?'var(--green)':lc==='LIVE_READY'?'var(--blue)':lc==='PAPER'?'var(--amber)':'var(--text2)';
+      var lcBadge = '<span class="badge" style="background:'+lcBadgeColor+';color:'+(lc==='PAID'||lc==='LIVE_READY'?'#fff':'#000')+'">'+( lcLabel[lc]||lc)+'</span>';
+      var subBadge = lc==='PAID'
+        ? (sub.status==='active'
+          ? '<span class="badge running" title="Expires '+(sub.expires_at||'no date set')+'">💳 Paid</span>'
+          : sub.status==='expiring'
+          ? '<span class="badge" style="background:var(--amber);color:#000">⚠ '+sub.days_left+'d left</span>'
+          : sub.status==='expired'
+          ? '<span class="badge" style="background:var(--red);color:#fff">✗ Expired</span>'
+          : '<span class="badge running">💳 Paid</span>')
+        : '';
+
+      // P&L colour helpers
+      function pnlCol(v){ return v>0?'var(--green)':v<0?'var(--red)':'var(--text2)'; }
+      function pnlFmt(v){ return (v>=0?'+':'')+'\u20b9'+Math.abs(v).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+
+      var paperSection = paper.total_trades > 0
+        ? '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:6px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--amber);margin-bottom:6px">📋 Paper Trading</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">'
+          + '<div><div style="font-size:10px;color:var(--text2)">Today P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(paper.pnl_today)+'">'+pnlFmt(paper.pnl_today)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">Week P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(paper.pnl_week)+'">'+pnlFmt(paper.pnl_week)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">All-time P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(paper.pnl_total)+'">'+pnlFmt(paper.pnl_total)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">Win Rate</div><div style="font-size:13px;font-weight:600">'+paper.win_rate+'%</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'+paper.total_trades+' trades</div></div>'
+          + '</div>'
+          + (paper.strategies&&paper.strategies.length ? '<div style="margin-top:6px;font-size:10px;color:var(--text2)">Strategies: '
+            + paper.strategies.map(function(s){return '<span class="strat-badge-ai best" style="font-size:9px;padding:1px 5px">'+esc(s)+'</span>';}).join(' ')
+            + '</div>' : '')
+          + '</div>'
+        : '<div style="font-size:11px;color:var(--text2);padding:6px 0">No paper trades yet</div>';
+
+      var liveSection = live.total_trades > 0
+        ? '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:6px">💹 Live Trading</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">'
+          + '<div><div style="font-size:10px;color:var(--text2)">Today P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(live.pnl_today)+'">'+pnlFmt(live.pnl_today)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">Week P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(live.pnl_week)+'">'+pnlFmt(live.pnl_week)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">All-time P&L</div><div style="font-size:13px;font-weight:600;color:'+pnlCol(live.pnl_total)+'">'+pnlFmt(live.pnl_total)+'</div></div>'
+          + '<div><div style="font-size:10px;color:var(--text2)">Win Rate</div><div style="font-size:13px;font-weight:600">'+live.win_rate+'%</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'+live.total_trades+' trades</div></div>'
+          + '</div>'
+          + (live.strategies&&live.strategies.length ? '<div style="margin-top:6px;font-size:10px;color:var(--text2)">Strategies: '
+            + live.strategies.map(function(s){return '<span class="strat-badge-ai best" style="font-size:9px;padding:1px 5px">'+esc(s)+'</span>';}).join(' ')
+            + '</div>' : '')
+          + '</div>'
+        : (p.broker_connected ? '<div style="font-size:11px;color:var(--text2);padding:6px 0">No live trades yet</div>' : '');
+
+        // Monthly breakdown
+        var monthly = p.monthly || [];
+        var hasData = monthly.some(function(m){ return m.paper_trades>0||m.live_trades>0; });
+        var monthlyHtml = '';
+        if (hasData) {
+          monthlyHtml = '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px">'
+            + '<div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Monthly Breakdown</div>'
+            + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">'
+            + '<thead><tr style="color:var(--text2)">'
+            + '<th style="text-align:left;padding:3px 6px;font-weight:500">Month</th>'
+            + '<th style="text-align:right;padding:3px 6px;font-weight:500">Paper P&L</th>'
+            + '<th style="text-align:right;padding:3px 6px;font-weight:500">Trades</th>'
+            + '<th style="text-align:right;padding:3px 6px;font-weight:500">Live P&L</th>'
+            + '<th style="text-align:right;padding:3px 6px;font-weight:500">Trades</th>'
+            + '<th style="text-align:right;padding:3px 6px;font-weight:500;color:var(--text)">Net</th>'
+            + '</tr></thead><tbody>';
+          monthly.forEach(function(m) {
+            if (!m.paper_trades && !m.live_trades) return;
+            var net = (m.paper||0)+(m.live||0);
+            monthlyHtml += '<tr style="border-top:1px solid var(--border)">'
+              + '<td style="padding:4px 6px;font-weight:500;white-space:nowrap">'+esc(m.label)+'</td>'
+              + '<td style="text-align:right;padding:4px 6px;color:'+(m.paper>=0?'var(--green)':'var(--red)')+'">'+(m.paper>=0?'+':'')+'₹'+Math.abs(m.paper).toLocaleString('en-IN',{maximumFractionDigits:0})+'</td>'
+              + '<td style="text-align:right;padding:4px 6px;color:var(--text2)">'+m.paper_trades+'</td>'
+              + '<td style="text-align:right;padding:4px 6px;color:'+(m.live>=0?'var(--green)':'var(--red)')+'">'+(m.live_trades>0?(m.live>=0?'+':'')+'₹'+Math.abs(m.live).toLocaleString('en-IN',{maximumFractionDigits:0}):'—')+'</td>'
+              + '<td style="text-align:right;padding:4px 6px;color:var(--text2)">'+m.live_trades+'</td>'
+              + '<td style="text-align:right;padding:4px 6px;font-weight:700;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+(net>=0?'+':'')+'₹'+Math.abs(net).toLocaleString('en-IN',{maximumFractionDigits:0})+'</td>'
+              + '</tr>';
+          });
+          monthlyHtml += '</tbody></table></div></div>';
+        }
+
+        // Subscription management
+        var subHtml = '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px">💳 Subscription</div>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+          + '<div style="flex:1;min-width:110px"><div style="font-size:10px;color:var(--text2);margin-bottom:3px">Expiry Date</div>'
+          + '<input type="date" id="sub-exp-'+u.id+'" value="'+(sub.expires_at||'')+'" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px;width:100%"></div>'
+          + '<div style="flex:1;min-width:90px"><div style="font-size:10px;color:var(--text2);margin-bottom:3px">Amount Paid (₹)</div>'
+          + '<input type="number" id="sub-amt-'+u.id+'" value="'+(sub.amount||'')+'" placeholder="e.g. 5000" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px;width:100%"></div>'
+          + '<div style="flex:2;min-width:140px"><div style="font-size:10px;color:var(--text2);margin-bottom:3px">Notes / Payment Ref</div>'
+          + '<input type="text" id="sub-notes-'+u.id+'" value="'+esc(sub.notes||'')+'" placeholder="UPI ref, bank transfer..." style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px;width:100%"></div>'
+          + '<button class="btn btn-ghost btn-sm" onclick="saveSubscription(\''+u.id+'\')">Save</button>'
+          + '</div>'
+          + (sub.expires_at ? '<div style="font-size:10px;color:var(--text2);margin-top:6px">Expires: '+esc(sub.expires_at)+(sub.days_left!==null&&sub.days_left!==undefined?' · '+(sub.days_left>=0?sub.days_left+' days remaining':Math.abs(sub.days_left)+' days overdue'):'')+'</div>' : '')
+          + '</div>';
+
+        // Value / ROI block
+        var hasCost = val.effective_monthly_cost > 0;
+        var roiColor = function(r){ return r===null?'var(--text2)':r>=1?'var(--green)':r>=0?'var(--amber)':'var(--red)'; };
+        var roiFmt  = function(r){ return r===null?'—':r.toFixed(2)+'x'; };
+        var costLabel = val.amount_paid > 0 ? '₹'+Number(val.amount_paid).toLocaleString('en-IN')+' paid' : (hasCost ? '₹'+Number(val.plan_price).toLocaleString('en-IN')+'/mo (plan rate)' : 'Free plan');
+        var valueHtml = '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px">📈 Value Delivered</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">'
+          // Subscription cost
+          + '<div><div style="font-size:10px;color:var(--text2)">Subscription</div>'
+          + '<div style="font-size:12px;font-weight:600;color:var(--text)">'+esc(costLabel)+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'+esc(val.months_active||1)+' month'+(val.months_active>1?'s':'')+' active</div></div>'
+          // This month P&L
+          + '<div><div style="font-size:10px;color:var(--text2)">This Month P&L</div>'
+          + '<div style="font-size:13px;font-weight:700;color:'+(val.this_month_net>=0?'var(--green)':'var(--red)') +'">'+(val.this_month_net>=0?'+':'')+'₹'+Math.abs(val.this_month_net||0).toLocaleString('en-IN',{maximumFractionDigits:0})+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">Paper: '+(val.this_month_paper>=0?'+':'')+'₹'+Math.abs(val.this_month_paper||0).toLocaleString('en-IN',{maximumFractionDigits:0})+(val.this_month_live?' · Live: '+(val.this_month_live>=0?'+':'')+'₹'+Math.abs(val.this_month_live).toLocaleString('en-IN',{maximumFractionDigits:0}):'')+'</div></div>'
+          // This month ROI
+          + '<div><div style="font-size:10px;color:var(--text2)">ROI This Month</div>'
+          + '<div style="font-size:18px;font-weight:700;color:'+roiColor(val.roi_this_month)+'">'+roiFmt(val.roi_this_month)+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">'+(val.roi_this_month===null?'set sub cost to track':(val.roi_this_month>=1?'✓ paying off':'below cost'))+'</div></div>'
+          // All-time ROI
+          + '<div><div style="font-size:10px;color:var(--text2)">All-time ROI</div>'
+          + '<div style="font-size:18px;font-weight:700;color:'+roiColor(val.roi_alltime)+'">'+roiFmt(val.roi_alltime)+'</div>'
+          + '<div style="font-size:10px;color:var(--text2)">est. ₹'+Number(val.est_total_paid||0).toLocaleString('en-IN',{maximumFractionDigits:0})+' total paid</div></div>'
+          + '</div>'
+          // Value bar — visual ratio
+          + (hasCost && val.this_month_net !== null
+            ? (function(){
+                var pct = Math.min(100, Math.max(0, ((val.this_month_net / val.effective_monthly_cost) * 100)));
+                var barColor = val.this_month_net >= val.effective_monthly_cost ? 'var(--green)' : val.this_month_net >= 0 ? 'var(--amber)' : 'var(--red)';
+                return '<div style="margin-top:4px"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:3px">'
+                  + '<span>₹0</span><span style="color:var(--text)">Sub: ₹'+Number(val.effective_monthly_cost).toLocaleString('en-IN')+'</span><span>P&L this month</span></div>'
+                  + '<div style="background:var(--bg2);border-radius:4px;height:6px;overflow:hidden">'
+                  + '<div style="background:'+barColor+';height:100%;width:'+pct+'%;border-radius:4px;transition:width .3s"></div></div>'
+                  + '</div>';
+              })()
+            : '')
+          + '</div>';
+
+        // Compact user card — click header to expand detail
+        var initials = (u.name||'?').split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase();
+        var monthPaper = (p.value||{}).this_month_paper||0;
+        var monthLive  = (p.value||{}).this_month_live||0;
+        var compactHeader = '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none" onclick="toggleAdminUser(\''+u.id+'\')">'
+          + '<div style="width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:'+(u.plan==='PRO'?'var(--green-bg)':'var(--bg3)')+';border:1px solid '+(u.plan==='PRO'?'rgba(0,230,118,.35)':'var(--border)')+';color:'+(u.plan==='PRO'?'var(--green)':'var(--text2)')+'">'+initials+'</div>'
+          + '<div style="flex:1;min-width:0">'
+          +   '<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(u.name||'—')+'</div>'
+          +   '<div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(u.email||'')+'</div>'
+          +   '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'+planBadge+' '+lcBadge+' '+subBadge+' '+brokerBadge+' '+engBadge+'</div>'
+          + '</div>'
+          + '<div style="text-align:right;flex-shrink:0;margin:0 8px">'
+          +   (monthPaper!==0?'<div style="font-size:11px;color:'+(monthPaper>0?'var(--amber)':'var(--red)')+'">📋 '+pnlFmt(monthPaper)+'</div>':'')
+          +   (monthLive!==0?'<div style="font-size:11px;color:'+(monthLive>0?'var(--green)':'var(--red)')+'">💹 '+pnlFmt(monthLive)+'</div>':'')
+          +   (monthPaper===0&&monthLive===0?'<div style="font-size:10px;color:var(--text2)">No trades<br>this month</div>':'')
+          + '</div>'
+          + '<div id="admin-user-chevron-'+u.id+'" style="font-size:11px;color:var(--text2);flex-shrink:0;padding:4px">▼</div>'
+          + '</div>';
+
+        var detailControls = '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg3)">'
+          + '<div><div style="font-size:9px;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px">Journey Stage</div>'
+          + '<select onchange="setLifecycle(\''+u.id+'\',this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 10px;font-size:12px;font-weight:600">'
+          + '<option value="DEMO"'+(lc==='DEMO'?' selected':'')+'>🔵 Demo</option>'
+          + '<option value="PAPER"'+(lc==='PAPER'?' selected':'')+'>📋 Paper Testing</option>'
+          + '<option value="LIVE_READY"'+(lc==='LIVE_READY'?' selected':'')+'>🚀 Live Ready</option>'
+          + '<option value="PAID"'+(lc==='PAID'?' selected':'')+'>💳 Paid ✓</option>'
+          + '</select></div>'
+          + '<div><div style="font-size:9px;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px">Access</div>'
+          + '<select onchange="setPlan(\''+u.id+'\',this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:5px 10px;font-size:12px;font-weight:600">'
+          + '<option value="FREE"'+(u.plan==='FREE'?' selected':'')+'>⬜ Free</option>'
+          + '<option value="PRO"'+(u.plan==='PRO'||u.plan==='STARTER'?' selected':'')+'>🟢 Pro Live</option>'
+          + '</select></div>'
+          + (u.is_active
+            ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);align-self:flex-end" onclick="suspendUser(\''+u.id+'\')">Suspend</button>'
+            : '<button class="btn btn-ghost btn-sm" style="color:var(--green);align-self:flex-end" onclick="activateUser(\''+u.id+'\')">Activate</button>')
+          + (p.last_active?'<div style="align-self:flex-end;font-size:10px;color:var(--text2)">Last trade: '+esc(p.last_active)+'</div>':'')
+          + '</div>';
+
+        var isAdminUser = u.role === 'SUPER_ADMIN' || u.role === 'ADMIN';
+        return '<div class="card" style="margin-bottom:8px">'
+          + compactHeader
+          + '<div id="admin-user-detail-'+u.id+'" style="display:none">'
+          + detailControls
+          + '<div style="padding:10px 14px;display:flex;flex-direction:column;gap:8px">'
+          + paperSection
+          + liveSection
+          + (isAdminUser ? '' : valueHtml)
+          + monthlyHtml
+          + (isAdminUser ? '' : subHtml)
+          + '</div>'
+          + '</div>'
+          + '</div>';
     }).join('');
 
     var mrr = stats.mrr||0;
-    var arr = stats.arr||0;
-    var planPx = stats.plan_price||{};
     var planCnt = stats.plans||{};
-    el.innerHTML = '<div class="page-header"><div class="page-title">Admin Panel</div></div>'
-      // Revenue KPIs
-      + '<div class="section-title" style="margin-bottom:6px">Revenue</div>'
-      + '<div class="kpi-grid" style="margin-bottom:12px">'
-      + '<div class="kpi green"><div class="kpi-label">MRR</div><div class="kpi-value pos">&#8377;'+(mrr).toLocaleString('en-IN')+'</div><div class="kpi-sub">Monthly recurring</div></div>'
-      + '<div class="kpi blue"><div class="kpi-label">ARR</div><div class="kpi-value neutral">&#8377;'+(arr).toLocaleString('en-IN')+'</div><div class="kpi-sub">Annual run rate</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Paid Users</div><div class="kpi-value neutral">'+((planCnt.STARTER||0)+(planCnt.PRO||0)+(planCnt.ENTERPRISE||0))+'</div><div class="kpi-sub">Starter + Pro + Ent</div></div>'
-      + '<div class="kpi"><div class="kpi-label">Free Users</div><div class="kpi-value neutral">'+(planCnt.FREE||0)+'</div><div class="kpi-sub">Conversion pool</div></div>'
+
+    // ── Tab bar ──────────────────────────────────────────────────
+    var tabStyle = 'padding:7px 16px;font-size:12px;font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);cursor:pointer;transition:all .15s;background:var(--bg2);color:var(--text2)';
+    var tabBar = '<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
+      + '<button id="admin-tabBtn-users"    style="'+tabStyle+'" onclick="switchAdminTab(\'users\')"  >👥 Users ('+users.length+')</button>'
+      + '<button id="admin-tabBtn-revenue"  style="'+tabStyle+'" onclick="switchAdminTab(\'revenue\')">📊 Revenue</button>'
+      + '<button id="admin-tabBtn-settings" style="'+tabStyle+'" onclick="switchAdminTab(\'settings\')">⚙️ Settings</button>'
+      + '</div>';
+
+    el.innerHTML = '<div class="page-header" style="display:flex;align-items:center;justify-content:space-between">'
+      + '<div class="page-title">Admin Panel</div>'
+      + '<button class="btn btn-ghost btn-sm" onclick="renderAdmin()" style="font-size:11px">↻ Refresh</button>'
       + '</div>'
-      // Usage stats
+      + tabBar
+
+      // ══ TAB: USERS ═══════════════════════════════════════════
+      + '<div id="admin-tab-users">'
+
+      // ── Ready to Convert pipeline ──
+      + (function(){
+          var liveReady = (perf||[]).filter(function(p){ return p.lifecycle_stage === 'LIVE_READY'; });
+          if (!liveReady.length) return '';
+          return '<div style="background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px">'
+            + '<div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:8px">\ud83d\ude80 '+liveReady.length+' user'+(liveReady.length!==1?'s':'')+' ready to go live — collect payment to unlock</div>'
+            + liveReady.map(function(p){
+                var paperPnl = (p.paper||{}).pnl_total||0;
+                return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,200,255,.15)">'
+                  + '<div>'
+                  +   '<div style="font-size:12px;font-weight:600">'+esc(p.name||'—')+'</div>'
+                  +   '<div style="font-size:10px;color:var(--text2)">'+esc(p.email||'')+' &bull; Paper P&L: '+pnlFmt(paperPnl)+'</div>'
+                  + '</div>'
+                  + '<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="_collectPayment(\''+p.user_id+'\')">Collect \u20b95,000</button>'
+                  + '</div>';
+              }).join('')
+            + '</div>';
+        })()
+
+      // ── Subscription Alerts ──
+      + (subOv.alerts > 0
+        ? '<div style="background:rgba(229,85,85,.1);border:1px solid var(--red);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px">'
+          + '<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:8px">\u26a0 Subscription Alerts ('+subOv.alerts+')</div>'
+          + (subOv.expiring_soon||[]).map(function(u){ return '<div style="font-size:11px;margin-bottom:3px">\ud83d\udfe1 <strong>'+esc(u.name)+'</strong> ('+esc(u.plan)+') \u2014 expires in '+u.days+' days on '+esc(u.expires)+'</div>'; }).join('')
+          + (subOv.expired||[]).map(function(u){ return '<div style="font-size:11px;margin-bottom:3px">\ud83d\udd34 <strong>'+esc(u.name)+'</strong> ('+esc(u.plan)+') \u2014 expired '+Math.abs(u.days)+' days ago</div>'; }).join('')
+          + '</div>'
+        : '')
+
+      // User list
+      + '<div class="section-title" style="margin-bottom:6px">All Users</div>'
+      + userRows
+      + '</div>'  // end admin-tab-users
+
+      // ══ TAB: REVENUE ═════════════════════════════════════════
+      + '<div id="admin-tab-revenue" style="display:none">'
+
+      // ── Platform Performance ──
+      + '<div class="section-title" style="margin-bottom:6px">Platform Performance</div>'
+      + '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi '+(platf.total_pnl>=0?'green':'')+'"><div class="kpi-label">Total P&L (All Users)</div>'
+      + '<div class="kpi-value '+(platf.total_pnl>=0?'pos':'neg')+'" style="font-size:18px">'
+      + (platf.total_pnl>=0?'+':'') + '\u20b9'+(Math.abs(platf.total_pnl||0)).toLocaleString('en-IN',{maximumFractionDigits:0})
+      + '</div><div class="kpi-sub">Paper + Live combined</div></div>'
+      + '<div class="kpi '+(platf.paper_pnl_total>=0?'amber':'')+'"><div class="kpi-label">Paper P&L</div>'
+      + '<div class="kpi-value '+(platf.paper_pnl_total>=0?'pos':'neg')+'">'
+      + (platf.paper_pnl_total>=0?'+':'') + '\u20b9'+(Math.abs(platf.paper_pnl_total||0)).toLocaleString('en-IN',{maximumFractionDigits:0})
+      + '</div><div class="kpi-sub">'+(platf.paper_trades||0)+' closed trades</div></div>'
+      + '<div class="kpi '+(platf.live_pnl_total>=0?'green':'')+'"><div class="kpi-label">Live P&L</div>'
+      + '<div class="kpi-value '+(platf.live_pnl_total>=0?'pos':'neg')+'">'
+      + (platf.live_pnl_total>=0?'+':'') + '\u20b9'+(Math.abs(platf.live_pnl_total||0)).toLocaleString('en-IN',{maximumFractionDigits:0})
+      + '</div><div class="kpi-sub">'+(platf.live_trades||0)+' closed trades</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">Total Trades</div>'
+      + '<div class="kpi-value neutral">'+((platf.paper_trades||0)+(platf.live_trades||0))+'</div>'
+      + '<div class="kpi-sub">Across all users ever</div></div>'
+      + '</div>'
+      // Value row — revenue vs P&L delivered
+      + '<div class="kpi-grid" style="margin-bottom:12px">'
+      + '<div class="kpi"><div class="kpi-label">Sub Revenue Collected</div>'
+      + '<div class="kpi-value neutral">\u20b9'+(platf.sub_revenue||0).toLocaleString('en-IN',{maximumFractionDigits:0})+'</div>'
+      + '<div class="kpi-sub">Recorded payments only</div></div>'
+      + '<div class="kpi '+(((platf.total_pnl||0)-(platf.sub_revenue||0))>=0?'green':'')+'"><div class="kpi-label">P&L Delivered vs Revenue</div>'
+      + '<div class="kpi-value '+((platf.total_pnl||0)>=(platf.sub_revenue||0)?'pos':'neg')+'">'
+      + ((platf.total_pnl||0)>=(platf.sub_revenue||0)?'+':'')+'\u20b9'+Math.abs((platf.total_pnl||0)-(platf.sub_revenue||0)).toLocaleString('en-IN',{maximumFractionDigits:0})+'</div>'
+      + '<div class="kpi-sub">P&L minus subscription costs</div></div>'
+      + '<div class="kpi '+(platf.platform_roi>=1?'green':'')+'"><div class="kpi-label">Platform ROI</div>'
+      + '<div class="kpi-value '+(platf.platform_roi>=1?'pos':platf.platform_roi>=0?'neutral':'neg')+'" style="font-size:22px">'
+      + (platf.platform_roi!==null&&platf.platform_roi!==undefined ? platf.platform_roi.toFixed(2)+'x' : '—')+'</div>'
+      + '<div class="kpi-sub">P&L ÷ sub revenue</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">Avg ROI / User</div>'
+      + (function(){ var pr=platf.platform_roi; var uc=((perf||[]).filter(function(u){return (u.value||{}).effective_monthly_cost>0;}).length)||1; return '<div class="kpi-value neutral">'+(pr!==null&&pr!==undefined?(pr/uc).toFixed(2)+'x':'—')+'</div>'; })()
+      + '<div class="kpi-sub">paying users only</div></div>'
+      + '</div>'
+
+      // ── Revenue & Pipeline ──
+      + '<div class="section-title" style="margin-bottom:6px">Revenue & Pipeline</div>'
+      // Revenue KPIs — only confirmed-PAID users count
+      + '<div class="kpi-grid" style="margin-bottom:8px">'
+      + '<div class="kpi green"><div class="kpi-label">MRR</div><div class="kpi-value pos">&#8377;'+(mrr).toLocaleString('en-IN')+'</div><div class="kpi-sub">Confirmed paid only</div></div>'
+      + '<div class="kpi blue"><div class="kpi-label">ARR</div><div class="kpi-value neutral">&#8377;'+(mrr*12).toLocaleString('en-IN')+'</div><div class="kpi-sub">Annual run rate</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Confirmed Paid</div><div class="kpi-value neutral">'+(stats.paid_count||0)+'</div><div class="kpi-sub">Payment received</div></div>'
+      + '<div class="kpi"><div class="kpi-label">Pipeline Total</div><div class="kpi-value neutral">'+((subOv.pipeline||{}).DEMO||0)+((subOv.pipeline||{}).PAPER||0)+((subOv.pipeline||{}).LIVE_READY||0)+'</div><div class="kpi-sub">Demo + Paper + Live Ready</div></div>'
+      + '</div>'
+      // Customer journey pipeline funnel
+      + (function(){
+          var pipe = subOv.pipeline || {};
+          var stages = [{k:'DEMO',label:'Demo',icon:'🔵',color:'var(--text2)'},{k:'PAPER',label:'Paper Testing',icon:'📋',color:'var(--amber)'},{k:'LIVE_READY',label:'Live Ready',icon:'🚀',color:'var(--blue)'},{k:'PAID',label:'Paid',icon:'💳',color:'var(--green)'}];
+          var total = Math.max(1, stages.reduce(function(s,st){return s+(pipe[st.k]||0);},0));
+          return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px">'
+            + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Customer Journey Pipeline</div>'
+            + '<div style="display:flex;gap:0;align-items:stretch">'
+            + stages.map(function(st,i){
+                var n = pipe[st.k]||0;
+                var pct = Math.round(n/total*100);
+                var isLast = i===stages.length-1;
+                return '<div style="flex:1;text-align:center;padding:8px 4px;border-left:'+(i>0?'1px solid var(--border)':'none')+'">'
+                  + '<div style="font-size:16px;margin-bottom:2px">'+st.icon+'</div>'
+                  + '<div style="font-size:20px;font-weight:700;color:'+st.color+'">'+n+'</div>'
+                  + '<div style="font-size:10px;color:var(--text2);margin-top:1px">'+st.label+'</div>'
+                  + '<div style="height:4px;background:var(--bg3);border-radius:2px;margin-top:6px;overflow:hidden">'
+                  + '<div style="height:100%;width:'+pct+'%;background:'+st.color+';border-radius:2px"></div></div>'
+                  + '</div>';
+              }).join('<div style="display:flex;align-items:center;color:var(--text2);font-size:16px;padding:0 2px;align-self:center">→</div>')
+            + '</div></div>';
+        }())
+
+      // ── Usage ──
       + '<div class="section-title" style="margin-bottom:6px">Usage</div>'
       + '<div class="kpi-grid" style="margin-bottom:12px">'
       + '<div class="kpi blue"><div class="kpi-label">Total Users</div><div class="kpi-value neutral">'+(stats.total_users||0)+'</div></div>'
@@ -3145,14 +3725,51 @@ async function renderAdmin() {
       + '<div class="kpi amber"><div class="kpi-label">Trades Today</div><div class="kpi-value neutral">'+((stats.trades_today||0)+(stats.shadow_today||0))+'</div><div class="kpi-sub">Live: '+(stats.trades_today||0)+' · Paper: '+(stats.shadow_today||0)+'</div></div>'
       + '<div class="kpi"><div class="kpi-label">Engines Running</div><div class="kpi-value neutral">'+(stats.running_engines||0)+'</div></div>'
       + '</div>'
-      // Plan summary
-      + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Plan Tiers</div></div>'
-      + '<div class="card-body" style="padding:0 16px">'
-      + '<div class="card-row"><span class="card-label">Free</span><span class="card-val" style="font-size:11px">Paper only · All 9 strategies simulated · 3 automations</span></div>'
-      + '<div class="card-row"><span class="card-label" style="color:var(--blue)">Starter</span><span class="card-val" style="font-size:11px">Live trading · S1 S2 S3 S8 · 2 automations</span></div>'
-      + '<div class="card-row"><span class="card-label" style="color:var(--green)">Pro</span><span class="card-val" style="font-size:11px">Live trading · All 9 strategies · 10 automations</span></div>'
+
+      + '</div>'  // end admin-tab-revenue
+
+      // ══ TAB: SETTINGS ════════════════════════════════════════
+      + '<div id="admin-tab-settings" style="display:none">'
+
+      // ── Platform Pricing ──
+      + '<div class="section-title">Platform Pricing</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<p style="font-size:12px;color:var(--text2);margin-bottom:12px">Set the default Pro plan monthly price. Used for MRR calculations and ROI tracking. Individual user amounts can still be overridden per-user in the Payments tab.</p>'
+      + '<div style="display:flex;align-items:flex-end;gap:10px">'
+      + '<div class="field" style="margin-bottom:0"><label>Pro Plan Monthly Price (₹)</label><input id="sub-price-input" type="number" value="'+platformSubPrice+'" placeholder="5000" style="width:120px"></div>'
+      + '<button class="btn btn-primary btn-sm" onclick="saveSubPrice()">Save</button>'
+      + '</div>'
+      + '<div id="sub-price-result" style="margin-top:8px;font-size:11px"></div>'
       + '</div></div>'
-      // Create user form
+
+      // ── Email Config ──
+      + '<div class="section-title">Email Configuration</div>'
+      + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
+      + '<p style="font-size:12px;color:var(--text2);margin-bottom:12px">Configure SMTP to send welcome emails and password reset links. Use Gmail App Password (not your regular Gmail password).</p>'
+      + '<div class="field-row">'
+      + '<div class="field"><label>SMTP Host</label><input id="ec-host" value="'+esc(emailCfg.smtp_host||'smtp.gmail.com')+'" placeholder="smtp.gmail.com"></div>'
+      + '<div class="field"><label>Port</label><input id="ec-port" type="number" value="'+(emailCfg.smtp_port||587)+'" placeholder="587" style="width:80px"></div>'
+      + '</div>'
+      + '<div class="field-row">'
+      + '<div class="field"><label>SMTP Username (email)</label><input id="ec-user" value="'+esc(emailCfg.smtp_user||'')+'" placeholder="you@gmail.com"></div>'
+      + '<div class="field"><label>App Password</label><input id="ec-pass" type="password" placeholder="'+(emailCfg.smtp_password_set?'(saved — enter to change)':'Gmail App Password')+'"></div>'
+      + '</div>'
+      + '<div class="field-row">'
+      + '<div class="field"><label>From Name</label><input id="ec-fname" value="'+esc(emailCfg.from_name||'AlgoDesk')+'" placeholder="AlgoDesk"></div>'
+      + '<div class="field"><label>From Email</label><input id="ec-femail" value="'+esc(emailCfg.from_email||emailCfg.smtp_user||'')+'" placeholder="noreply@yourdomain.com"></div>'
+      + '</div>'
+      + '<div class="field"><label>App Domain <span style="color:var(--text2);font-weight:400">(used in login links sent by email)</span></label><input id="ec-domain" value="'+esc(emailCfg.app_domain||'')+'" placeholder="yourdomain.com or IP — e.g. 35.91.127.14"></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+      + '<input type="checkbox" id="ec-enabled"'+(emailCfg.enabled?' checked':'')+' style="width:16px;height:16px">'
+      + '<label for="ec-enabled" style="font-size:12px;cursor:pointer">Enable email sending</label>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button class="btn btn-primary btn-sm" onclick="saveEmailConfig()">Save Email Config</button>'
+      + '<button class="btn btn-ghost btn-sm" onclick="testEmailConfig()">Send Test Email</button>'
+      + '</div>'
+      + '</div></div>'
+
+      // ── Add User / Invite ──
       + '<div class="section-title">Add User Directly</div>'
       + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
       + '<div class="field-row">'
@@ -3162,7 +3779,7 @@ async function renderAdmin() {
       + '<div class="field-row">'
       + '<div class="field"><label>Password</label><input id="au-pass" type="password" placeholder="Temporary password"></div>'
       + '<div class="field"><label>Plan</label>'
-      + '<select id="au-plan"><option value="FREE">Free (paper only)</option><option value="STARTER">Starter (live S1-S8)</option><option value="PRO">Pro (all strategies)</option></select>'
+      + '<select id="au-plan"><option value="FREE">Free (paper only)</option><option value="PRO">Pro – ₹'+platformSubPrice.toLocaleString('en-IN')+'/mo (live, all strategies)</option></select>'
       + '</div></div>'
       + '<div class="field"><label>Role</label>'
       + '<select id="au-role"><option value="USER">User</option><option value="ADMIN">Admin</option></select>'
@@ -3170,19 +3787,103 @@ async function renderAdmin() {
       + '<div id="au-result"></div>'
       + '<button class="btn btn-primary" onclick="createUser()">Create User</button>'
       + '</div></div>'
-      // Invite link
+
       + '<div class="section-title">Invite Link</div>'
       + '<div class="card" style="margin-bottom:12px"><div class="card-body">'
-      + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">Generate a signup link. User chooses their own password on registration.</p>'
+      + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">Generate a signup link. User sets their own password. Add their email to send the link directly.</p>'
       + '<div class="field-row">'
-      + '<div class="field"><label>Plan for invite</label><select id="inv-plan"><option value="FREE">Free</option><option value="STARTER">Starter</option><option value="PRO">Pro</option></select></div>'
+      + '<div class="field"><label>Their Email (optional — sends invite automatically)</label><input id="inv-email" type="email" placeholder="user@email.com"></div>'
+      + '<div class="field"><label>Plan</label><select id="inv-plan"><option value="FREE">Free (paper only)</option><option value="PRO">Pro – ₹'+platformSubPrice.toLocaleString('en-IN')+'/mo (live)</option></select></div>'
       + '</div>'
       + '<div id="invite-res"></div>'
-      + '<button class="btn btn-ghost" onclick="createInvite()">Generate Invite Link</button>'
+      + '<button class="btn btn-ghost" onclick="createInvite()">Generate &amp; Send Invite</button>'
       + '</div></div>'
-      // User list
-      + '<div class="section-title">All Users</div>'
-      + userRows;
+
+      // ── Payments & Subscriptions ──
+      + '<div class="section-title">Payments & Subscriptions</div>'
+      + (function(){
+          var lcLbl = {DEMO:'Demo',PAPER:'Paper Testing',LIVE_READY:'Live Ready',PAID:'Paid ✓'};
+          var _obLabels = ['','Account Ready','Broker Connected','First Paper Trade','20 Paper Trades','Live Automation','First Live Profit \u2713'];
+          var _obColors = ['','var(--text2)','var(--amber)','var(--amber)','var(--blue)','var(--blue)','var(--green)'];
+          var rows = perf.map(function(p) {
+            var sub = p.subscription || {};
+            var val = p.value || {};
+            var lc  = p.lifecycle_stage || 'DEMO';
+            var subStatus = sub.status || 'none';
+            var mp = val.this_month_paper || 0;
+            var ml = val.this_month_live  || 0;
+            var mn = val.this_month_net   || 0;
+            var obStep = p.onboarding_step || 1;
+
+            var pnlHtml = '<div style="font-size:12px;font-weight:600;color:'+(mn>=0?'var(--green)':'var(--red)')+'">'+pnlFmt(mn)+'</div>'
+              + '<div style="font-size:10px;color:var(--text2)">'+(mp!==0?'Paper '+pnlFmt(mp):'')+(mp!==0&&ml!==0?' &bull; ':'')+(ml!==0?'Live '+pnlFmt(ml):'')+(mp===0&&ml===0?'No trades':'')+'</div>';
+
+            var statusTxt, statusColor;
+            if (lc === 'PAID') {
+              if (subStatus === 'active')    { statusTxt = '\u2714 Active';                 statusColor = 'var(--green)'; }
+              else if (subStatus === 'expiring') { statusTxt = '\u26a0 Expiring '+sub.days_left+'d'; statusColor = 'var(--amber)'; }
+              else if (subStatus === 'expired')  { statusTxt = '\u2717 Overdue';            statusColor = 'var(--red)'; }
+              else                               { statusTxt = '\u23f3 No expiry set';       statusColor = 'var(--amber)'; }
+            } else if (lc === 'LIVE_READY') { statusTxt = '\ud83d\ude80 Ready to convert'; statusColor = 'var(--blue)'; }
+            else                            { statusTxt = lcLbl[lc]||lc;                     statusColor = 'var(--text2)'; }
+
+            var needsAction = (lc === 'PAID' && subStatus !== 'active') || lc === 'LIVE_READY';
+            var btnLabel = (lc === 'PAID' && subStatus === 'active') ? 'Renew' : 'Record Payment';
+            var actionBtn = (lc === 'PAID' || lc === 'LIVE_READY')
+              ? '<button class="btn btn-ghost btn-sm" onclick="_togglePayForm(\''+p.user_id+'\')" style="font-size:11px;'+(needsAction?'color:var(--green)':'')+'">'+(needsAction?'\u271a ':'')+btnLabel+'</button>' : '';
+
+            var amtLabel = sub.amount ? '\u20b9'+Number(sub.amount).toLocaleString('en-IN') : '\u2014';
+            var rowStyle = needsAction ? 'background:rgba(0,200,100,.04)' : '';
+
+            var obPips = [1,2,3,4,5,6].map(function(n){
+              return '<div title="Step '+n+': '+_obLabels[n]+'" style="width:10px;height:10px;border-radius:50%;background:'+(n<=obStep?_obColors[obStep]:'var(--bg3)')+';border:1px solid '+(n<=obStep?_obColors[obStep]:'var(--border)')+';transition:background .2s"></div>';
+            }).join('');
+            return '<tr style="border-top:1px solid var(--border);'+rowStyle+'">'
+              + '<td style="padding:8px 10px;white-space:nowrap"><div style="font-size:12px;font-weight:600">'+esc(p.name||'\u2014')+'</div><div style="font-size:10px;color:var(--text2)">'+esc(p.email||'')+'</div></td>'
+              + '<td style="padding:8px 10px"><div style="display:flex;gap:3px;align-items:center;margin-bottom:3px">'+obPips+'</div><div style="font-size:10px;color:'+_obColors[obStep]+'">'+_obLabels[obStep]+'</div></td>'
+              + '<td style="padding:8px 10px">'+pnlHtml+'</td>'
+              + '<td style="padding:8px 10px;font-size:11px;color:var(--text2)'+(sub.days_left!==null&&sub.days_left<0?';color:var(--red)':'')+'">'+(sub.expires_at||'\u2014')+'</td>'
+              + '<td style="padding:8px 10px;font-size:11px">'+amtLabel+'</td>'
+              + '<td style="padding:8px 10px"><span style="font-size:11px;color:'+statusColor+'">'+statusTxt+'</span></td>'
+              + '<td style="padding:8px 10px;text-align:right">'+actionBtn+'</td>'
+              + '</tr>'
+              + '<tr id="pay-form-'+p.user_id+'" style="display:none;background:var(--bg3)">'
+              + '<td colspan="7" style="padding:8px 14px">'
+              + '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+              + '<div><div style="font-size:10px;color:var(--text2);margin-bottom:2px">Expiry Date</div>'
+              + '<input type="date" id="qpay-exp-'+p.user_id+'" value="'+_nextMonthDate()+'" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px"></div>'
+              + '<div><div style="font-size:10px;color:var(--text2);margin-bottom:2px">Amount (\u20b9)</div>'
+              + '<input type="number" id="qpay-amt-'+p.user_id+'" value="5000" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px;width:90px"></div>'
+              + '<div style="flex:1;min-width:120px"><div style="font-size:10px;color:var(--text2);margin-bottom:2px">Payment Ref / Notes</div>'
+              + '<input type="text" id="qpay-notes-'+p.user_id+'" placeholder="UPI ref, IMPS transfer..." style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:4px 8px;font-size:11px;width:100%"></div>'
+              + '<button class="btn btn-primary btn-sm" onclick="_quickPay(\''+p.user_id+'\')">Confirm &amp; Mark Paid</button>'
+              + '<button class="btn btn-ghost btn-sm" onclick="_togglePayForm(\''+p.user_id+'\')">Cancel</button>'
+              + '</div>'
+              + '</td></tr>';
+          });
+
+          return '<div class="card" style="margin-bottom:12px"><div class="card-body" style="padding:0">'
+            + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'
+            + '<thead><tr style="background:var(--bg3)">'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">User</th>'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Journey (6 steps)</th>'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">P&amp;L This Month</th>'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Sub Until</th>'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Last Paid</th>'
+            + '<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Status</th>'
+            + '<th style="padding:8px 10px"></th>'
+            + '</tr></thead><tbody>'
+            + rows.join('')
+            + '</tbody></table></div>'
+            + '<div style="padding:8px 12px;font-size:10px;color:var(--text2);border-top:1px solid var(--border)">'
+            + 'Click <strong>Record Payment</strong> to confirm payment, set expiry date, and auto-upgrade user to Paid stage. Full subscription history is in each user\'s card below.'
+            + '</div></div></div>'
+        })()
+
+      + '</div>';  // end admin-tab-settings
+
+    // Activate the remembered tab
+    switchAdminTab(_adminTab);
 
   } catch(e) {
     el.innerHTML += '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -3208,22 +3909,57 @@ async function createUser() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+async function setLifecycle(uid, stage) {
+  var labels = {DEMO:'Demo',PAPER:'Paper Testing',LIVE_READY:'Live Ready',PAID:'Paid ✓'};
+  // Warn on downgrade from PAID
+  if (stage === 'DEMO' || stage === 'PAPER') {
+    if (!confirm('Move this user back to "'+labels[stage]+'"?\nThis will remove their live trading access (set to Free plan).')) {
+      renderAdmin(); return;
+    }
+  }
+  try {
+    var d = await api('POST', '/api/admin/users/'+uid+'/lifecycle', {stage:stage});
+    toast('Stage → ' + (labels[stage]||stage) + (d.plan ? ' · Access: '+d.plan : ''), 'success');
+    await renderAdmin();
+    // When confirmed PAID, scroll to subscription section to record payment details
+    if (stage === 'PAID') {
+      var el = document.getElementById('sub-exp-'+uid);
+      if (el) { el.focus(); el.scrollIntoView({behavior:'smooth', block:'center'}); }
+    }
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 async function setPlan(uid, plan) {
+  if (plan === 'FREE') {
+    if (!confirm('Set access to Free (paper-only)?\nThey will lose live trading access immediately.')) {
+      renderAdmin(); return;
+    }
+  }
   try {
     await api('POST', '/api/admin/users/'+uid+'/set-plan', {plan:plan});
-    toast('Plan updated to '+plan, 'success');
+    toast('Access updated to ' + plan, 'success');
+    await renderAdmin();
+    if (plan === 'PRO') {
+      var el = document.getElementById('sub-exp-'+uid);
+      if (el) { el.focus(); el.scrollIntoView({behavior:'smooth', block:'center'}); }
+    }
   } catch(e) { toast(e.message, 'error'); }
 }
 
 async function createInvite() {
-  var plan = (document.getElementById('inv-plan')||{}).value || 'FREE';
+  var plan  = (document.getElementById('inv-plan')||{}).value || 'FREE';
+  var email = ((document.getElementById('inv-email')||{}).value||'').trim();
   try {
-    var d = await api('POST', '/api/admin/invite', {role:'USER', plan:plan});
+    var d = await api('POST', '/api/admin/invite', {role:'USER', plan:plan, email:email||null});
     var el = document.getElementById('invite-res');
-    if (el) el.innerHTML = '<div class="alert alert-success" style="margin-bottom:10px">'
+    if (!el) return;
+    var sentNote = (d.emailed && email) ? '<div style="font-size:11px;color:var(--green);margin-top:4px">\u2714 Invite emailed to '+esc(email)+'</div>' : '';
+    el.innerHTML = '<div class="alert alert-success" style="margin-bottom:10px">'
       + '<div style="font-size:11px;margin-bottom:4px;font-weight:600">'+esc(plan)+' invite link:</div>'
-      + '<code style="word-break:break-all;font-size:10px;display:block">'+esc(d.invite_url||d.token||'')+'</code>'
+      + '<code style="word-break:break-all;font-size:10px;display:block;cursor:pointer" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.textContent);toast(\'Copied!\',\'success\')">'+esc(d.invite_url||d.token||'')+'</code>'
+      + sentNote
       + '</div>';
+    if (email && d.emailed === false) toast('Invite created but email not sent — check email config in Admin', 'error');
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -3238,6 +3974,90 @@ async function activateUser(uid) {
   catch(e) { toast(e.message, 'error'); }
 }
 
+async function saveSubPrice() {
+  var price = parseInt(document.getElementById('sub-price-input').value) || 5000;
+  var res = await api('POST', '/api/admin/subscription-price', {price});
+  var el = document.getElementById('sub-price-result');
+  if (el) el.innerHTML = '<span style="color:var(--green)">✓ Saved — ₹'+price.toLocaleString('en-IN')+'/mo</span>';
+}
+
+async function saveEmailConfig() {
+    var cfg = {
+        smtp_host:     document.getElementById('ec-host').value.trim(),
+        smtp_port:     parseInt(document.getElementById('ec-port').value)||587,
+        smtp_user:     document.getElementById('ec-user').value.trim(),
+        from_name:     document.getElementById('ec-fname').value.trim()||'AlgoDesk',
+        from_email:    document.getElementById('ec-femail').value.trim(),
+        app_domain:    document.getElementById('ec-domain').value.trim(),
+        enabled:       document.getElementById('ec-enabled').checked,
+    };
+    var pass = document.getElementById('ec-pass').value;
+    if (pass) cfg.smtp_password = pass;
+    if (!cfg.smtp_host||!cfg.smtp_user) { toast('Fill host and username', 'error'); return; }
+    try {
+        await api('POST', '/api/admin/email-config', cfg);
+        toast('Email config saved', 'success');
+    } catch(e) { toast(e.message, 'error'); }
+}
+
+async function testEmailConfig() {
+    try {
+        var d = await api('POST', '/api/admin/email-config/test', {});
+        toast(d.message||'Test email sent!', 'success');
+    } catch(e) { toast(e.message||'Test failed', 'error'); }
+}
+
+async function saveSubscription(uid) {
+    var exp   = (document.getElementById('sub-exp-'+uid)||{}).value || null;
+    var amt   = parseFloat((document.getElementById('sub-amt-'+uid)||{}).value) || null;
+    var notes = (document.getElementById('sub-notes-'+uid)||{}).value || null;
+    try {
+        await api('POST', '/api/admin/users/'+uid+'/subscription', {
+            expires_at: exp || null,
+            amount: amt,
+            notes: notes
+        });
+        toast('Subscription saved ✓', 'success');
+        renderAdmin();
+    } catch(e) { toast(e.message||'Failed', 'error'); }
+}
+
+function _nextMonthDate() {
+    var d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().split('T')[0];
+}
+
+function _togglePayForm(uid) {
+    var row = document.getElementById('pay-form-'+uid);
+    if (row) row.style.display = (row.style.display === 'none' ? 'table-row' : 'none');
+}
+
+async function _collectPayment(uid) {
+  // Quick confirm + record payment from the pipeline section
+  if (!confirm('Mark payment of \u20b95,000 received from this user?\nThis will grant PRO access and set their lifecycle to Paid.')) return;
+  var exp = new Date(); exp.setMonth(exp.getMonth()+1);
+  var expStr = exp.toISOString().split('T')[0];
+  try {
+    await api('POST', '/api/admin/users/'+uid+'/subscription', {expires_at:expStr, amount:5000, notes:'Collected via admin panel'});
+    await api('POST', '/api/admin/users/'+uid+'/lifecycle', {stage:'PAID'});
+    toast('Payment recorded \u2014 user upgraded to Pro \u2713', 'success');
+    renderAdmin();
+  } catch(e) { toast(e.message||'Failed', 'error'); }
+}
+
+async function _quickPay(uid) {
+    var exp   = (document.getElementById('qpay-exp-'+uid)||{}).value;
+    var amt   = parseFloat((document.getElementById('qpay-amt-'+uid)||{}).value) || 5000;
+    var notes = (document.getElementById('qpay-notes-'+uid)||{}).value || '';
+    try {
+        await api('POST', '/api/admin/users/'+uid+'/subscription', {expires_at: exp, amount: amt, notes: notes, plan: 'PRO'});
+        // Auto-set lifecycle to PAID when payment is confirmed
+        await api('POST', '/api/admin/users/'+uid+'/lifecycle', {stage: 'PAID'});
+        toast('Payment recorded — user set to Paid ✓', 'success');
+        renderAdmin();
+    } catch(e) { toast(e.message||'Failed to record payment', 'error'); }
+}
 
 // ── HELP PAGE — Interactive ───────────────────────────────────
 // ── EVENT CALENDAR PAGE ──────────────────────────────────────────
@@ -3724,6 +4544,22 @@ function showStrat(code) {
     + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px">'
     + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Orders Placed</div>'
     + '<div style="font-size:12px">'+s.orders+'</div>'
+    + '</div>'
+    + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px">'
+    + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Exit Rules</div>'
+    + (code==='S10'
+      ? '<div style="font-size:11px;color:var(--text2);line-height:1.7">'
+        + '<span style="color:var(--green)">&#9654; Target:</span> Exit when buy option gains 50% above cost.<br>'
+        + '<span style="color:var(--red)">&#9654; Hard SL:</span> Exit if buy option loses 50% of value.<br>'
+        + '<span style="color:var(--amber)">&#9654; Time exit:</span> Force-close at 11:00 AM if no target hit.<br>'
+        + '<span style="color:var(--blue)">&#9654; Spot reversal:</span> Exit if spot reverses 30pts against direction.'
+        + '</div>'
+      : '<div style="font-size:11px;color:var(--text2);line-height:1.7">'
+        + '<span style="color:var(--green)">&#9654; Layer 1 — Ratchet lock:</span> 15% decay → breakeven locked. 25% → 10% profit locked. 35% → 25% profit locked. Never resets.<br>'
+        + '<span style="color:var(--blue)">&#9654; Layer 2 — VWAP/EMA SL:</span> Exit if combined rises above VWAP × (1+buffer%). After 75 candles, EMA75 takes over. Suppressed while profit is locked.<br>'
+        + '<span style="color:var(--red)">&#9654; Layer 3 — Max loss backstop:</span> Hard exit if combined rises 30% above entry (configurable 20–40%). Always fires.<br>'
+        + '<span style="color:var(--amber)">&#9654; Profit target:</span> Exit when premium decays 50% from entry (configurable 30–60%).'
+        + '</div>')
     + '</div>'
     + '<div style="background:'+s.color+'11;border:1px solid '+s.color+'44;border-radius:6px;padding:8px 10px">'
     + '<div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">&#128161; Pro Tip</div>'

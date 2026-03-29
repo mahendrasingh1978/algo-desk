@@ -219,6 +219,43 @@ class FyersConnection:
             return {"ok": True, "data": d.get("data", {})}
         return {"ok": False, "message": d.get("message", "Token invalid")}
 
+    # ── Live quotes (indices, VIX etc.) ──────────────────────
+
+    async def get_quotes(self, symbols: list) -> dict:
+        """
+        Fetch live quotes for one or more symbols (indices, equities).
+        Use after get_spot_and_chain() so the access token is already fresh.
+        Example: get_quotes(["NSE:INDIAVIX-INDEX"])
+
+        Fyers response "d" is a list of {n: symbol, v: {lp, open_price, ...}}.
+        """
+        if not self._access:
+            return {"ok": False, "message": "No access token"}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(f"{DATA}/quotes",
+                    headers=self._auth,
+                    params={"symbols": ",".join(symbols)})
+            d = r.json()
+            if d.get("s") == "ok":
+                quotes = {}
+                for item in d.get("d", []):
+                    sym = item.get("n", "")
+                    v   = item.get("v", {})
+                    quotes[sym] = {
+                        "ltp":        float(v.get("lp",               0)),
+                        "open":       float(v.get("open_price",       0)),
+                        "prev_close": float(v.get("prev_close_price", 0)),
+                        "high":       float(v.get("high_price",       0)),
+                        "low":        float(v.get("low_price",        0)),
+                        "change_pct": float(v.get("chp",              0)),
+                    }
+                return {"ok": True, "quotes": quotes}
+            return {"ok": False, "message": d.get("message", "Quotes failed")}
+        except Exception as e:
+            log.error(f"[fyers] quotes error: {e}")
+            return {"ok": False, "message": str(e)}
+
     # ── Historical data (for backtest) ────────────────────────
 
     async def get_historical(self, symbol: str, resolution: str,
@@ -388,8 +425,9 @@ class FyersConnection:
             return {"ok": False, "message": str(e)}
 
     async def get_funds(self) -> dict:
+        """Returns fund data dict, or {"_error": "message"} on failure."""
         if not self._access:
-            return {}
+            return {"_error": "No access token — connect Fyers first"}
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.get(f"{API}/funds", headers=self._auth)
@@ -397,9 +435,13 @@ class FyersConnection:
             if d.get("s") == "ok":
                 return {f["title"]: f.get("equityAmount", 0)
                         for f in d.get("fund_limit", [])}
-        except Exception:
-            pass
-        return {}
+            # Fyers returns 500 outside market hours on some accounts
+            msg = d.get("message", f"Fyers error (HTTP {r.status_code})")
+            if r.status_code == 500 or "wrong" in msg.lower():
+                msg = "Fyers balance service unavailable outside market hours"
+            return {"_error": msg}
+        except Exception as e:
+            return {"_error": str(e)}
 
     async def get_orderbook(self) -> dict:
         """

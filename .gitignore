@@ -1,0 +1,32 @@
+# ── Secrets — NEVER commit these ────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── SSL certificates — back up separately, never in git ─────────
+nginx/ssl/
+
+# ── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# ── Logs ────────────────────────────────────────────────────────
+*.log
+scripts/cleanup.log
+
+# ── OS / editor ─────────────────────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# ── Docker local state ──────────────────────────────────────────
+*.pid

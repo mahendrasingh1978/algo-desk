@@ -31,6 +31,12 @@ class User(Base):
     plan           = Column(String(50), default="FREE")
     is_active      = Column(Boolean, default=True)
     is_verified    = Column(Boolean, default=False)
+    must_change_password    = Column(Boolean, default=False)
+    subscription_expires_at = Column(DateTime, nullable=True)
+    subscription_amount     = Column(Float, default=0)      # last payment in INR
+    subscription_notes      = Column(Text, nullable=True)   # payment ref / admin notes
+    # Customer journey stage: DEMO → PAPER → LIVE_READY → PAID
+    lifecycle_stage         = Column(String(20), default='DEMO')
     timezone       = Column(String(50), default="Asia/Kolkata")
     # AI configuration — per user (Gemini)
     # {"api_key_enc":"...","model":"gemini-1.5-flash","enabled":true,
@@ -262,6 +268,15 @@ class ClaudeAssessment(Base):
     )
 
 
+# ── Server Settings (key-value store for admin config) ───────────
+class ServerSettings(Base):
+    __tablename__ = "server_settings"
+    id         = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    key        = Column(String(100), unique=True, nullable=False)
+    value      = Column(JSON, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 MIGRATIONS = [
     # Broker connections
     "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS refresh_token_enc TEXT",
@@ -310,6 +325,18 @@ MIGRATIONS = [
         raw_response TEXT, created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, assess_date))""",
     "CREATE INDEX IF NOT EXISTS idx_assess_user_date ON claude_assessments(user_id, assess_date)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMP",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_amount FLOAT DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_notes TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifecycle_stage VARCHAR(20) DEFAULT 'DEMO'",
+    # server_settings table
+    """CREATE TABLE IF NOT EXISTS server_settings (
+        id VARCHAR(36) PRIMARY KEY,
+        key VARCHAR(100) UNIQUE NOT NULL,
+        value JSON,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
 ]
 
 def run_migrations(engine):
