@@ -1257,6 +1257,8 @@ async def _auto_resume_engines():
         log.info(f"Startup: reset {len(to_resume)} stale RUNNING automation(s) to IDLE")
 
         # ── Resume running live automations ─────────────────────
+        from datetime import date as _dt_date
+        today_str = _dt_date.today().strftime("%Y-%m-%d")
         for auto in to_resume:
             user = db.query(User).filter(
                 User.id==auto.user_id, User.is_active==True).first()
@@ -1267,6 +1269,29 @@ async def _auto_resume_engines():
                 auto.status = "IDLE"; db.commit(); continue
             config = {**auto.config, "strategies":auto.strategies, "mode":auto.mode}
             state = EngineState(config)
+
+            # ── Restore in-memory position for any open live trade today ──
+            # This prevents re-entry when engine resumes with a position already in Fyers
+            open_live = db.query(Trade).filter(
+                Trade.automation_id == auto.id,
+                Trade.is_open == True,
+                Trade.trade_date == today_str,
+            ).first()
+            if open_live:
+                state.position = {
+                    "signal":          open_live.signal_data or {},
+                    "entry_combined":  open_live.entry_combined,
+                    "entry_time":      open_live.entry_time.isoformat() if open_live.entry_time else "",
+                    "orders":          open_live.orders or [],
+                    "trade_id":        open_live.id,
+                    "trade_table":     "live",
+                }
+                state.traded_today = True   # block new entries
+                log.warning(
+                    f"Auto-resume: restored open live trade {open_live.id} "
+                    f"for {user.email}/{auto.name} — SL will re-arm from entry ₹{open_live.entry_combined}"
+                )
+
             _set_engine(user.id, auto.id, state)
             asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
             log.info(f"Auto-resumed: {user.email} / {auto.name}")
@@ -5904,7 +5929,8 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
                         t_rec.exit_combined = exit_combined
                         t_rec.exit_time = ist_now
                         t_rec.exit_reason = reason
-                        t_rec.pnl = pnl_total
+                        t_rec.gross_pnl = round(pnl_total, 2)
+                        t_rec.net_pnl   = round(pnl_total, 2)
                         t_rec.is_open = False
                         db.commit()
                 else:
@@ -5913,7 +5939,8 @@ async def _close_position(state, conn, reason, lot_sz, lots, user_id):
                         t_rec.exit_combined = exit_combined
                         t_rec.exit_time = ist_now
                         t_rec.exit_reason = reason
-                        t_rec.pnl = pnl_total
+                        t_rec.gross_pnl = round(pnl_total, 2)
+                        t_rec.net_pnl   = round(pnl_total, 2)
                         t_rec.is_open = False
                         db.commit()
         finally:

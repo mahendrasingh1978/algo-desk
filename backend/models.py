@@ -174,6 +174,7 @@ class Trade(Base):
     is_open         = Column(Boolean, default=True)
     signal_data     = Column(JSON, default=dict)
     orders          = Column(JSON, default=list)
+    sl_tracking     = Column(JSON, default=dict)   # SL state at exit (mirrors ShadowTrade)
     created_at      = Column(DateTime, default=datetime.utcnow)
     user            = relationship("User", back_populates="trades")
     automation      = relationship("Automation", back_populates="trades")
@@ -347,6 +348,8 @@ MIGRATIONS = [
     # Trading events — auto-sync columns for live NSE holiday fetch
     "ALTER TABLE trading_events ADD COLUMN IF NOT EXISTS auto_synced BOOLEAN DEFAULT FALSE",
     "ALTER TABLE trading_events ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'manual'",
+    # Live trades — add sl_tracking to match ShadowTrade exit data
+    "ALTER TABLE trades ADD COLUMN IF NOT EXISTS sl_tracking JSON DEFAULT '{}'",
 ]
 
 def run_migrations(engine):
