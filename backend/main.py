@@ -5709,10 +5709,9 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
             state.emit("❌ S10: no buy_symbol in signal", "ERROR")
             return
         state.emit(f"S10 BUY: placing {qty}x {buy_sym}", "ORDER")
-        if is_live:
-            r = await conn.place_order(buy_sym, "BUY", qty)
-        else:
-            r = {"ok": True, "order_id": "PAPER"}
+        # Always call conn.place_order — it internally returns a PAPER mock when mode=paper
+        # This ensures paper mode exercises the same code path as live
+        r = await conn.place_order(buy_sym, "BUY", qty)
         if not r.get("ok"):
             state.emit(f"❌ S10 BUY failed: {r.get('message')}", "ERROR")
             return
@@ -5794,8 +5793,9 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
         state.emit("❌ No symbols in signal — cannot place orders", "ERROR")
         return
 
-    # Try basket order first (best approach for multi-leg options)
-    if is_live and hasattr(conn, "place_basket_order"):
+    # Try basket order for ALL modes — conn.place_basket_order returns a PAPER mock when mode=paper
+    # This ensures paper mode exercises the same code path as live (critical for testing)
+    if hasattr(conn, "place_basket_order"):
         state.emit(f"Placing basket order: {len(legs_to_place)} legs", "ORDER")
         result = await conn.place_basket_order(legs_to_place)
         if result.get("ok"):

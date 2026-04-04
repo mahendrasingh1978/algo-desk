@@ -5064,7 +5064,7 @@ function buildHelpPage() {
   + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Automation Editor — 4 Tabs Explained</div></div><div class="card-body">'
   + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">The automation editor has four tabs. Only <strong style="color:var(--green)">① Strategy</strong> is required — the other three have smart defaults and are optional.</p>'
   + '<div style="display:grid;gap:8px">'
-  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--green)"><div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:4px">① Strategy — Required</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Name · Symbol · Broker · Strategy picker · Lots · Lot Size · Position Sizing · Shadow Mode · Telegram Alerts. This is everything you need to start a paper simulation.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--green)"><div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:4px">① Strategy — Required</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Name · Symbol · Broker · Strategy picker · Lots · Lot Size · Position Sizing · Trading Mode (Paper/Live) · Telegram Alerts. This is everything you need to start a simulation.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--blue)"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:4px">② Risk & Exit — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Stop Loss ₹ (default ₹18) · Auto Exit Time (default 14:00) · VWAP/EMA SL buffer % · Profit Target % per DTE. Defaults are sensible — adjust once you have paper trade data.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--amber)"><div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:4px">③ Schedule — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Run Days (Mon–Fri) · Max Trades / Day · Re-entry after SL · Skip Dates · Event Calendar link. Note: Re-entry uses a trade slot — if Max Trades = 1 and Re-entry is ON, a warning appears.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)"><div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px">④ Guards — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Market condition blockers only: VIX Guard · Drift Guard · Gap Day Guard · Prev-Day Guard · AI News Gate. When a guard fires, the automation card shows exactly which guard blocked trading and why.</div></div>'
@@ -5078,7 +5078,7 @@ function buildHelpPage() {
   + _helpField('Automation Name','Give each automation a meaningful name. E.g. NIFTY Morning S1, Gap Fade Only, BankNifty Expiry. Shown on Live Monitor and Results.','Name by strategy + symbol + mode — makes reports much easier to read.')
   + _helpField('Symbol','Which index to trade. NIFTY = NSE large-cap index. BankNifty = banking sector. Choose based on available margin.','Always NIFTY 50 for beginners — tightest spreads, lowest slippage.')
   + _helpField('Strategies (① Strategy tab)','Which signals to look for. Multiple can be selected — engine tries in priority order every 60s and takes the first one that fires.','Start with S1 (ORB Breakdown) alone. Add S8 (Gap Fade) for gap days. S10 can run as a separate automation.')
-  + _helpField('Mode','Paper = simulate only, no real orders placed. Live = real orders placed via your connected broker.','Always run Paper for at least 20 trading days before going Live.')
+  + _helpField('Trading Mode','Paper (Simulation) = no real orders, results stored for analysis. Live = real orders placed via your connected broker. Switching to Live shows an order parameters preview panel with all values that will be sent to Fyers.','Always run Paper for at least 20 trading days before going Live. The mode selector in the form shows exactly what will be sent before you confirm.')
   + _helpField('Lots','Number of contracts per trade. 1 lot NIFTY = 65 units. More lots = proportionally more profit and risk.','Start with 1 lot. Only increase after consistent paper results across 20+ trades.')
   + _helpField('Lot Size','Units per contract set by SEBI. NIFTY=65, BankNifty=30, FinNifty=60 (Jan 2026 values).','Leave at default. Change only if SEBI revises the lot size.')
   + _helpField('Stop Loss ₹ (② Risk & Exit tab)','Hard backstop in rupees above entry combined premium. Default ₹18. Entry ₹60 → backstop fires at ₹78. This is Layer 3 — always fires regardless of profit lock.','₹18 is the standard starting point. Increase only if your strategy generates higher combined premium entries.')
@@ -5105,7 +5105,7 @@ function buildHelpPage() {
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid #ff9800"><div style="font-size:11px;font-weight:600;color:#ff9800;margin-bottom:3px">Budget Day</div><div style="font-size:11px;color:var(--text2)">Union Budget creates maximum uncertainty. VIX spikes, gaps are huge. Never trade short premium on budget day.</div></div>'
   + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid #00e676"><div style="font-size:11px;font-weight:600;color:#00e676;margin-bottom:3px">F&O Expiry (Thursday)</div><div style="font-size:11px;color:var(--text2)">Weekly expiry creates theta crush opportunities (S9 strategy). Mark only if you want to avoid expiry entirely. Otherwise leave S9 enabled for Thursdays.</div></div>'
   + '</div>'
-  + '<div class="alert alert-info">&#128161; Click <strong>Load defaults</strong> on the Calendar page to pre-load all 2026 RBI and US Fed dates automatically.</div>'
+  + '<div class="alert alert-info">&#128161; Click <strong>Sync NSE Holidays</strong> on the Calendar page to automatically load all NSE trading holidays for the year directly from NSE. RBI / Fed dates are colour-coded separately (purple = Holiday, amber = Election/Event).</div>'
   + '</div></div>'
 
   + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">&#129302; AI News Gate (Gemini)</div></div><div class="card-body">'
@@ -5139,6 +5139,80 @@ function buildHelpPage() {
   + '&#10003; Wide hedges cost very little premium (deep OTM = cheap) but guarantee limited loss<br>'
   + '&#10003; S9 (expiry day) keeps ±150pt hedges — 1000pt OTM options have zero bids on expiry day'
   + '</div></div></div>'
+
+  // ── Order parameters ──────────────────────────────────────────
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">📋 Exact Order Parameters Sent to Fyers</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">Every live order uses these exact parameters. Simulation mode exercises the same code path with a paper mock — so testing in Paper gives you confidence the same flow works in Live.</p>'
+  + '<table class="tbl"><thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead><tbody>'
+  + '<tr><td><code>symbol</code></td><td>e.g. <code>NSE:NIFTY25APR23000CE</code></td><td>Pulled directly from Fyers option chain API — always in correct format</td></tr>'
+  + '<tr><td><code>type</code></td><td><code>2</code> (MARKET)</td><td>Fills immediately at best available price. Limit orders risk partial fills on options.</td></tr>'
+  + '<tr><td><code>side</code></td><td><code>1</code> = BUY · <code>-1</code> = SELL</td><td>BUY hedges always sent first to avoid naked short exposure</td></tr>'
+  + '<tr><td><code>productType</code></td><td><code>MARGIN</code></td><td>Intraday F&O. Auto squared-off by Fyers at 3:20 PM if engine fails to close. Requires F&O segment active on your account.</td></tr>'
+  + '<tr><td><code>qty</code></td><td>lots × lot_size</td><td>e.g. 1 lot NIFTY = 65 units. Shown in order preview when you pick Live mode in the automation form.</td></tr>'
+  + '<tr><td><code>validity</code></td><td><code>DAY</code></td><td>Order cancelled at end of day if not filled (though MARKET orders fill instantly)</td></tr>'
+  + '<tr><td><code>limitPrice</code></td><td><code>0</code></td><td>Not used for MARKET orders</td></tr>'
+  + '<tr><td><code>stopPrice</code></td><td><code>0</code></td><td>Not used for MARKET orders</td></tr>'
+  + '<tr><td><code>disclosedQty</code></td><td><code>0</code></td><td>Full quantity disclosed (standard)</td></tr>'
+  + '<tr><td><code>offlineOrder</code></td><td><code>false</code></td><td>Live intraday order, not AMO</td></tr>'
+  + '</tbody></table>'
+  + '<div class="alert alert-info" style="margin-top:10px">Orders are sent as a <strong>basket</strong> (all 4 legs in one API call) for atomicity. If basket fails, each leg is retried individually up to 3 times. If SELL legs fail on Live, any filled BUY legs are reversed immediately.</div>'
+  + '</div></div>'
+
+  // ── Force Exit ────────────────────────────────────────────────
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">⚡ Force Exit — Emergency Close</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">Three levels of forced exit are available. All use MARKET orders. The engine loop is interrupted immediately (does not wait for the normal 60-second cycle). The API waits up to 45 seconds for broker confirmation before returning a result.</p>'
+  + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)">'
+  + '<div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px">☠ Kill All Trades — Live Monitor page</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Force-exits ALL open positions across ALL running automations. Requires double confirmation. Use only in genuine emergency (market crash, error, connectivity problem). Toast shows confirmed/unconfirmed result from broker.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--amber)">'
+  + '<div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:4px">⚡ Exit Now — per-automation card (Automate page)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Appears on each Live automation card when a position is open. Closes only that automation\'s position. Shows real-time unrealised P&L next to the button so you can see what you\'re closing before you act.</div>'
+  + '</div>'
+  + '</div>'
+  + '<div class="alert alert-warn">After force exit, always verify in your Fyers app that all legs are closed. Options can have stale prices or rejection on circuit limits. If unconfirmed toast appears — check Fyers immediately.</div>'
+  + '</div></div>'
+
+  // ── Pre-live testing checklist ────────────────────────────────
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">✅ Pre-Live Testing Checklist</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">Run through this before switching any automation from Paper to Live. These are the exact items that have caused real-money issues on live trading platforms.</p>'
+  + '<div style="display:flex;flex-direction:column;gap:6px">'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">1. Paper trades are completing correctly</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Check Results → Performance. You should have 20+ closed paper trades with entry + exit recorded. If trades show OPEN with no exit, the engine SL is not firing — investigate before going live.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">2. Fyers connection is healthy</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Brokers page → your account shows "Connected". TOTP auto-refresh fires at 3 AM. If token is expired the engine logs "Not authenticated" — check the broker page before market open.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">3. F&O segment is active on your Fyers account</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Fyers web → My Profile → Account Details → Equity Derivatives segment must be active. MARGIN product type (used for all orders) requires this segment. Without it, every order returns "Segment not enabled".</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">4. Sufficient margin available</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Dashboard → Funds (fetched live). Iron Fly 1 lot NIFTY needs ~₹45-55K. If insufficient margin, SELL legs are rejected, triggering emergency reversal of BUY legs — you end up flat but with slippage costs.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--green)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">5. Order preview matches your intent</div>'
+  + '<div style="font-size:11px;color:var(--text2)">In the automation form, switch Trading Mode to Live. The orange panel shows: Exchange, Product Type, Order Type, Lots × Size, Auto Exit time, SL ₹. Verify all values before saving.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--amber)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">6. Start with 1 lot</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Your first live trade should always be 1 lot regardless of paper results. Verify in Fyers that all 4 legs appeared, fills look correct, and margin deducted as expected. Scale up only after the first live trade cycle is confirmed.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--amber)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">7. Know your exit buttons</div>'
+  + '<div style="font-size:11px;color:var(--text2)">Live Monitor → <strong>☠ Kill All Trades</strong> exits all positions immediately. Automate page → <strong>⚡ Exit Now</strong> on each card exits one automation. Both wait for broker reconciliation and tell you confirmed/unconfirmed.</div>'
+  + '</div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:9px 12px;border-left:3px solid var(--blue)">'
+  + '<div style="font-size:11px;font-weight:600;margin-bottom:3px">8. Guard rails are configured</div>'
+  + '<div style="font-size:11px;color:var(--text2)">VIX Guard ≤17, Drift Guard 1.5%, Event Calendar synced. These are your safety net on crash days. Check the automation card "Guards" strip shows your configured values.</div>'
+  + '</div>'
+  + '</div>'
+  + '<div class="alert alert-info" style="margin-top:12px">These checks are also the right steps after any server restart, server migration, or broker reconnection before resuming live trading.</div>'
+  + '</div></div>'
 
   + '</div></div>';
 }
