@@ -212,6 +212,9 @@ class EngineState:
         self.reentry_direction: str  = ""  # "UP" or "DOWN"
         # Expiry weekday from live options data (0=Mon…6=Sun), None = not yet known
         self.expiry_weekday:    Optional[int] = None
+        # Force exit event — set to wake engine loop immediately instead of waiting 60s
+        import asyncio as _asyncio
+        self.force_exit_event: _asyncio.Event = _asyncio.Event()
 
     @property
     def atm(self) -> Optional[StrikeState]:

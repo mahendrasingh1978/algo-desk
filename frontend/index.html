@@ -3171,21 +3171,31 @@ async function forceExit() {
   // Kill All — requires double confirm
   if (!confirm('⚠️ KILL ALL TRADES\n\nThis will force-exit ALL open positions immediately at market price.\n\nAre you sure?')) return;
   if (!confirm('Second confirmation required.\n\nAll positions across ALL automations will be closed NOW.\n\nProceed?')) return;
+  toast('Sending force exit — waiting for broker confirmation...', 'info');
   try {
     var r = await api('POST', '/api/engine/force-exit');
-    toast('Kill All executed — ' + (r.queued||0) + ' position(s) queued for exit', 'success');
+    if (r.queued === 0) {
+      toast('No open positions found', 'warn');
+    } else if (r.confirmed) {
+      toast('✅ All ' + r.queued + ' position(s) closed and reconciled with broker', 'success');
+    } else {
+      toast('⚠️ Exit sent but not confirmed — ' + (r.message||'check broker app'), 'warn');
+    }
     await _refreshLive();
   } catch(e) { toast(e.message, 'error'); }
 }
 
 async function forceExitAuto(autoId) {
   if (!confirm('Force exit this automation\'s open position now?\n\nThe trade will be closed at market price immediately.')) return;
+  toast('Sending force exit — waiting for broker confirmation...', 'info');
   try {
     var r = await api('POST', '/api/engine/' + autoId + '/force-exit');
-    if (r.ok) {
-      toast('Force exit queued — position will close shortly', 'success');
-    } else {
+    if (!r.ok) {
       toast(r.message || 'No open position', 'warn');
+    } else if (r.confirmed) {
+      toast('✅ Position closed and reconciled with broker', 'success');
+    } else {
+      toast('⚠️ Exit sent but not confirmed within 45s — check broker app and engine log', 'warn');
     }
     renderAutomate();
   } catch(e) { toast(e.message, 'error'); }

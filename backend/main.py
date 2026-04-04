@@ -2248,24 +2248,56 @@ async def stop_engine(req: dict = None, user: User = Depends(get_current_user),
 
 @app.post("/api/engine/force-exit")
 async def force_exit(user: User = Depends(get_current_user)):
-    """Force exit ALL open positions across all running automations."""
-    count = 0
-    for eng in _all_engines(user.id):
-        if eng.position:
-            eng.position["force_exit"] = True
-            count += 1
-    return {"ok": True, "queued": count}
+    """Force exit ALL open positions. Wakes engine loops immediately, polls until cleared."""
+    engines_with_pos = [(eng, auto_id)
+                        for auto_id, eng in (active_engines.get(user.id) or {}).items()
+                        if eng.position]
+    if not engines_with_pos:
+        return {"ok": True, "queued": 0, "message": "No open positions to exit"}
+
+    # Set flag + wake engine loops immediately (bypasses 60s sleep)
+    for eng, _ in engines_with_pos:
+        eng.position["force_exit"] = True
+        eng.force_exit_event.set()
+
+    # Poll until all positions cleared (max 45s — reconciliation takes up to 30s)
+    deadline = asyncio.get_event_loop().time() + 45
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(2)
+        still_open = [(eng, aid) for eng, aid in engines_with_pos if eng.position]
+        if not still_open:
+            return {"ok": True, "queued": len(engines_with_pos),
+                    "confirmed": True, "message": "All positions closed and reconciled"}
+
+    # Timed out — positions may still be open, warn
+    still_open_ids = [aid for eng, aid in engines_with_pos if eng.position]
+    return {"ok": True, "queued": len(engines_with_pos),
+            "confirmed": False,
+            "message": f"Exit queued but not yet confirmed for: {still_open_ids}. Check broker app."}
 
 @app.post("/api/engine/{auto_id}/force-exit")
 async def force_exit_auto(auto_id: str, user: User = Depends(get_current_user)):
-    """Force exit the open position for a specific automation only."""
+    """Force exit a specific automation's open position. Wakes engine immediately, polls for confirmation."""
     eng = _get_engine(user.id, auto_id)
     if not eng:
         raise HTTPException(404, "No running engine for this automation")
     if not eng.position:
         return {"ok": False, "message": "No open position on this automation"}
+
+    # Set flag + wake engine loop immediately
     eng.position["force_exit"] = True
-    return {"ok": True, "message": "Force exit queued"}
+    eng.force_exit_event.set()
+
+    # Poll until position cleared (max 45s)
+    deadline = asyncio.get_event_loop().time() + 45
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(2)
+        if not eng.position:
+            return {"ok": True, "confirmed": True,
+                    "message": "Position closed and reconciled with broker"}
+
+    return {"ok": True, "confirmed": False,
+            "message": "Exit queued but not confirmed within 45s — check broker app and engine log"}
 
 @app.get("/api/engine/status")
 def engine_status(user: User = Depends(get_current_user),
@@ -5648,7 +5680,12 @@ async def _run_engine(user_id: str, auto: Automation,
             log.error(f"[engine:{user_id}] {e}")
             state.emit(f"Error: {str(e)}", "ERROR")
 
-        await asyncio.sleep(60)
+        # Sleep 60s, but wake immediately if force_exit_event is triggered
+        try:
+            await asyncio.wait_for(state.force_exit_event.wait(), timeout=60)
+            state.force_exit_event.clear()   # reset for next use
+        except asyncio.TimeoutError:
+            pass
 
     state.is_running = False
     state.emit("Engine stopped.", "INFO")
