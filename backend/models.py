@@ -235,9 +235,11 @@ class TradingEvent(Base):
     user_id        = Column(String, ForeignKey("users.id"), nullable=False)
     event_date     = Column(String(10), nullable=False)   # YYYY-MM-DD
     event_name     = Column(String(200), nullable=False)
-    category       = Column(String(50), default="other")  # rbi|fed|budget|expiry|other
+    category       = Column(String(50), default="other")  # rbi|fed|budget|expiry|holiday|election|other
     suspend_trading = Column(Boolean, default=True)       # user toggle
     notes          = Column(String(500), nullable=True)
+    auto_synced    = Column(Boolean, default=False)       # True = fetched from NSE/Nager, not user-added
+    source         = Column(String(50), default="manual") # nse|nager|manual
     created_at     = Column(DateTime, default=datetime.utcnow)
     user           = relationship("User", backref="trading_events")
     __table_args__  = (Index("idx_events_user_date", "user_id", "event_date"),)
@@ -342,6 +344,9 @@ MIGRATIONS = [
         value JSON,
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
+    # Trading events — auto-sync columns for live NSE holiday fetch
+    "ALTER TABLE trading_events ADD COLUMN IF NOT EXISTS auto_synced BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE trading_events ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'manual'",
 ]
 
 def run_migrations(engine):

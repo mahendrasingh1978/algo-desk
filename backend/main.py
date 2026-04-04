@@ -475,36 +475,66 @@ def _user_cache(user_id: str) -> dict:
         "message": "Connect your broker in My Brokers to see live data.",
     })
 
+# ── NSE Holiday cache ─────────────────────────────────────────
+# Loaded from DB on startup and refreshed whenever sync runs.
+# Avoids DB hit on every market-open check.
+_holiday_dates: set  = set()   # "YYYY-MM-DD" strings for current + next year
+_holiday_cache_year: int = 0   # year the cache was last loaded for
+
+def _load_holiday_cache():
+    """Reload NSE holiday dates from DB into memory. Call on startup + after sync."""
+    global _holiday_dates, _holiday_cache_year
+    import pytz
+    ist  = pytz.timezone("Asia/Kolkata")
+    year = datetime.now(ist).year
+    db   = SessionLocal()
+    try:
+        rows = db.query(TradingEvent.event_date).filter(
+            TradingEvent.suspend_trading == True,
+            TradingEvent.event_date >= f"{year}-01-01",
+            TradingEvent.event_date <= f"{year + 1}-12-31",
+        ).all()
+        _holiday_dates    = {r.event_date for r in rows}
+        _holiday_cache_year = year
+        log.info(f"Holiday cache loaded: {len(_holiday_dates)} suspended dates for {year}/{year+1}")
+    except Exception as e:
+        log.warning(f"Holiday cache load failed: {e}")
+    finally:
+        db.close()
+
 def _market_open_now() -> bool:
-    """Return True if Indian market is currently open (9:15–15:30, Mon–Fri IST)."""
+    """Return True if Indian market is currently open (9:15–15:30, Mon–Fri IST, not a holiday)."""
     import pytz
     from datetime import time as dtime
     ist = pytz.timezone("Asia/Kolkata")
     now = datetime.now(ist)
-    return (now.weekday() < 5 and
-            dtime(9, 15) <= now.time() <= dtime(15, 30))
+    if now.weekday() >= 5:
+        return False
+    today = now.strftime("%Y-%m-%d")
+    if today in _holiday_dates:
+        return False
+    return dtime(9, 15) <= now.time() <= dtime(15, 30)
 
 def _next_market_open_msg() -> str:
-    """Return human-readable next market opening time, accounting for weekends."""
+    """Return human-readable next market opening time, skipping weekends and holidays."""
     import pytz
     from datetime import time as dtime, timedelta
-    ist  = pytz.timezone("Asia/Kolkata")
-    now  = datetime.now(ist)
-    wd   = now.weekday()   # 0=Mon … 6=Sun
-    t    = now.time()
+    ist    = pytz.timezone("Asia/Kolkata")
+    now    = datetime.now(ist)
     open_t = dtime(9, 15)
 
-    if wd < 5 and t < open_t:
-        return "Opens today at 9:15 AM IST"
-    elif wd < 4 and t >= open_t:               # Mon–Thu after close
-        return "Opens tomorrow at 9:15 AM IST"
-    else:                                       # Fri after close, Sat, Sun
-        # Find next Monday
-        days_ahead = (7 - wd) % 7
-        if days_ahead == 0: days_ahead = 7      # already Mon means next Mon
-        next_day = (now + timedelta(days=days_ahead))
-        day_name = next_day.strftime("%A")      # e.g. "Monday"
-        return f"Opens {day_name} 9:15 AM IST"
+    # Walk forward day by day until we find a trading day
+    candidate = now if now.time() < open_t else now + timedelta(days=1)
+    for _ in range(14):   # safety: max 2 weeks forward
+        if candidate.weekday() < 5 and candidate.strftime("%Y-%m-%d") not in _holiday_dates:
+            if candidate.date() == now.date():
+                return "Opens today at 9:15 AM IST"
+            elif (candidate.date() - now.date()).days == 1:
+                return "Opens tomorrow at 9:15 AM IST"
+            else:
+                return f"Opens {candidate.strftime('%A, %d %b')} at 9:15 AM IST"
+        candidate += timedelta(days=1)
+    return "Opens soon at 9:15 AM IST"
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -862,8 +892,10 @@ def _to_ist(dt) -> str:
 @app.on_event("startup")
 async def startup():
     init_db()
+    _load_holiday_cache()
     asyncio.create_task(_market_data_service())
     asyncio.create_task(_auto_resume_engines())
+    asyncio.create_task(_auto_sync_holidays())
     log.info("ALGO-DESK v5 started ✓")
 
 
@@ -2089,6 +2121,7 @@ async def delete_automation(auto_id: str, user: User = Depends(get_current_user)
 # ── Engine ────────────────────────────────────────────────────
 
 active_engines: dict = {}      # user_id -> {auto_id: EngineState}
+_engine_tasks: dict  = {}      # user_id -> {auto_id: asyncio.Task}
 ws_clients: dict = {}          # user_id -> [WebSocket]
 
 # ── Engine helpers ─────────────────────────────────────────────
@@ -2107,7 +2140,14 @@ def _set_engine(user_id: str, auto_id: str, state):
         active_engines[user_id] = {}
     active_engines[user_id][auto_id] = state
 
+def _cancel_engine_task(user_id: str, auto_id: str):
+    """Cancel the asyncio.Task for an engine if one exists."""
+    task = (_engine_tasks.get(user_id) or {}).pop(auto_id, None)
+    if task and not task.done():
+        task.cancel()
+
 def _del_engine(user_id: str, auto_id: str):
+    _cancel_engine_task(user_id, auto_id)
     if user_id in active_engines:
         active_engines[user_id].pop(auto_id, None)
         if not active_engines[user_id]:
@@ -2130,11 +2170,20 @@ async def start_engine(req: dict, user: User = Depends(get_current_user),
     if not conn:
         raise HTTPException(400, "Fyers not connected. Go to My Brokers and connect first.")
 
+    # Cancel any stale task for this automation before starting a fresh one
+    _cancel_engine_task(user.id, auto_id)
+    old_state = _get_engine(user.id, auto_id)
+    if old_state:
+        old_state.is_running = False
+
     config = {**auto.config, "strategies": auto.strategies, "mode": auto.mode}
     state  = EngineState(config)
     _set_engine(user.id, auto_id, state)
 
-    asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
+    task = asyncio.create_task(_run_engine(user.id, auto, state, conn, db))
+    if user.id not in _engine_tasks:
+        _engine_tasks[user.id] = {}
+    _engine_tasks[user.id][auto_id] = task
 
     auto.status = "RUNNING"
     db.commit()
@@ -2146,11 +2195,11 @@ async def stop_engine(req: dict = None, user: User = Depends(get_current_user),
     auto_id = (req or {}).get("automation_id")
 
     if auto_id:
-        # Stop only this specific automation
+        # Stop only this specific automation — cancel task first, then clear state
         eng = _get_engine(user.id, auto_id)
         if eng:
             eng.is_running = False
-        _del_engine(user.id, auto_id)
+        _del_engine(user.id, auto_id)   # also cancels task via _cancel_engine_task
         db.query(Automation).filter(
             Automation.id == auto_id,
             Automation.user_id == user.id
@@ -2159,6 +2208,9 @@ async def stop_engine(req: dict = None, user: User = Depends(get_current_user),
         # No specific id — stop ALL (emergency stop from Live Monitor)
         for eng in _all_engines(user.id):
             eng.is_running = False
+        # Cancel all tasks for this user
+        for aid in list((_engine_tasks.get(user.id) or {}).keys()):
+            _cancel_engine_task(user.id, aid)
         if user.id in active_engines:
             del active_engines[user.id]
         db.query(Automation).filter(
@@ -4424,7 +4476,9 @@ def list_events(user: User = Depends(get_current_user),
     return {"events": [
         {"id": e.id, "date": e.event_date, "name": e.event_name,
          "category": e.category, "suspend": e.suspend_trading,
-         "notes": e.notes}
+         "notes": e.notes,
+         "auto_synced": getattr(e, "auto_synced", False),
+         "source":      getattr(e, "source", "manual")}
         for e in events
     ]}
 
@@ -4498,6 +4552,186 @@ def seed_default_events(user: User = Depends(get_current_user),
             added += 1
     db.commit()
     return {"ok": True, "added": added}
+
+
+# ── Live NSE Holiday Sync ─────────────────────────────────────────
+
+async def _fetch_nager_holidays(year: int) -> list:
+    """
+    Fetch Indian national public holidays from Nager Date API.
+    Free, no auth, returns official Indian national holidays.
+    Returns list of {"date": "YYYY-MM-DD", "name": str}.
+    """
+    import httpx
+    url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/IN"
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(url, headers={"Accept": "application/json"})
+            if r.status_code == 200:
+                return [{"date": h["date"], "name": h["localName"] or h["name"]}
+                        for h in r.json()]
+    except Exception as e:
+        log.warning(f"Nager Date API fetch failed for {year}: {e}")
+    return []
+
+
+async def _fetch_nse_holidays(year: int) -> list:
+    """
+    Fetch NSE trading holidays from NSE India website.
+    NSE observes additional festival holidays (Holi, Diwali, Ganesh Chaturthi etc.)
+    not covered by Indian national holidays.
+    Returns list of {"date": "YYYY-MM-DD", "name": str}.
+    """
+    import httpx, re
+    headers = {
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept":          "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer":         "https://www.nseindia.com/",
+    }
+    results = []
+    try:
+        async with httpx.AsyncClient(timeout=20, headers=headers,
+                                     follow_redirects=True) as c:
+            # Establish session cookie by hitting the main page first
+            await c.get("https://www.nseindia.com/")
+            r = await c.get("https://www.nseindia.com/api/holiday-master?type=trading")
+            if r.status_code == 200:
+                data = r.json()
+                # Response: {"CM": [{"tradingDate": "14-Jan-2026", "description": "..."}]}
+                for segment in data.values():
+                    if not isinstance(segment, list):
+                        continue
+                    for item in segment:
+                        raw = item.get("tradingDate") or item.get("trade_date", "")
+                        name = item.get("description") or item.get("holiday_desc", "NSE Holiday")
+                        try:
+                            # NSE returns "14-Jan-2026" format
+                            dt = datetime.strptime(raw.strip(), "%d-%b-%Y")
+                            if dt.year == year:
+                                results.append({"date": dt.strftime("%Y-%m-%d"), "name": name.strip()})
+                        except Exception:
+                            pass
+                    break  # CM segment is enough (all segments have same holidays)
+    except Exception as e:
+        log.warning(f"NSE holiday API fetch failed for {year}: {e}")
+    return results
+
+
+async def _sync_holidays_for_user(user_id: str, db, year: int) -> int:
+    """Merge Nager + NSE holidays into trading_events for this user. Returns count added/updated."""
+    nager  = await _fetch_nager_holidays(year)
+    nse    = await _fetch_nse_holidays(year)
+
+    # Merge: NSE is authoritative (it's the actual market calendar).
+    # Nager fills gaps for national holidays NSE might not list.
+    seen_dates: set = set()
+    merged: list    = []
+    for h in nse:
+        if h["date"] not in seen_dates:
+            merged.append({**h, "source": "nse"})
+            seen_dates.add(h["date"])
+    for h in nager:
+        if h["date"] not in seen_dates:
+            merged.append({**h, "source": "nager"})
+            seen_dates.add(h["date"])
+
+    added = 0
+    for h in merged:
+        existing = db.query(TradingEvent).filter(
+            TradingEvent.user_id    == user_id,
+            TradingEvent.event_date == h["date"],
+            TradingEvent.auto_synced == True,
+        ).first()
+        if existing:
+            # Update name/source in case it changed
+            existing.event_name = h["name"]
+            existing.source     = h["source"]
+        else:
+            # Don't overwrite user-created events on the same date
+            user_event = db.query(TradingEvent).filter(
+                TradingEvent.user_id    == user_id,
+                TradingEvent.event_date == h["date"],
+                TradingEvent.auto_synced == False,
+            ).first()
+            if not user_event:
+                db.add(TradingEvent(
+                    user_id         = user_id,
+                    event_date      = h["date"],
+                    event_name      = h["name"],
+                    category        = "holiday",
+                    suspend_trading = True,
+                    auto_synced     = True,
+                    source          = h["source"],
+                    notes           = f"Auto-synced from {h['source'].upper()}",
+                ))
+                added += 1
+    db.commit()
+    return added
+
+
+@app.post("/api/events/sync-holidays")
+async def sync_holidays(user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """
+    Fetch live NSE trading holidays from NSE India + Nager Date API
+    and upsert into the user's event calendar.
+    Runs for current year and next year.
+    """
+    import pytz
+    year  = datetime.now(pytz.timezone("Asia/Kolkata")).year
+    total = 0
+    for y in [year, year + 1]:
+        total += await _sync_holidays_for_user(user.id, db, y)
+    _load_holiday_cache()   # refresh in-memory cache
+    return {"ok": True, "added": total,
+            "message": f"Synced {total} new holidays from NSE & national calendar"}
+
+
+async def _auto_sync_holidays():
+    """
+    Background task: sync holidays on startup (after 10s delay) and
+    refresh every January 1st for the new year.
+    """
+    import pytz
+    await asyncio.sleep(10)   # let DB init settle
+    db = SessionLocal()
+    try:
+        users = db.query(User).filter(User.is_active == True).all()
+        year  = datetime.now(pytz.timezone("Asia/Kolkata")).year
+        for u in users:
+            try:
+                for y in [year, year + 1]:
+                    await _sync_holidays_for_user(u.id, db, y)
+            except Exception as e:
+                log.warning(f"Auto holiday sync failed for {u.email}: {e}")
+        _load_holiday_cache()
+        log.info("Auto holiday sync complete")
+    except Exception as e:
+        log.error(f"Auto holiday sync error: {e}")
+    finally:
+        db.close()
+
+    # Sleep until next Jan 1 IST, then loop yearly
+    while True:
+        now      = datetime.now(pytz.timezone("Asia/Kolkata"))
+        next_jan = datetime(now.year + 1, 1, 1, 1, 0, tzinfo=pytz.timezone("Asia/Kolkata"))
+        wait_sec = (next_jan - now).total_seconds()
+        await asyncio.sleep(max(wait_sec, 86400))  # at least 1 day
+        db2 = SessionLocal()
+        try:
+            year2 = datetime.now(pytz.timezone("Asia/Kolkata")).year
+            users2 = db2.query(User).filter(User.is_active == True).all()
+            for u in users2:
+                try:
+                    for y in [year2, year2 + 1]:
+                        await _sync_holidays_for_user(u.id, db2, y)
+                except Exception:
+                    pass
+            _load_holiday_cache()
+            log.info(f"Annual holiday sync complete for {year2}")
+        finally:
+            db2.close()
 
 
 # ── AI Morning Assessment ─────────────────────────────────────────
@@ -4856,6 +5090,12 @@ async def _run_engine(user_id: str, auto: Automation,
 
     while state.is_running:
         try:
+            # Self-check: if a newer engine replaced us in active_engines, exit immediately.
+            # This prevents ghost engines running invisibly after a restart.
+            if (active_engines.get(user_id) or {}).get(auto_id) is not state:
+                log.info(f"[engine:{auto_id}] Stale engine detected — newer instance replaced us, stopping.")
+                break
+
             now = datetime.now(ist)
             t   = now.time()
 

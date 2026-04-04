@@ -4524,9 +4524,9 @@ async function renderEvents() {
   var el = document.getElementById('pg-events');
   if (!el) return;
   el.innerHTML = '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-    + '<div><div class="page-title">Event Calendar</div><div class="page-sub">Mark dates to suspend trading automatically</div></div>'
+    + '<div><div class="page-title">Event Calendar</div><div class="page-sub">NSE holidays auto-synced. Add events to suspend trading on key dates.</div></div>'
     + '<div class="page-controls">'
-    + '<button class="btn btn-ghost btn-sm" onclick="seedDefaultEvents()">Load defaults</button>'
+    + '<button class="btn btn-ghost btn-sm" id="sync-holidays-btn" onclick="syncHolidays()">&#8635; Sync NSE Holidays</button>'
     + '<button class="btn btn-primary btn-sm" onclick="showAddEvent()">+ Add Event</button>'
     + '</div></div>'
     + '<div id="events-content"><div class="empty"><div class="spin"></div></div></div>'
@@ -4580,8 +4580,8 @@ function _renderEventsView() {
   var el = document.getElementById('events-content');
   if (!el) return;
 
-  var catColors = {rbi:'#ff5252', fed:'#2196f3', budget:'#ff9800', expiry:'#00e676', other:'#9e9e9e'};
-  var catLabels = {rbi:'RBI', fed:'Fed', budget:'Budget', expiry:'Expiry', other:'Other'};
+  var catColors = {rbi:'#ff5252', fed:'#2196f3', budget:'#ff9800', expiry:'#00e676', holiday:'#7c3aed', election:'#f59e0b', other:'#9e9e9e'};
+  var catLabels = {rbi:'RBI', fed:'Fed', budget:'Budget', expiry:'Expiry', holiday:'Holiday', election:'Election', other:'Other'};
   var events = _eventsCache;
 
   // Build event lookup by date
@@ -4598,10 +4598,12 @@ function _renderEventsView() {
     + '<button class="tab-btn '+(_eventsViewMode==='list'?'active':'')+'" onclick="_eventsViewMode=\'list\';_renderEventsView()">&#9776; List</button>'
     + '</div>'
     + '<div style="display:flex;gap:4px;font-size:10px;color:var(--text2);align-items:center;flex-wrap:wrap">'
-    + '<span style="width:8px;height:8px;border-radius:50%;background:#ff5252;display:inline-block"></span>RBI '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#7c3aed;display:inline-block"></span>Holiday '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#ff5252;display:inline-block;margin-left:4px"></span>RBI '
     + '<span style="width:8px;height:8px;border-radius:50%;background:#2196f3;display:inline-block;margin-left:4px"></span>Fed '
     + '<span style="width:8px;height:8px;border-radius:50%;background:#ff9800;display:inline-block;margin-left:4px"></span>Budget '
-    + '<span style="width:8px;height:8px;border-radius:50%;background:#00e676;display:inline-block;margin-left:4px"></span>Expiry'
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#00e676;display:inline-block;margin-left:4px"></span>Expiry '
+    + '<span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block;margin-left:4px"></span>Election'
     + '</div></div>';
 
   if (!events.length) {
@@ -4631,12 +4633,14 @@ function _renderEventsView() {
         html += '<div class="event-row">'
           + '<div class="event-cat '+esc(e.category||'other')+'"></div>'
           + '<div style="flex:1;min-width:0">'
-          + '<div style="font-size:12px;font-weight:500">'+esc(e.name)+'</div>'
+          + '<div style="font-size:12px;font-weight:500;display:flex;align-items:center;gap:5px">'+esc(e.name)
+          + (e.auto_synced ? '<span style="font-size:9px;background:rgba(124,58,237,.15);color:#7c3aed;border:1px solid rgba(124,58,237,.3);border-radius:3px;padding:1px 4px;font-weight:600">'+esc((e.source||'nse').toUpperCase())+'</span>' : '')
+          + '</div>'
           + '<div style="font-size:10px;color:var(--text2)">'+esc(dow)+' '+esc(day)+' • '+esc(catLabels[e.category||'other']||'')+'</div>'
           + '</div>'
           + '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
           + '<label class="toggle" title="'+(e.suspend?'Suspend trading':'Allow trading')+'"><input type="checkbox"'+(e.suspend?' checked':'')+' onchange="toggleEventSuspend(\''+esc(e.id)+'\',this.checked)"><div class="toggle-track"></div></label>'
-          + '<button class="btn btn-ghost btn-sm" onclick="editEvent('+_jsonAttr(e)+')">Edit</button>'
+          + (e.auto_synced ? '' : '<button class="btn btn-ghost btn-sm" onclick="editEvent('+_jsonAttr(e)+')">Edit</button>')
           + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteEvent(\''+esc(e.id)+'\')" >&#10005;</button>'
           + '</div></div>';
       });
@@ -4770,6 +4774,20 @@ async function toggleEventSuspend(id, val) {
   // Optimistic — just update, no reload
   try { await api('PUT', '/api/events/'+id, {suspend_trading:val}); }
   catch(e) { toast(e.message,'error'); loadEvents(); }
+}
+
+async function syncHolidays() {
+  var btn = document.getElementById('sync-holidays-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  try {
+    var r = await api('POST', '/api/events/sync-holidays');
+    toast(r.message || ('Synced ' + (r.added||0) + ' holidays'), 'success');
+    await loadEvents();
+  } catch(e) {
+    toast('Sync failed: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Sync NSE Holidays'; }
+  }
 }
 
 async function seedDefaultEvents() {
