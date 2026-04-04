@@ -1700,7 +1700,7 @@ async function renderDashboard() {
     // Seed per-symbol cache — keyed by actual requested symbol
     if (spot > 0) { _symSpotCache[sym] = {spot:spot, atm:atm}; }
     var spotFmt = spot>0 ? '\u20b9'+Number(spot).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1}) : '\u2014';
-    var lp=s.today_live_pnl||0, pp=s.today_paper_pnl||0;
+    var lp=s.today_live_pnl||0, pp=s.today_sim_pnl||s.today_paper_pnl||0;
     var ml=s.month_live_pnl||0, mp=s.month_paper_pnl||0;
     var atm=s.atm||0;
     var _now = new Date();
@@ -1710,31 +1710,36 @@ async function renderDashboard() {
     var autoCards = '';
     (s.automations||[]).forEach(function(a) {
       var livePnl    = a.today_pnl||0;
-      var paperPnl   = a.today_shadow_pnl||0;
+      var simPnl     = a.today_sim_pnl||a.today_shadow_pnl||0;
       var liveTrades = a.today_trades||0;
-      var paperTrades= a.today_shadow_trades||0;
+      var simTrades  = a.today_sim_trades||a.today_shadow_trades||0;
       var isLive     = a.mode==='live';
-      var modeBadge  = isLive ? '<span class="badge live">Live</span>' : '<span class="badge paper">Paper</span>';
+      var modeBadge  = isLive ? '<span class="badge live">Live</span>' : '<span class="badge paper">Simulation</span>';
       var statusDot  = a.status==='RUNNING' ? '<div class="dot green pulse"></div>' : '<div class="dot gray"></div>';
       var _snames={'S1':'ORB','S2':'VWAP Squeeze','S3':'Breakout','S4':'Iron Condor','S5':'Ratio Spread','S6':'Theta Strangle','S7':'All-Strike','S8':'Gap Fade','S9':'Expiry Crush','S10':'Gap Direction'};
       var stratBadges= (a.strategies||[]).slice(0,3).map(function(s){ return '<span class="badge strategy" title="'+s+'">'+(_snames[s]||s)+'</span>'; }).join(' ');
-      // Build P&L display: always show what's relevant for this mode
-      var displayPnl    = isLive ? livePnl : paperPnl;
-      var displayTrades = isLive ? liveTrades : paperTrades;
-      // Show shadow paper sim row if live automation also has paper data
-      var shadowRow = (isLive && paperTrades > 0)
-        ? '<div style="font-size:10px;color:var(--amber);margin-top:2px">📋 Paper sim: '+pnlFmt(paperPnl)+' ('+paperTrades+' trades)</div>'
+      // Display P&L: live shows live closed P&L, paper shows sim P&L
+      var displayPnl    = isLive ? livePnl : simPnl;
+      var displayTrades = isLive ? liveTrades : simTrades;
+      // Unrealised P&L row for live automations with open position
+      var unrealised = a.unrealised_pnl || 0;
+      var openPosRow = (isLive && a.has_open_pos && a.eng_position)
+        ? '<div style="font-size:10px;margin-top:3px;display:flex;gap:8px;align-items:center">'
+          + '<span style="color:var(--text2)">Open:</span>'
+          + '<span class="'+pnlClass(unrealised)+'" style="font-weight:600">'+pnlFmt(unrealised)+'</span>'
+          + '<span style="color:var(--text2);font-size:9px">unrealised · '+esc((a.eng_position.signal||{}).code||'')+'</span>'
+          + '</div>'
         : '';
       autoCards += '<div class="trade-item" style="cursor:pointer" onclick="nav(\'live\')">'
         + '<div class="trade-icon" style="background:var(--bg3)">'+statusDot+'</div>'
         + '<div class="trade-info">'
         + '<div class="trade-name">'+esc(a.name)+'</div>'
         + '<div class="trade-meta" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+' '+stratBadges+'</div>'
-        + shadowRow
+        + openPosRow
         + '</div>'
         + '<div class="trade-pnl">'
         + '<div class="trade-pnl-val '+pnlClass(displayPnl)+'">'+pnlFmt(displayPnl)+'</div>'
-        + '<div class="trade-pnl-sub">'+displayTrades+' trade'+(displayTrades!==1?'s':'')+(isLive?' \ud83d\udd34 live':' \ud83d\udcbb paper')+'</div>'
+        + '<div class="trade-pnl-sub">'+displayTrades+' trade'+(displayTrades!==1?'s':'')+(isLive?' 🔴 live':' 💻 sim')+'</div>'
         + '</div></div>';
     });
 
@@ -1827,7 +1832,7 @@ async function renderDashboard() {
       + '<div class="kpi green"><div class="kpi-label" id="dash-spot-label">'+esc((_dashSymbols.find(function(x){return x.value===_dashSymbol;})||{label:'NIFTY'}).label)+'</div><div class="kpi-value mono neutral" id="dash-spot-val">'+spotFmt+'</div><div class="kpi-sub" id="dash-atm-val">ATM '+(atm>0?atm.toLocaleString('en-IN'):'—')+' &bull; <span title="India VIX — volatility index. Guard 2 blocks trading if above your vix_max threshold. Fetched from Fyers at market open." style="color:'+(vix>=20?'var(--red)':vix>=15?'var(--amber)':'var(--text2)')+'">VIX '+(vix>0?vix.toFixed(1):'—')+'</span>'+'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">Automations</div><div class="kpi-value neutral">'+(s.total_automations||0)+'</div><div class="kpi-sub"><span style="color:var(--green)">'+(s.live_automations||0)+' live</span> • <span style="color:var(--amber)">'+(s.paper_automations||0)+' paper</span></div></div>'
       + '<div class="kpi '+(lp>=0?'green':'red')+'"><div class="kpi-label">Today Live P&amp;L</div><div class="kpi-value '+pnlClass(lp)+'">'+pnlFmt(lp)+'</div><div class="kpi-sub">'+(s.today_live_trades||0)+' closed</div></div>'
-      + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Paper P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+(s.today_paper_trades||0)+' simulated</div></div>'
+      + '<div class="kpi '+(pp>=0?'amber':'red')+'"><div class="kpi-label">Today Simulation P&amp;L</div><div class="kpi-value '+pnlClass(pp)+'">'+pnlFmt(pp)+'</div><div class="kpi-sub">'+((s.today_sim_trades||s.today_paper_trades)||0)+' simulated</div></div>'
       + '</div>'
 
       // ── This Month summary card ─────────────────────────────
@@ -1869,7 +1874,7 @@ async function renderDashboard() {
             +   '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+liveSubLabel+'</div>'
             + '</div>'
             + '<div style="flex:1;padding:12px;border-right:1px solid var(--border)">'
-            +   '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Paper P&amp;L</div>'
+            +   '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">Simulation P&amp;L</div>'
             +   '<div style="font-size:20px;font-weight:700;color:'+(mp>0?'var(--amber)':mp<0?'var(--red)':'var(--text2)')+'">'+pnlFmt(mp)+'</div>'
             +   '<div style="font-size:10px;color:var(--text2);margin-top:2px">'+paperSubLabel+'</div>'
             + '</div>'
@@ -2267,10 +2272,11 @@ async function renderAutomate() {
   el.innerHTML = '<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="page-title">Automate</div><div class="page-sub">Create and manage trading automations</div></div><button class="btn btn-primary btn-sm" onclick="showAutoForm()">+ New</button></div><div id="autos-list"><div class="empty"><div class="spin" style="width:24px;height:24px;border-width:3px"></div></div></div><div id="auto-form" style="display:none"></div>';
   try {
     // Always fetch brokers fresh — myBrokers may be empty if Brokers page not visited
-    var [autosRes, symRes, brokRes] = await Promise.all([
+    var [autosRes, symRes, brokRes, engRes] = await Promise.all([
       api('GET', '/api/automations'),
       api('GET', '/api/capital/symbols').catch(function(){ return api('GET', '/api/market/symbols').catch(function(){ return {symbols:[]}; }); }),
-      api('GET', '/api/brokers')
+      api('GET', '/api/brokers'),
+      api('GET', '/api/engine/status/all').catch(function(){ return {engines:{}}; })
     ]);
     // Update global broker list
     myBrokers = brokRes.brokers || [];
@@ -2281,7 +2287,27 @@ async function renderAutomate() {
       {value:'NSE:FINNIFTY-INDEX', label:'FINNIFTY',    lot_size:60},
       {value:'BSE:SENSEX-INDEX',   label:'SENSEX',      lot_size:20},
     ];
-    _renderAutoList(autosRes.automations||[]);
+    // Merge live engine state into automation objects for card display
+    var engMap = engRes.engines || {};
+    var autos = (autosRes.automations||[]).map(function(a) {
+      var eng = engMap[a.id] || {};
+      var cfg = a.config || {};
+      var ep  = eng.position || null;
+      var comb = eng.combined || 0;
+      var unr  = 0;
+      if (ep && comb > 0) {
+        unr = Math.round(((ep.entry_combined||0) - comb) * (cfg.lots||1) * (cfg.lot_size||65));
+      }
+      return Object.assign({}, a, {
+        has_open_pos:   !!ep,
+        eng_position:   ep,
+        eng_combined:   comb,
+        eng_day_pnl:    eng.day_pnl || 0,
+        unrealised_pnl: unr,
+        guard_status:   eng.guard_status || a.guard_status || '',
+      });
+    });
+    _renderAutoList(autos);
   } catch(e) {
     document.getElementById('autos-list').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
   }
@@ -2320,13 +2346,32 @@ function _renderAutoList(autos) {
       : '<span style="font-size:11px;color:var(--text2)">Idle</span>';
     var modePill = isLive
       ? '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(239,68,68,.15);color:#ef4444">LIVE</span>'
-      : '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>';
-    var shadowPill = a.shadow_mode ? '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--bg2);color:var(--text2)">Shadow</span>' : '';
+      : '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(99,102,241,.15);color:#818cf8">SIM</span>';
+    var hasOpenPos = a.has_open_pos || false;
+    var unrealised = a.unrealised_pnl || 0;
+    var engDayPnl  = a.eng_day_pnl || 0;
+    // Live P&L strip — shown when running with position
+    var livePnlStrip = (isRunning && isLive)
+      ? '<div style="padding:6px 14px;background:rgba(239,68,68,.04);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+        + '<div style="display:flex;gap:14px">'
+        + '<div><div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Unrealised</div><div class="'+(hasOpenPos?pnlClass(unrealised):'neutral')+'" style="font-size:12px;font-weight:700">'+(hasOpenPos?pnlFmt(unrealised):'—')+'</div></div>'
+        + '<div><div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Day P&L</div><div class="'+pnlClass(engDayPnl)+'" style="font-size:12px;font-weight:700">'+pnlFmt(engDayPnl)+'</div></div>'
+        + (hasOpenPos && a.eng_position ? '<div><div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Strategy</div><div style="font-size:11px;font-weight:600;color:var(--blue)">'+esc((a.eng_position.signal||{}).code||'—')+'</div></div>' : '')
+        + (hasOpenPos && a.eng_combined > 0 ? '<div><div style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Comb. Now</div><div style="font-size:11px;font-family:var(--mono)">₹'+a.eng_combined.toFixed(1)+'</div></div>' : '')
+        + '</div>'
+        + (hasOpenPos ? '<button class="btn btn-danger btn-sm" onclick="forceExitAuto(\''+a.id+'\')" style="font-size:10px;padding:3px 8px" title="Force exit this position now">⚡ Exit Now</button>' : '')
+        + '</div>'
+      : (isRunning && !isLive)
+        ? '<div style="padding:5px 14px;background:rgba(99,102,241,.04);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'
+          + '<div><span style="font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Day Sim P&L </span><span class="'+pnlClass(engDayPnl)+'" style="font-size:12px;font-weight:700">'+pnlFmt(engDayPnl)+'</span></div>'
+          + (hasOpenPos ? '<span style="font-size:10px;color:var(--amber)">● Position open</span>' : '')
+          + '</div>'
+        : '';
     return '<div class="card" data-autoid="'+a.id+'" style="border-left:3px solid '+(isLive?'#ef4444':'#818cf8')+(isRunning?';box-shadow:0 0 0 1px rgba(16,185,129,.25)':'')+'">'
       // top row: name + symbol + actions
       + '<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 14px 0">'
       +   '<div>'
-      +     '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+modePill+shadowPill+statusDot+'</div>'
+      +     '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+modePill+statusDot+'</div>'
       +     '<div style="font-size:14px;font-weight:600;line-height:1.3">'+esc(a.name)+'</div>'
       +     '<div style="font-size:11px;color:var(--text2);margin-top:1px">'+esc(sym)+'</div>'
       +   '</div>'
@@ -2340,6 +2385,8 @@ function _renderAutoList(autos) {
       + '<div style="padding:8px 14px;display:flex;gap:4px;flex-wrap:wrap">'+stratBadges+'</div>'
       // guard banner if blocked
       + (a.guard_status ? '<div class="guard-banner" style="margin:0 14px 8px"><div class="guard-banner-icon">🛡️</div><div class="guard-banner-text"><div class="guard-banner-label">BLOCKED</div>'+esc(a.guard_status)+'</div></div>' : '')
+      // live P&L strip (running automations only)
+      + livePnlStrip
       // stats grid — 2 rows × 3 cols
       + '<div style="display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);font-size:11px">'
       +   '<div style="padding:7px 12px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Lots</div><div style="font-weight:700">'+(cfg.lots||1)+'<span style="color:var(--text2);font-weight:400">×</span>'+(cfg.lot_size||65)+'</div></div>'
@@ -2462,9 +2509,30 @@ function showAutoForm(auto) {
     + '<div class="field-row">'
     + '<div class="field"><label>Position Sizing</label><select id="af-sizing"><option value="fixed" selected>Fixed lots (safe)</option><option value="kelly">Kelly Criterion</option></select><div class="field-hint">Keep Fixed until you have 20+ trades.</div></div>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-top:4px">'
-    + '<div><div style="font-size:13px;font-weight:500">Shadow Mode</div><div style="font-size:11px;color:var(--text2)">Run paper simulation daily, store results</div></div>'
-    + '<label class="toggle"><input type="checkbox" id="af-shadow" checked><div class="toggle-track"></div></label>'
+    + '<div style="padding:12px 0;border-top:1px solid var(--border);margin-top:4px">'
+    + '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Trading Mode</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'
+    + '<button id="af-mode-paper" class="mode-btn mode-active" onclick="setTradingMode(\'paper\')" type="button" style="padding:10px 8px;border-radius:8px;border:2px solid var(--indigo,#818cf8);background:rgba(99,102,241,.1);cursor:pointer;text-align:left;transition:all .15s">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--indigo,#818cf8)">📋 Paper</div>'
+    + '<div style="font-size:10px;color:var(--text2);margin-top:2px">Simulation only · No real orders</div>'
+    + '</button>'
+    + '<button id="af-mode-live" class="mode-btn" onclick="setTradingMode(\'live\')" type="button" style="padding:10px 8px;border-radius:8px;border:2px solid var(--border);background:var(--bg2);cursor:pointer;text-align:left;transition:all .15s">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--text2)">🔴 Live</div>'
+    + '<div style="font-size:10px;color:var(--text2);margin-top:2px">Real orders via your broker</div>'
+    + '</button>'
+    + '</div>'
+    + '<div id="af-order-preview" style="display:none;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px">'
+    + '<div style="font-size:11px;font-weight:700;color:#ef4444;margin-bottom:8px;display:flex;align-items:center;gap:5px">⚠️ LIVE ORDER PARAMETERS — real money will be used</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">'
+    + '<div style="color:var(--text2)">Exchange</div><div style="font-weight:600" id="op-exchange">NSE</div>'
+    + '<div style="color:var(--text2)">Product Type</div><div style="font-weight:600;color:var(--amber)">MARGIN (Intraday)</div>'
+    + '<div style="color:var(--text2)">Order Type</div><div style="font-weight:600">MARKET</div>'
+    + '<div style="color:var(--text2)">Lots × Size</div><div style="font-weight:600" id="op-qty">1 × 65 = 65 qty</div>'
+    + '<div style="color:var(--text2)">Auto Square-off</div><div style="font-weight:600" id="op-exit">14:00 IST</div>'
+    + '<div style="color:var(--text2)">Broker SL (₹)</div><div style="font-weight:600;color:var(--red)" id="op-sl">₹18 above entry</div>'
+    + '</div>'
+    + '<div style="margin-top:8px;font-size:10px;color:var(--text2);line-height:1.5">Orders are placed as 4-leg iron condor (or fewer legs by strategy). BUY legs first, SELL legs second. Basket order with fallback to individual.</div>'
+    + '</div>'
     + '</div>'
     + '<div style="padding:10px 0;border-top:1px solid var(--border)">'
     + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
@@ -2653,11 +2721,10 @@ function showAutoForm(auto) {
     if (fsbSave && fsbBtns) {
       if (_editAutoId) {
         fsbBtns.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">✕ Cancel</button>'
-          + '<button class="btn btn-primary" onclick="saveAuto(\'paper\')" style="font-weight:700">✓ Update</button>';
+          + '<button class="btn btn-primary" onclick="saveAuto()" style="font-weight:700">✓ Update</button>';
       } else {
         fsbBtns.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">✕ Cancel</button>'
-          + '<button class="btn btn-ghost btn-sm" onclick="saveAuto(\'paper\')">Save Paper</button>'
-          + '<button class="btn btn-danger" onclick="saveAuto(\'live\')" style="font-weight:700">🔴 Go Live</button>';
+          + '<button class="btn btn-primary" id="fsb-save-main" onclick="saveAuto()" style="font-weight:700">✓ Save Automation</button>';
       }
     }
     fsb.style.display = 'flex';
@@ -2671,6 +2738,14 @@ function showAutoForm(auto) {
   // Pre-init state so it's ready:
   _calYear = new Date().getFullYear();
   _calMonth = new Date().getMonth();
+  // Wire order preview live updates
+  ['af-lots','af-lotsize','af-sl-rupees','af-exit','af-sym'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', _updateOrderPreview);
+    if (el) el.addEventListener('change', _updateOrderPreview);
+  });
+  // Set initial mode
+  setTimeout(function(){ setTradingMode(auto ? (auto.mode||'paper') : 'paper'); }, 50);
   // Load Telegram accounts for per-automation selector
   _loadTgAccountsForForm(auto);
   // Wire AI news gate toggle
@@ -2698,7 +2773,8 @@ function showAutoForm(auto) {
     var dm = document.getElementById('af-driftmax'); if (dm && cfg.drift_max_pct) dm.value = cfg.drift_max_pct;
     var vm = document.getElementById('af-vixmax'); if (vm && cfg.vix_max) vm.value = cfg.vix_max;
     var sz = document.getElementById('af-sizing'); if (sz && cfg.position_sizing) sz.value = cfg.position_sizing;
-    var sh = document.getElementById('af-shadow'); if (sh) sh.checked = auto.shadow_mode !== false;
+    // Pre-fill trading mode selector
+    setTimeout(function(){ setTradingMode(auto.mode || 'paper'); }, 50);
     var tg = document.getElementById('af-tg'); if (tg) { tg.checked = auto.telegram_alerts !== false; _toggleTgAccounts(tg); }
     // Pre-fill run days
     if (cfg.run_days) {
@@ -2804,12 +2880,60 @@ function toggleStrat(code) {
   if (el) el.className = 'strat-pick' + (selectedStrategies.has(code) ? ' selected' : '');
 }
 
-async function saveAuto(mode) {
+function setTradingMode(mode) {
+  var paperBtn = document.getElementById('af-mode-paper');
+  var liveBtn  = document.getElementById('af-mode-live');
+  var preview  = document.getElementById('af-order-preview');
+  var saveBtn  = document.getElementById('fsb-save-main');
+  if (!paperBtn || !liveBtn) return;
+  if (mode === 'live') {
+    paperBtn.style.border = '2px solid var(--border)';
+    paperBtn.style.background = 'var(--bg2)';
+    paperBtn.querySelector('div').style.color = 'var(--text2)';
+    liveBtn.style.border = '2px solid #ef4444';
+    liveBtn.style.background = 'rgba(239,68,68,.1)';
+    liveBtn.querySelector('div').style.color = '#ef4444';
+    if (preview) preview.style.display = '';
+    if (saveBtn) { saveBtn.style.background='var(--red)'; saveBtn.textContent='🔴 Save Live Automation'; }
+  } else {
+    paperBtn.style.border = '2px solid var(--indigo,#818cf8)';
+    paperBtn.style.background = 'rgba(99,102,241,.1)';
+    paperBtn.querySelector('div').style.color = 'var(--indigo,#818cf8)';
+    liveBtn.style.border = '2px solid var(--border)';
+    liveBtn.style.background = 'var(--bg2)';
+    liveBtn.querySelector('div').style.color = 'var(--text2)';
+    if (preview) preview.style.display = 'none';
+    if (saveBtn) { saveBtn.style.background=''; saveBtn.textContent='✓ Save Automation'; }
+  }
+  // Update order preview values live
+  _updateOrderPreview();
+}
+
+function _updateOrderPreview() {
+  var lots   = parseInt((document.getElementById('af-lots')||{}).value||1);
+  var lotSz  = parseInt((document.getElementById('af-lotsize')||{}).value||65);
+  var sl     = parseInt((document.getElementById('af-sl-rupees')||{}).value||18);
+  var exit   = (document.getElementById('af-exit')||{}).value||'14:00';
+  var sym    = (document.getElementById('af-sym')||{}).value||'';
+  var exc    = sym.startsWith('BSE') ? 'BSE' : 'NSE';
+  var qtyEl  = document.getElementById('op-qty');
+  var slEl   = document.getElementById('op-sl');
+  var exitEl = document.getElementById('op-exit');
+  var excEl  = document.getElementById('op-exchange');
+  if (qtyEl)  qtyEl.textContent  = lots + ' × ' + lotSz + ' = ' + (lots*lotSz) + ' qty';
+  if (slEl)   slEl.textContent   = '₹' + sl + ' above entry combined';
+  if (exitEl) exitEl.textContent = exit + ' IST';
+  if (excEl)  excEl.textContent  = exc;
+}
+
+async function saveAuto() {
+  var mode = document.getElementById('af-mode-live') &&
+             document.getElementById('af-mode-live').style.border.includes('ef4444') ? 'live' : 'paper';
   var sym = document.getElementById('af-sym').value;
   var broker = document.getElementById('af-broker').value;
   if (!broker) { toast('Connect a broker first', 'error'); return; }
   if (selectedStrategies.size === 0) { toast('Select at least one strategy', 'error'); return; }
-  if (mode==='live' && !confirm('Switch to LIVE mode?\n\nReal money orders will be placed.\nOnly do this after reviewing paper Results.')) return;
+  if (mode==='live' && !confirm('Save as LIVE automation?\n\nReal money orders will be placed with your broker.\nEnsure you have reviewed paper Results and F&O is enabled in your account.')) return;
   var symLabel = document.getElementById('af-sym');
   var symText = symLabel ? symLabel.options[symLabel.selectedIndex].text : sym.split(':')[1]||sym;
   var stratList = Array.from(selectedStrategies);
@@ -2820,7 +2944,7 @@ async function saveAuto(mode) {
     name: _autoName,
     symbol: sym, broker_id: broker,
     strategies: stratList, mode: mode,
-    shadow_mode: document.getElementById('af-shadow').checked,
+    shadow_mode: mode === 'paper',
     telegram_alerts: document.getElementById('af-tg').checked,
     config: {
       lots: parseInt(document.getElementById('af-lots').value)||1,
@@ -2970,7 +3094,7 @@ async function _refreshLive() {
     var statusBar = '<div class="card" style="margin-bottom:12px"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">'
       + '<div style="display:flex;align-items:center;gap:8px">'+(isRunning?'<div class="dot green pulse"></div>':'<div class="dot gray"></div>')+' <span style="font-size:13px;font-weight:600">'+(isRunning?'Engine Running':'Engine Idle')+'</span> '+modeBadgeHtml+'</div>'
       + '<div class="btn-row">'
-      + (isRunning ? '<button class="btn btn-danger btn-sm" onclick="forceExit()">Force Exit</button><button class="btn btn-ghost btn-sm" onclick="stopEngine()">Stop</button>' : '<button class="btn btn-primary btn-sm" onclick="nav(\'automate\')">Start Engine</button>')
+      + (isRunning ? '<button class="btn btn-danger btn-sm" onclick="forceExit()" style="font-weight:700" title="Force-exit ALL open positions immediately">☠ Kill All Trades</button><button class="btn btn-ghost btn-sm" onclick="stopEngine()">Stop</button>' : '<button class="btn btn-primary btn-sm" onclick="nav(\'automate\')">Start Engine</button>')
       + '</div></div></div>';
 
     // Open position
@@ -3044,9 +3168,27 @@ async function stopEngine() {
 }
 
 async function forceExit() {
-  if (!confirm('Force exit all positions now?')) return;
-  try { await api('POST', '/api/engine/force-exit'); toast('Force exit executed', 'success'); await _refreshLive(); }
-  catch(e) { toast(e.message, 'error'); }
+  // Kill All — requires double confirm
+  if (!confirm('⚠️ KILL ALL TRADES\n\nThis will force-exit ALL open positions immediately at market price.\n\nAre you sure?')) return;
+  if (!confirm('Second confirmation required.\n\nAll positions across ALL automations will be closed NOW.\n\nProceed?')) return;
+  try {
+    var r = await api('POST', '/api/engine/force-exit');
+    toast('Kill All executed — ' + (r.queued||0) + ' position(s) queued for exit', 'success');
+    await _refreshLive();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function forceExitAuto(autoId) {
+  if (!confirm('Force exit this automation\'s open position now?\n\nThe trade will be closed at market price immediately.')) return;
+  try {
+    var r = await api('POST', '/api/engine/' + autoId + '/force-exit');
+    if (r.ok) {
+      toast('Force exit queued — position will close shortly', 'success');
+    } else {
+      toast(r.message || 'No open position', 'warn');
+    }
+    renderAutomate();
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 // ── TRADES ───────────────────────────────────────────────────

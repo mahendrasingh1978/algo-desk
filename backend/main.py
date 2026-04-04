@@ -2248,11 +2248,24 @@ async def stop_engine(req: dict = None, user: User = Depends(get_current_user),
 
 @app.post("/api/engine/force-exit")
 async def force_exit(user: User = Depends(get_current_user)):
-    # Force exit on the engine that currently has an open position
+    """Force exit ALL open positions across all running automations."""
+    count = 0
     for eng in _all_engines(user.id):
         if eng.position:
             eng.position["force_exit"] = True
-    return {"ok": True}
+            count += 1
+    return {"ok": True, "queued": count}
+
+@app.post("/api/engine/{auto_id}/force-exit")
+async def force_exit_auto(auto_id: str, user: User = Depends(get_current_user)):
+    """Force exit the open position for a specific automation only."""
+    eng = _get_engine(user.id, auto_id)
+    if not eng:
+        raise HTTPException(404, "No running engine for this automation")
+    if not eng.position:
+        return {"ok": False, "message": "No open position on this automation"}
+    eng.position["force_exit"] = True
+    return {"ok": True, "message": "Force exit queued"}
 
 @app.get("/api/engine/status")
 def engine_status(user: User = Depends(get_current_user),
@@ -2293,6 +2306,23 @@ def engine_status(user: User = Depends(get_current_user),
         "events_suspended": getattr(state, "events_suspended", False),
         "ai_suspended":  getattr(state, "ai_suspended", False),
     }
+
+@app.get("/api/engine/status/all")
+def engine_status_all(user: User = Depends(get_current_user)):
+    """Return live engine state for ALL running automations — used for per-card P&L display."""
+    result = {}
+    for auto_id, state in (active_engines.get(user.id) or {}).items():
+        atm = state.atm
+        result[auto_id] = {
+            "running":      state.is_running,
+            "engine_mode":  state.config.get("mode", "paper"),
+            "position":     state.position,
+            "day_pnl":      round(state.day_pnl, 2),
+            "combined":     round(atm.current, 2) if atm else 0,
+            "atm_strike":   state.atm_strike,
+            "guard_status": getattr(state, "guard_status", ""),
+        }
+    return {"engines": result}
 
 # ── Trades ────────────────────────────────────────────────────
 
@@ -4243,6 +4273,16 @@ async def dashboard_summary(user: User = Depends(get_current_user),
         a_shadow = [t for t in today_shadow if t.automation_id == a.id]
         a_pnl = sum(t.net_pnl or 0 for t in a_today if not t.is_open)
         a_shadow_pnl = sum(t.net_pnl or 0 for t in a_shadow if not t.is_open)
+        # Live engine state — for real-time P&L on automation cards
+        eng_combined = round(eng.atm.current, 2) if (eng and eng.atm) else 0
+        eng_position = eng.position if eng else None
+        eng_day_pnl  = round(eng.day_pnl, 2) if eng else 0
+        unrealised   = 0.0
+        if eng_position and eng_combined > 0:
+            _lots   = a.config.get("lots", 1)
+            _lot_sz = a.config.get("lot_size", 65)
+            _entry  = eng_position.get("entry_combined", 0)
+            unrealised = round((_entry - eng_combined) * _lots * _lot_sz, 0)
         auto_status.append({
             "id": a.id, "name": a.name,
             "symbol": a.symbol.split(":")[1] if ":" in a.symbol else a.symbol,
@@ -4252,9 +4292,18 @@ async def dashboard_summary(user: User = Depends(get_current_user),
             "strategies": a.strategies,
             "today_trades": len(a_today),
             "today_pnl": round(a_pnl, 0),
+            "today_sim_trades": len(a_shadow),
+            "today_sim_pnl": round(a_shadow_pnl, 0),
+            # backward compat
             "today_shadow_trades": len(a_shadow),
             "today_shadow_pnl": round(a_shadow_pnl, 0),
-            "open_position": any(t.is_open for t in a_today),
+            "open_position": any(t.is_open for t in a_today) or bool(eng_position),
+            # live engine state for card display
+            "has_open_pos":   bool(eng_position),
+            "eng_position":   eng_position,
+            "eng_combined":   eng_combined,
+            "eng_day_pnl":    eng_day_pnl,
+            "unrealised_pnl": unrealised,
         })
 
     today_live_pnl = sum(t.net_pnl or 0 for t in today_trades if not t.is_open)
@@ -4326,10 +4375,12 @@ async def dashboard_summary(user: User = Depends(get_current_user),
         "market_updated":   cache.get("updated"),
         "market_message":   (f"Market closed · {_next_market_open_msg()}" if not mkt_open
                              else cache.get("message", "")),
-        "today_live_pnl":   round(today_live_pnl, 0),
-        "today_paper_pnl":  round(today_paper_pnl, 0),
+        "today_live_pnl":    round(today_live_pnl, 0),
+        "today_sim_pnl":     round(today_paper_pnl, 0),
+        "today_paper_pnl":   round(today_paper_pnl, 0),   # backward compat
         "today_live_trades": len([t for t in today_trades if not t.is_open]),
-        "today_paper_trades": len([t for t in today_shadow if not t.is_open]),
+        "today_sim_trades":  len([t for t in today_shadow if not t.is_open]),
+        "today_paper_trades": len([t for t in today_shadow if not t.is_open]),  # backward compat
         "open_live":        len([t for t in today_trades if t.is_open]),
         "open_paper":       len([t for t in today_shadow if t.is_open]),
         "open_positions":   len([t for t in today_trades if t.is_open]) + len([t for t in today_shadow if t.is_open]),
