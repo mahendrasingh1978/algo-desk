@@ -371,10 +371,28 @@ details[open] summary{color:var(--text)}
   #content{padding:10px;padding-bottom:calc(50px + env(safe-area-inset-bottom))}
 }
 /* ── FORM TABS ─────────────────────────── */
-.form-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.form-tab{background:none;border:none;color:var(--text2);font-size:13px;font-weight:500;padding:10px 16px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s}
-.form-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
-.form-tab:hover{color:var(--text)}
+.form-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:18px}
+.form-tab{background:var(--bg2);border:1px solid var(--border);border-radius:10px;cursor:pointer;padding:10px 6px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;transition:all .15s;text-align:center}
+.form-tab .ti{font-size:20px;line-height:1.1}
+.form-tab .tn{font-size:11px;font-weight:700;color:var(--text);line-height:1.2}
+.form-tab .td{font-size:10px;color:var(--text2);line-height:1.2}
+.form-tab.active{background:linear-gradient(135deg,rgba(68,138,255,.12) 0%,rgba(0,230,118,.06) 100%);border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+.form-tab.active .tn{color:var(--blue)}
+.form-tab.active .ti{filter:drop-shadow(0 0 4px rgba(68,138,255,.5))}
+.form-tab:hover:not(.active){border-color:var(--border2);background:var(--bg3)}
+.form-tab .tl{font-size:9px;font-weight:700;letter-spacing:.4px;margin-top:3px}
+/* ── Automation editing state ─────────────────────────────── */
+.auto-card-dim{opacity:.2;pointer-events:none;filter:saturate(0);transition:all .3s}
+.auto-card-editing{box-shadow:0 0 0 2px var(--blue),0 12px 40px rgba(68,138,255,.18)!important;position:relative;z-index:3;transition:box-shadow .3s}
+.auto-card-editing::before{content:'✎  EDITING';position:absolute;top:-1px;left:14px;font-size:9px;font-weight:800;letter-spacing:1px;color:var(--blue);background:var(--bg);padding:2px 10px;border-radius:0 0 8px 8px;border:1px solid var(--blue);border-top:none}
+/* ── Floating save bar ────────────────────────────────────── */
+#auto-save-bar{position:fixed;bottom:0;left:220px;right:0;z-index:200;padding:10px 20px;padding-bottom:calc(10px + env(safe-area-inset-bottom));background:rgba(10,10,15,.97);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:2px solid var(--blue);display:none;align-items:center;justify-content:space-between;gap:12px;transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);box-shadow:0 -4px 40px rgba(68,138,255,.12)}
+#auto-save-bar.visible{display:flex;transform:translateY(0)}
+@media(max-width:767px){#auto-save-bar{left:0;bottom:calc(56px + env(safe-area-inset-bottom))}}
+/* ── Form tabs — 2 col on small screens ──────────────────── */
+@media(max-width:600px){.form-tabs{grid-template-columns:repeat(2,1fr);gap:5px}}
+/* ── Cards — better touch targets on mobile ──────────────── */
+@media(max-width:767px){.auto-stats-cell{padding:8px 10px!important}}
 /* ── SKIP-DATE CALENDAR ─────────────────── */
 .skip-cal-wrap{margin-top:8px}
 .skip-cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
@@ -517,6 +535,14 @@ details[open] summary{color:var(--text)}
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
         Results
       </div>
+      <div class="nav-link" id="sn-backtest" onclick="nav('backtest')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        Backtest
+      </div>
+      <div class="nav-link" id="sn-events" onclick="nav('events')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Calendar
+      </div>
       <div class="nav-link" id="sn-help" onclick="nav('help')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         Help Guide
@@ -574,7 +600,7 @@ details[open] summary{color:var(--text)}
     <div id="bottomnav">
       <div class="bn-item active" id="bn-dashboard" onclick="nav('dashboard')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        <span>Home</span>
+        <span>Dashboard</span>
       </div>
       <div class="bn-item" id="bn-automate" onclick="nav('automate')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
@@ -582,15 +608,30 @@ details[open] summary{color:var(--text)}
       </div>
       <div class="bn-item" id="bn-live" onclick="nav('live')">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        <span>Live</span>
+        <span>Live Monitor</span>
       </div>
-      <div class="bn-item" id="bn-events" onclick="nav('events')">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-        <span>Calendar</span>
+      <div class="bn-item" id="bn-trades" onclick="nav('trades')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>Trades</span>
       </div>
       <div class="bn-item" id="bn-more" onclick="openMoreDrawer()">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
         <span>More</span>
+      </div>
+    </div>
+
+    <!-- Floating automation save bar -->
+    <div id="auto-save-bar">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span style="font-size:18px" id="fsb-icon">⚡</span>
+        <div style="min-width:0">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Editing automation</div>
+          <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="fsb-name">New Automation</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0" id="fsb-buttons">
+        <button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">✕ Cancel</button>
+        <button class="btn btn-primary" id="fsb-save-btn" onclick="saveAuto('paper')" style="font-weight:700">✓ Save</button>
       </div>
     </div>
 
@@ -603,25 +644,25 @@ details[open] summary{color:var(--text)}
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
           My Brokers
         </div>
-        <div class="more-item" onclick="navMore('trades')">
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          Trades
-        </div>
         <div class="more-item" onclick="navMore('performance')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
-          Results &amp; Performance
+          Results
         </div>
         <div class="more-item" onclick="navMore('backtest')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-          Backtest (Paper History)
+          Backtest
+        </div>
+        <div class="more-item" onclick="navMore('events')">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Calendar
         </div>
         <div class="more-item" onclick="navMore('help')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Help &amp; Guide
+          Help Guide
         </div>
         <div class="more-item" onclick="navMore('profile')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile &amp; Settings
+          Profile
         </div>
         <div class="more-item" id="more-admin-item" style="display:none" onclick="navMore('admin')">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -1122,16 +1163,31 @@ function _renderSkipCalendar() {
 var _activeFormTab = 'setup';
 function showFormTab(tabId, btn) {
   _activeFormTab = tabId;
-  ['ft-setup','ft-schedule','ft-guards'].forEach(function(id) {
+  ['ft-setup','ft-risk','ft-schedule','ft-guards'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.style.display = (id === 'ft-'+tabId) ? '' : 'none';
   });
   document.querySelectorAll('.form-tab').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
-  // Re-render skip calendar when guards tab opens (calendar now lives in guards tab)
-  if (tabId === 'guards') _renderSkipCalendar();
-  // Show live guard status for current automation if running
+  // Progress dots
+  var dotMap = {setup:'Strategy',risk:'Risk & Exit',schedule:'Schedule',guards:'Guards'};
+  ['setup','risk','schedule','guards'].forEach(function(t) {
+    var d = document.getElementById('fdot-'+t);
+    if (d) { d.style.width = t===tabId?'20px':'8px'; d.style.background = t===tabId?'var(--blue)':'var(--border2)'; }
+  });
+  var lbl = document.getElementById('fdot-label');
+  if (lbl) lbl.textContent = dotMap[tabId]||'';
+  // Re-render skip calendar when schedule tab opens
+  if (tabId === 'schedule') _renderSkipCalendar();
+  // Show live guard status when guards tab opens
   if (tabId === 'guards') _updateGuardLiveStatus();
+}
+
+function _checkReentryConflict() {
+  var mt = parseInt((document.getElementById('af-maxtrades')||{}).value)||1;
+  var cb = document.getElementById('af-reentry');
+  var warn = document.getElementById('reentry-conflict-warn');
+  if (warn) warn.style.display = (mt === 1 && cb && cb.checked) ? '' : 'none';
 }
 
 function _updateGuardLiveStatus() {
@@ -1286,13 +1342,18 @@ function nav(id) {
     if (bn) bn.className = 'bn-item' + (p===id ? ' active' : '');
   });
   // More button stays highlighted when on a "More" page
-  var morePages = ['brokers','trades','performance','backtest','help','profile','admin'];
+  var morePages = ['brokers','performance','backtest','events','help','profile','admin'];
   var bn_more = document.getElementById('bn-more');
   if (bn_more) {
     bn_more.className = 'bn-item' + (morePages.includes(id) ? ' active' : '');
   }
+  // Hide floating save bar when leaving automations
+  if (id !== 'automate') {
+    var _fsb = document.getElementById('auto-save-bar');
+    if (_fsb) { _fsb.classList.remove('visible'); setTimeout(function(){ _fsb.style.display='none'; }, 320); }
+  }
   // Lazy render pages
-  if (id==='dashboard') { renderDashboard(); if (!_claudeAssessment) loadClaudeAssessment(); updateTicker(); }
+  if (id==='dashboard') { renderDashboard(); if (!_claudeAssessment) loadClaudeAssessment(); else _updateClaudeCards(); updateTicker(); }
   if (id==='brokers') renderBrokers();
   if (id==='automate') renderAutomate();
   if (id==='live') renderLive();
@@ -1602,7 +1663,7 @@ async function _loadDashFunds() {
       +'</div></div>'
       + '<div class="kpi blue"><div class="kpi-label">1 Lot Margin Est.</div>'
       + '<div class="kpi-value neutral" style="font-size:18px">\u20b9'+Number(m.net_required||0).toLocaleString('en-IN')+'</div>'
-      + '<div class="kpi-sub">'+esc(info.label)+' \u00b1'+(m.hedge_width||2)+' hedge ('+esc(m.structure||'Iron Fly')+')</div></div>'
+      + '<div class="kpi-sub">'+esc(info.label)+' \u00b1'+(m.hedge_width||20)+' hedge ('+esc(m.structure||'Iron Fly')+')</div></div>'
       + '<div class="kpi"><div class="kpi-label">Lot Size (2026)</div>'
       + '<div class="kpi-value neutral">'+info.lot+'</div>'
       + '<div class="kpi-sub">units per contract</div></div>'
@@ -1910,43 +1971,122 @@ function _renderBrokersUI(el) {
     html += '<div class="section-title">Connected</div>';
     connected.forEach(function(b) {
       var def = brokerDefs.find(function(d){ return d.id===b.broker_id; }) || {};
-      var lastRefresh = b.last_token_refresh ? 'Token refreshed ' + fmtTime(b.last_token_refresh) : 'Token auto-refreshes on every use';
-      html += '<div class="card">'
+      var lastRefresh = b.last_token_refresh ? 'Re-authed ' + fmtTime(b.last_token_refresh) : 'Not yet authenticated';
+      var totpBadge = b.totp_configured
+        ? '<span class="badge running" title="TOTP configured — daily re-auth runs automatically at 3:05 AM" style="font-size:10px">&#128272; TOTP &#10003;</span>'
+        : '<span class="badge" style="background:#f59e0b;color:#000;font-size:10px;cursor:pointer" title="Click Edit to add TOTP Key" onclick="toggleBrokerEditForm(\''+b.broker_id+'\')">&#9888;&#65039; TOTP needed</span>';
+      html += '<div class="card" id="connected-card-'+b.broker_id+'">'
         + '<div class="card-header">'
         + '<div style="display:flex;align-items:center;gap:10px"><div style="font-size:20px">'+(def.flag||'&#127981;')+'</div><div><div class="card-title">'+esc(b.broker_name)+'</div><div style="font-size:11px;color:var(--text2)">'+lastRefresh+'</div></div></div>'
-        + '<div style="display:flex;gap:6px;align-items:center"><span class="badge running">&#9679; Connected</span><button class="btn btn-ghost btn-sm" onclick="testBroker(\''+b.broker_id+'\')">Test</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="disconnectBroker(\''+b.broker_id+'\')">Remove</button></div>'
-        + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+totpBadge
+        + '<span class="badge running">&#9679; Connected</span>'
+        + '<button class="btn btn-ghost btn-sm" onclick="testBroker(\''+b.broker_id+'\')">Test</button>'
+        + (b.totp_configured ? '<button class="btn btn-ghost btn-sm" id="totp-test-btn-'+b.broker_id+'" onclick="testTotpAuth(\''+b.broker_id+'\')">🔑 Test TOTP</button>' : '')
+        + (b.broker_id==='fyers' ? '<button class="btn btn-ghost btn-sm" style="color:var(--amber)" onclick="quickReconnectFyers()">↻ Refresh Token</button>' : '')
+        + '<button class="btn btn-ghost btn-sm" onclick="toggleBrokerEditForm(\''+b.broker_id+'\')">Edit</button>'
+        + '<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="disconnectBroker(\''+b.broker_id+'\')">Remove</button>'
+        + '</div></div>'
+        // SEBI TOTP warning banner
+        + (b.totp_configured ? '' :
+            '<div class="card-body" style="padding:10px 16px;font-size:12px;color:#92400e;background:#fffbeb;border-top:1px solid #fde68a">'
+          + '&#9888;&#65039; <strong>SEBI April 2026 — Action Required:</strong> Tokens now expire at 3 AM daily. '
+          + 'Add your <strong>Fyers User ID</strong> and <strong>TOTP Key</strong> so AlgoDesk can re-auth automatically each morning. '
+          + 'Without this your automations will stop trading every night. '
+          + '<a href="#" onclick="toggleBrokerEditForm(\''+b.broker_id+'\');return false;" style="color:#92400e;font-weight:600">Click Edit to set up &rarr;</a>'
+          + '</div>')
+        // Inline edit form (hidden by default)
+        + '<div id="broker-edit-form-'+b.broker_id+'" style="display:none"><div class="card-body" style="border-top:1px solid var(--border)">'
+        + '<div style="font-size:12px;color:var(--text2);margin-bottom:12px">&#128274; Re-enter all credentials to update. Secrets are stored encrypted and never shown again. After saving you\'ll need to complete the Fyers OAuth step once more.</div>'
+        + (def.fields||[]).map(function(f){
+            return '<div class="field"><label>'+esc(f.label)+'</label>'
+              + '<input id="bef-'+b.broker_id+'-'+f.key+'" type="'+(f.secret?'password':'text')+'" placeholder="'+(f.hint||'')+'" value="'+(f.default||'')+'">'
+              + (f.hint ? '<div class="field-hint">'+esc(f.hint)+'</div>' : '')
+              + '</div>';
+          }).join('')
+        + '<div class="btn-row" style="gap:8px">'
+        + '<button class="btn btn-primary" onclick="saveAndReconnect(\''+b.broker_id+'\')">Save &amp; Reconnect via Fyers</button>'
+        + '<button class="btn btn-ghost" onclick="toggleBrokerEditForm(\''+b.broker_id+'\')">Cancel</button>'
+        + '</div></div></div>'
         + '<div id="test-result-'+b.broker_id+'"></div>'
         + '</div>';
     });
   }
 
-  // Add broker section
-  html += '<div class="section-title" style="margin-top:4px">Add Broker</div>';
-  brokerDefs.forEach(function(def) {
-    var already = myBrokers.find(function(b){ return b.broker_id===def.id; });
-    if (already && already.is_connected) return;
-    html += '<div class="card" id="broker-add-'+def.id+'">'
-      + '<div class="card-header" style="cursor:pointer" onclick="toggleBrokerForm(\''+def.id+'\')">'
-      + '<div style="display:flex;align-items:center;gap:10px"><div style="font-size:20px">'+(def.flag||'&#127981;')+'</div><div><div class="card-title">'+esc(def.name)+'</div><div style="font-size:11px;color:var(--text2)">'+esc(def.refresh||'')+'</div></div></div>'
-      + '<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>'
-      + '</div>'
-      + '<div id="broker-form-'+def.id+'" style="display:none"><div class="card-body">'
-      + (def.fields||[]).map(function(f){
-          return '<div class="field"><label>'+esc(f.label)+'</label>'
-            + '<input id="bf-'+def.id+'-'+f.key+'" type="'+(f.secret?'password':'text')+'" placeholder="'+(f.hint||'')+'" value="'+(f.default||'')+'">'
-            + (f.hint ? '<div class="field-hint">'+esc(f.hint)+'</div>' : '')
-            + '</div>';
-        }).join('')
-      + '<div class="btn-row"><button class="btn btn-primary" onclick="saveBrokerCreds(\''+def.id+'\')">Save &amp; Connect</button></div>'
-      + '</div></div></div>';
+  // Add broker section — only show for brokers not yet connected
+  var notConnected = brokerDefs.filter(function(def) {
+    var existing = myBrokers.find(function(b){ return b.broker_id===def.id; });
+    return !existing || !existing.is_connected;
   });
+  if (notConnected.length > 0) {
+    html += '<div class="section-title" style="margin-top:4px">Add Broker</div>';
+    notConnected.forEach(function(def) {
+      html += '<div class="card" id="broker-add-'+def.id+'">'
+        + '<div class="card-header" style="cursor:pointer" onclick="toggleBrokerForm(\''+def.id+'\')">'
+        + '<div style="display:flex;align-items:center;gap:10px"><div style="font-size:20px">'+(def.flag||'&#127981;')+'</div><div><div class="card-title">'+esc(def.name)+'</div><div style="font-size:11px;color:var(--text2)">'+esc(def.refresh||'')+'</div></div></div>'
+        + '<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>'
+        + '</div>'
+        + '<div id="broker-form-'+def.id+'" style="display:none"><div class="card-body">'
+        + (def.fields||[]).map(function(f){
+            return '<div class="field"><label>'+esc(f.label)+'</label>'
+              + '<input id="bf-'+def.id+'-'+f.key+'" type="'+(f.secret?'password':'text')+'" placeholder="'+(f.hint||'')+'" value="'+(f.default||'')+'">'
+              + (f.hint ? '<div class="field-hint">'+esc(f.hint)+'</div>' : '')
+              + '</div>';
+          }).join('')
+        + '<div class="btn-row"><button class="btn btn-primary" onclick="saveBrokerCreds(\''+def.id+'\')">Save &amp; Connect</button></div>'
+        + '</div></div></div>';
+    });
+  }
+
+  // Static IP reminder
+  html += '<div class="card" style="margin-top:8px;background:var(--surface2,var(--surface))">'
+    + '<div class="card-body" style="font-size:12px;color:var(--text2)">'
+    + '&#128274; <strong>SEBI April 2026 — Static IP required for live orders:</strong> '
+    + 'Register your server\'s IP address in your Fyers app at '
+    + '<a href="https://myapi.fyers.in" target="_blank">myapi.fyers.in</a> &rarr; your app &rarr; Allowed IPs. '
+    + 'Without this, all live order placements will be rejected. Paper trading is unaffected.'
+    + '</div></div>';
 
   if (brokerDefs.length === 0) {
     html += '<div class="alert alert-info">No broker definitions configured. Ask your admin to add broker definitions.</div>';
   }
 
   el.innerHTML = html;
+}
+
+function toggleBrokerEditForm(brokerId) {
+  var el = document.getElementById('broker-edit-form-'+brokerId);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function saveAndReconnect(brokerId) {
+  var def = brokerDefs.find(function(d){ return d.id===brokerId; });
+  if (!def) return;
+  var fields = {};
+  (def.fields||[]).forEach(function(f) {
+    var inp = document.getElementById('bef-'+brokerId+'-'+f.key);
+    if (inp && inp.value.trim()) fields[f.key] = inp.value.trim();
+  });
+  // Validate required fields
+  if (brokerId === 'fyers' && !fields.fyers_id) { toast('Fyers User ID is required', 'error'); return; }
+  if (brokerId === 'fyers' && !fields.client_id) { toast('App Client ID is required', 'error'); return; }
+  try {
+    await api('POST', '/api/brokers', {broker_id: brokerId, fields: fields});
+    toast('Credentials saved. Opening Fyers login…', 'success');
+    if (brokerId === 'fyers') {
+      var url = await api('GET', '/api/brokers/fyers/login-url');
+      window.open(url.url, '_blank', 'width=600,height=700');
+      // Show auth code input inside edit form
+      var editForm = document.getElementById('broker-edit-form-'+brokerId);
+      if (editForm) {
+        editForm.querySelector('.card-body').innerHTML +=
+          '<div class="field" style="margin-top:12px"><label>Auth Code (from Fyers redirect)</label>'
+          + '<input id="fyers-reauth-code" placeholder="Paste the auth code from the Fyers page">'
+          + '<button class="btn btn-primary btn-full" style="margin-top:8px" onclick="completeFyersReconnect()">Complete Reconnection</button></div>';
+      }
+    } else {
+      renderBrokers();
+    }
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 function toggleBrokerForm(defId) {
@@ -1986,10 +2126,93 @@ async function completeFyersConnect() {
   var code = document.getElementById('fyers-auth-code');
   if (!code || !code.value.trim()) { toast('Enter the auth code', 'error'); return; }
   try {
-    await api('POST', '/api/brokers/fyers/connect', {auth_code: code.value.trim()});
-    toast('Fyers connected! Token auto-refreshes forever.', 'success');
+    var result = await api('POST', '/api/brokers/fyers/connect', {auth_code: code.value.trim()});
+    toast(result.message || 'Fyers connected!', 'success');
     renderBrokers();
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function completeFyersReconnect() {
+  var code = document.getElementById('fyers-reauth-code');
+  if (!code || !code.value.trim()) { toast('Enter the auth code from Fyers', 'error'); return; }
+  try {
+    var result = await api('POST', '/api/brokers/fyers/connect', {auth_code: code.value.trim()});
+    toast(result.message || 'Fyers reconnected!', 'success');
+    renderBrokers();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function quickReconnectFyers() {
+  // Opens Fyers OAuth using stored credentials — no re-entry needed
+  try {
+    var url = await api('GET', '/api/brokers/fyers/login-url');
+    window.open(url.url, '_blank', 'width=600,height=700');
+    // Show inline auth code box over the broker card
+    var card = document.getElementById('connected-card-fyers');
+    if (card) {
+      var existing = document.getElementById('quick-recon-box');
+      if (existing) existing.remove();
+      var box = document.createElement('div');
+      box.id = 'quick-recon-box';
+      box.style.cssText = 'padding:12px 16px;border-top:1px solid var(--border);background:var(--bg3)';
+      box.innerHTML = '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'
+        + '1. Log in to Fyers in the popup &nbsp;2. After redirect, copy the <strong>auth_code</strong> from the URL &nbsp;3. Paste below</div>'
+        + '<div style="display:flex;gap:8px;align-items:center">'
+        + '<input id="quick-recon-code" placeholder="auth_code=XXXXXXXX" style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px">'
+        + '<button class="btn btn-primary btn-sm" onclick="completeQuickRecon()">Connect</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'quick-recon-box\').remove()">✕</button>'
+        + '</div>';
+      card.appendChild(box);
+      setTimeout(function(){ var inp=document.getElementById('quick-recon-code'); if(inp) inp.focus(); }, 100);
+    }
+  } catch(e) { toast('Could not get login URL: ' + e.message, 'error'); }
+}
+
+async function completeQuickRecon() {
+  var inp = document.getElementById('quick-recon-code');
+  if (!inp || !inp.value.trim()) { toast('Paste the auth_code first', 'error'); return; }
+  // Strip full URL if user pasted the whole redirect URL
+  var raw = inp.value.trim();
+  var code = raw;
+  var m = raw.match(/auth_code=([^&]+)/);
+  if (m) code = m[1];
+  try {
+    var result = await api('POST', '/api/brokers/fyers/connect', {auth_code: code});
+    if (result.ok) {
+      toast('✅ Token refreshed — Fyers reconnected', 'success');
+      renderBrokers();
+    } else {
+      toast('Failed: ' + result.message, 'error');
+    }
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function testTotpAuth(brokerId) {
+  var btn = document.getElementById('totp-test-btn-' + brokerId);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Testing...'; }
+  // Show result inline so it doesn't disappear
+  var card = document.getElementById('connected-card-' + brokerId);
+  var resultBox = document.getElementById('totp-result-box');
+  if (!resultBox && card) {
+    resultBox = document.createElement('div');
+    resultBox.id = 'totp-result-box';
+    resultBox.style.cssText = 'padding:10px 16px;border-top:1px solid var(--border);font-size:12px;line-height:1.6';
+    card.appendChild(resultBox);
+  }
+  if (resultBox) resultBox.innerHTML = '<span style="color:var(--text2)">⏳ Running TOTP test…</span>';
+  try {
+    var d = await api('POST', '/api/brokers/fyers/test-auth');
+    if (d.ok) {
+      if (resultBox) resultBox.innerHTML = '<span style="color:var(--green)">✅ ' + esc(d.message) + '</span>';
+    } else {
+      var msg = d.message || 'Unknown error';
+      if (resultBox) resultBox.innerHTML = '<span style="color:var(--red)">❌ ' + esc(msg) + '</span>'
+        + '<div style="margin-top:6px;font-size:11px;color:var(--text2)">Share this error in the chat to get it fixed.</div>';
+    }
+  } catch(e) {
+    if (resultBox) resultBox.innerHTML = '<span style="color:var(--red)">❌ ' + esc(e.message) + '</span>';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '🔑 Test TOTP'; }
 }
 
 async function testBroker(brokerId) {
@@ -1997,12 +2220,19 @@ async function testBroker(brokerId) {
   if (resEl) resEl.innerHTML = '<div class="card-body"><div class="empty"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div></div>';
   try {
     var d = await api('GET', '/api/market/live');
-    if (d.ok && d.spot) {
+    if (d.ok && d.status === 'closed') {
+      // Market closed — token valid but no options chain available
+      var spotTxt = d.spot ? ' &bull; Last price: ' + Number(d.spot).toLocaleString('en-IN',{minimumFractionDigits:1}) : '';
+      if (resEl) resEl.innerHTML = '<div class="card-body"><div class="alert alert-success">'
+        + '&#10003; Broker connected' + spotTxt + '</div>'
+        + '<div class="empty" style="padding:8px 0;font-size:12px;color:var(--muted)">'
+        + (d.message||'Market closed — options chain available during market hours (9:15 AM–3:30 PM IST)')
+        + '</div></div>';
+    } else if (d.ok && d.spot) {
       var atm = d.atm||0;
       var chain = d.chain||{};
-      var atm_data = chain[atm]||{};
       if (resEl) resEl.innerHTML = '<div class="card-body">'
-        + '<div class="alert alert-success">Connected &bull; NIFTY ' + Number(d.spot).toLocaleString('en-IN',{minimumFractionDigits:1}) + '</div>'
+        + '<div class="alert alert-success">&#10003; Connected &bull; NIFTY ' + Number(d.spot).toLocaleString('en-IN',{minimumFractionDigits:1}) + '</div>'
         + '<table class="tbl"><thead><tr><th>Strike</th><th>CE</th><th>PE</th><th>Combined</th></tr></thead><tbody>'
         + Object.entries(chain).sort(function(a,b){return a[0]-b[0];}).slice(0,7).map(function(kv){
             var s=kv[0], v=kv[1];
@@ -2011,7 +2241,7 @@ async function testBroker(brokerId) {
           }).join('')
         + '</tbody></table></div>';
     } else {
-      if (resEl) resEl.innerHTML = '<div class="card-body"><div class="alert alert-warn">'+(d.message||'No data')+'</div></div>';
+      if (resEl) resEl.innerHTML = '<div class="card-body"><div class="alert alert-warn">'+(d.message||'No data — check broker connection')+'</div></div>';
     }
   } catch(e) {
     if (resEl) resEl.innerHTML = '<div class="card-body"><div class="alert alert-error">'+esc(e.message)+'</div></div>';
@@ -2065,28 +2295,70 @@ function _renderAutoList(autos) {
   }
   el.innerHTML = autos.map(function(a) {
     var isLive = a.mode==='live';
-    var modeBadge = isLive ? '<span class="badge live">&#128308; Live</span>' : '<span class="badge paper">&#128203; Paper</span>';
-    var shadowBadge = a.shadow_mode ? '<span class="badge shadow">Shadow</span>' : '';
-    var statusBadge = a.status==='RUNNING' ? '<span class="badge running"><div class="dot green pulse" style="width:6px;height:6px"></div> Running</span>' : '<span class="badge idle">Idle</span>';
-    var stratBadges = (a.strategies||[]).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join(' ');
+    var isRunning = a.status==='RUNNING';
     var cfg = a.config||{};
-    return '<div class="card '+(isLive?'live-border':'paper-border')+'">'
-      + '<div class="card-header"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+modeBadge+shadowBadge+statusBadge+'</div><div style="display:flex;gap:6px">'
-      + (a.status!=='RUNNING' ? '<button class="btn btn-primary btn-sm" onclick="startAuto(\''+a.id+'\')">&#9654; Start</button>' : '<button class="btn btn-danger btn-sm" onclick="stopAuto(\''+a.id+'\')">&#9632; Stop</button>')
-      + (a.status!=='RUNNING' ? '<button class="btn btn-ghost btn-sm" onclick="editAuto(\''+a.id+'\')">&#9998; Edit</button>' : '')
-      + '<button class="btn btn-ghost btn-sm" onclick="deleteAuto(\''+a.id+'\')" style="color:var(--red)">&#10005;</button>'
-      + '</div></div>'
-      + '<div class="card-body">'
-      + '<div style="font-size:14px;font-weight:600;margin-bottom:4px">'+esc(a.name)+'</div>'
-      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+esc((a.symbol||'').split(':')[1]||a.symbol||'')+'</div>'
-      + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">'+stratBadges+'</div>'
-      + (a.guard_status ? '<div class="guard-banner"><div class="guard-banner-icon">🛡️</div><div class="guard-banner-text"><div class="guard-banner-label">BLOCKED BY GUARD RAIL</div>'+esc(a.guard_status)+'</div></div>' : '')
-      + '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2)">'
-      + '<span>Lots: '+(cfg.lots||1)+'</span>'
-      + '<span>Size: '+(cfg.lot_size||75)+'</span>'
-      + '<span>Exit: '+(cfg.auto_exit_time||'14:00')+'</span>'
-      + '<span>Max loss: '+(cfg.max_loss_pct||30)+'%</span>'
-      + '</div></div></div>';
+    var sym = (a.symbol||'').split(':')[1]||a.symbol||'';
+    var stratBadges = (a.strategies||[]).map(function(s){ return '<span class="badge strategy">'+s+'</span>'; }).join('');
+    var dm = cfg.dte_profit_map||{};
+    var dteStr = [dm['0']||40, dm['1']||40, dm['2']||40, dm['3']||40].join('·')+'%';
+    var runDays = cfg.run_days != null ? cfg.run_days : [0,1,2,3,4];
+    var dayLabels = ['M','T','W','T','F'];
+    var daysStr = dayLabels.map(function(d,i){ return runDays.indexOf(i)>=0 ? '<span style="font-weight:700;color:var(--text)">'+d+'</span>' : '<span style="color:var(--border2)">'+d+'</span>'; }).join('<span style="color:var(--border)"> </span>');
+    var maxT = cfg.max_trades_per_day; var maxTStr = maxT===0 ? '∞' : (maxT||1)+'/day';
+    var reentryStr = cfg.reentry_on_sl ? '<span style="color:var(--green)">↩ On</span>' : '<span style="color:var(--text2)">— Off</span>';
+    var guardPills = [];
+    if (cfg.vix_max && cfg.vix_max < 99) guardPills.push('VIX≤'+cfg.vix_max);
+    if (cfg.drift_max_pct && cfg.drift_max_pct < 99) guardPills.push('Drift '+cfg.drift_max_pct+'%');
+    if (cfg.gap_skip_pct > 0) guardPills.push('Gap≥'+cfg.gap_skip_pct+'%');
+    if (cfg.prev_day_skip_pct > 0) guardPills.push('Prev '+cfg.prev_day_skip_pct+'%');
+    if (cfg.ai_news_gate) guardPills.push('🤖 AI');
+    var guardsHtml = guardPills.length
+      ? guardPills.map(function(g){ return '<span style="font-size:9px;padding:2px 6px;border-radius:99px;background:var(--bg3);border:1px solid var(--border);color:var(--text2)">'+g+'</span>'; }).join('')
+      : '<span style="font-size:9px;color:var(--border2)">No guards set</span>';
+    var statusDot = isRunning
+      ? '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--green)"><div class="dot green pulse" style="width:7px;height:7px"></div>Running</span>'
+      : '<span style="font-size:11px;color:var(--text2)">Idle</span>';
+    var modePill = isLive
+      ? '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(239,68,68,.15);color:#ef4444">LIVE</span>'
+      : '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>';
+    var shadowPill = a.shadow_mode ? '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--bg2);color:var(--text2)">Shadow</span>' : '';
+    return '<div class="card" data-autoid="'+a.id+'" style="border-left:3px solid '+(isLive?'#ef4444':'#818cf8')+(isRunning?';box-shadow:0 0 0 1px rgba(16,185,129,.25)':'')+'">'
+      // top row: name + symbol + actions
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 14px 0">'
+      +   '<div>'
+      +     '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+modePill+shadowPill+statusDot+'</div>'
+      +     '<div style="font-size:14px;font-weight:600;line-height:1.3">'+esc(a.name)+'</div>'
+      +     '<div style="font-size:11px;color:var(--text2);margin-top:1px">'+esc(sym)+'</div>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:6px;flex-shrink:0;margin-left:10px">'
+      +     (isRunning ? '<button class="btn btn-danger btn-sm" onclick="stopAuto(\''+a.id+'\')">■ Stop</button>' : '<button class="btn btn-primary btn-sm" onclick="startAuto(\''+a.id+'\')">▶ Start</button>')
+      +     (!isRunning ? '<button class="btn btn-ghost btn-sm" onclick="editAuto(\''+a.id+'\')">✎ Edit</button>' : '')
+      +     '<button class="btn btn-ghost btn-sm" onclick="deleteAuto(\''+a.id+'\')" style="color:var(--red);padding:4px 7px">✕</button>'
+      +   '</div>'
+      + '</div>'
+      // strategies row
+      + '<div style="padding:8px 14px;display:flex;gap:4px;flex-wrap:wrap">'+stratBadges+'</div>'
+      // guard banner if blocked
+      + (a.guard_status ? '<div class="guard-banner" style="margin:0 14px 8px"><div class="guard-banner-icon">🛡️</div><div class="guard-banner-text"><div class="guard-banner-label">BLOCKED</div>'+esc(a.guard_status)+'</div></div>' : '')
+      // stats grid — 2 rows × 3 cols
+      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);font-size:11px">'
+      +   '<div style="padding:7px 12px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Lots</div><div style="font-weight:700">'+(cfg.lots||1)+'<span style="color:var(--text2);font-weight:400">×</span>'+(cfg.lot_size||65)+'</div></div>'
+      +   '<div style="padding:7px 12px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Stop Loss</div><div style="font-weight:700;color:var(--red)">₹'+(cfg.sl_rupees||18)+'</div></div>'
+      +   '<div style="padding:7px 12px;border-bottom:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Auto Exit</div><div style="font-weight:700">'+(cfg.auto_exit_time||'14:00')+'</div></div>'
+      +   '<div style="padding:7px 12px;border-right:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Target DTE 0→3</div><div style="font-weight:700;color:var(--green);font-size:10px">'+dteStr+'</div></div>'
+      +   '<div style="padding:7px 12px;border-right:1px solid var(--border)"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Max Trades</div><div style="font-weight:700">'+maxTStr+'</div></div>'
+      +   '<div style="padding:7px 12px"><div style="color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Re-entry</div><div style="font-weight:700">'+reentryStr+'</div></div>'
+      + '</div>'
+      // run days + guards strip
+      + '<div style="padding:6px 12px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px">'
+      +   '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);flex-shrink:0">Runs</span>'
+      +   '<span style="font-size:12px;font-family:var(--mono);letter-spacing:3px">'+daysStr+'</span>'
+      + '</div>'
+      + '<div style="padding:5px 12px 8px;border-top:1px solid var(--border);display:flex;align-items:center;flex-wrap:wrap;gap:4px">'
+      +   '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-right:2px;flex-shrink:0">Guards</span>'
+      +   guardsHtml
+      + '</div>'
+      + '</div>';
   }).join('');
 }
 
@@ -2130,15 +2402,50 @@ function showAutoForm(auto) {
   var formTitle = _editAutoId ? 'Edit Automation' : 'New Automation';
   el.style.display = 'block';
   _activeFormTab = 'setup';
-  el.innerHTML = '<hr class="divider"><div class="section-title">'+formTitle+'</div>'
-    + '<div class="card"><div class="card-body">'
-    // ── Tab buttons ────────────────────────────────────────────────
-    + '<div class="form-tabs">'
-    + '<button class="form-tab active" onclick="showFormTab(\'setup\',this)">⚙️ Setup</button>'
-    + '<button class="form-tab" onclick="showFormTab(\'schedule\',this)">📅 Schedule</button>'
-    + '<button class="form-tab" onclick="showFormTab(\'guards\',this)">🛡️ Guard Rails</button>'
+  el.innerHTML = '<hr class="divider">'
+    + '<div class="card" style="overflow:hidden">'
+    // ── Coloured form header (setup-journey style) ───────────────
+    + '<div style="background:linear-gradient(135deg,var(--bg3) 0%,rgba(68,138,255,.1) 100%);border-bottom:1px solid var(--border);padding:14px 16px">'
+    +   '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">'
+    +     '<div>'
+    +       '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--blue);font-weight:700;margin-bottom:3px">'+(_editAutoId ? '✎  Editing Automation' : '＋  New Automation')+'</div>'
+    +       '<div style="font-size:16px;font-weight:700">'+(_editAutoId && auto ? esc(auto.name) : 'Configure your automation')+'</div>'
+    +       '<div style="font-size:11px;color:var(--text2);margin-top:3px">Start with ① Strategy — the other tabs are optional with smart defaults</div>'
+    +     '</div>'
+    +     '<span style="font-size:24px;margin-left:12px" id="form-tab-icon">⚡</span>'
+    +   '</div>'
+    // Mini progress dots
+    +   '<div style="display:flex;gap:6px;align-items:center">'
+    +     '<div id="fdot-setup" style="width:20px;height:4px;border-radius:2px;background:var(--blue);transition:all .2s"></div>'
+    +     '<div id="fdot-risk"  style="width:8px;height:4px;border-radius:2px;background:var(--border2);transition:all .2s"></div>'
+    +     '<div id="fdot-schedule" style="width:8px;height:4px;border-radius:2px;background:var(--border2);transition:all .2s"></div>'
+    +     '<div id="fdot-guards" style="width:8px;height:4px;border-radius:2px;background:var(--border2);transition:all .2s"></div>'
+    +     '<span style="font-size:10px;color:var(--text2);margin-left:4px" id="fdot-label">Strategy</span>'
+    +   '</div>'
     + '</div>'
-    // ══ TAB 1: SETUP ══════════════════════════════════════════════
+    + '<div class="card-body">'
+
+    // ── Tab buttons — numbered step tiles ───────────────────────
+    + '<div class="form-tabs">'
+    + '<button class="form-tab active" onclick="showFormTab(\'setup\',this);document.getElementById(\'form-tab-icon\').textContent=\'⚡\'">'
+    +   '<span class="ti">⚡</span><span class="tn">Strategy</span><span class="td">What to trade</span>'
+    +   '<span class="tl" style="color:var(--green)">① START HERE</span>'
+    + '</button>'
+    + '<button class="form-tab" onclick="showFormTab(\'risk\',this);document.getElementById(\'form-tab-icon\').textContent=\'💰\'">'
+    +   '<span class="ti">💰</span><span class="tn">Risk & Exit</span><span class="td">SL & profit</span>'
+    +   '<span class="tl" style="color:var(--text2)">② optional</span>'
+    + '</button>'
+    + '<button class="form-tab" onclick="showFormTab(\'schedule\',this);document.getElementById(\'form-tab-icon\').textContent=\'📅\'">'
+    +   '<span class="ti">📅</span><span class="tn">Schedule</span><span class="td">Days & limits</span>'
+    +   '<span class="tl" style="color:var(--text2)">③ optional</span>'
+    + '</button>'
+    + '<button class="form-tab" onclick="showFormTab(\'guards\',this);document.getElementById(\'form-tab-icon\').textContent=\'🛡️\'">'
+    +   '<span class="ti">🛡️</span><span class="tn">Guards</span><span class="td">Market filters</span>'
+    +   '<span class="tl" style="color:var(--text2)">④ optional</span>'
+    + '</button>'
+    + '</div>'
+
+    // ══ TAB 1: STRATEGY ══════════════════════════════════════════
     + '<div id="ft-setup">'
     + '<div class="field"><label>Automation Name <span style="font-size:10px;color:var(--text2);font-weight:400">(optional)</span></label>'
     + '<input type="text" id="af-name" placeholder="e.g. Morning S1 · NIFTY · Paper" style="width:100%" value="'+(auto&&auto.name?esc(auto.name):'')+'"></div>'
@@ -2153,68 +2460,146 @@ function showAutoForm(auto) {
     + '<div class="field"><label>Lot Size</label><input type="number" id="af-lotsize" value="65"><div class="field-hint">NIFTY: 65 · BankNifty: 30</div></div>'
     + '</div>'
     + '<div class="field-row">'
-    + '<div class="field"><label>Auto Exit</label><input type="time" id="af-exit" value="14:00"><div class="field-hint">Force close at this time</div></div>'
-    + '<div class="field"><label>Max Loss %</label><select id="af-maxloss"><option value="20">20% tight</option><option value="25">25%</option><option value="30" selected>30% standard</option><option value="40">40% relaxed</option></select></div>'
-    + '</div>'
-    + '<div class="field-row">'
-    + '<div class="field"><label>Profit Target %</label><select id="af-profit"><option value="30">30%</option><option value="40">40%</option><option value="50" selected>50%</option><option value="60">60%</option></select></div>'
-    + '<div class="field"><label>Max Trades / Day</label><select id="af-maxtrades"><option value="1" selected>1 (recommended)</option><option value="2">2</option><option value="3">3</option><option value="0">Unlimited</option></select></div>'
-    + '</div>'
-    + '<div class="field-row">'
     + '<div class="field"><label>Position Sizing</label><select id="af-sizing"><option value="fixed" selected>Fixed lots (safe)</option><option value="kelly">Kelly Criterion</option></select><div class="field-hint">Keep Fixed until you have 20+ trades.</div></div>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-top:4px">'
     + '<div><div style="font-size:13px;font-weight:500">Shadow Mode</div><div style="font-size:11px;color:var(--text2)">Run paper simulation daily, store results</div></div>'
     + '<label class="toggle"><input type="checkbox" id="af-shadow" checked><div class="toggle-track"></div></label>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)">'
-    + '<div><div style="font-size:13px;font-weight:500">Telegram Alerts</div><div style="font-size:11px;color:var(--text2)">Paper mode alerts labelled as simulation</div></div>'
-    + '<label class="toggle"><input type="checkbox" id="af-tg" checked><div class="toggle-track"></div></label>'
+    + '<div style="padding:10px 0;border-top:1px solid var(--border)">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+    + '<div><div style="font-size:13px;font-weight:500">📢 Telegram Alerts</div><div style="font-size:11px;color:var(--text2)">Which Telegram accounts get notified for this automation</div></div>'
+    + '<label class="toggle"><input type="checkbox" id="af-tg" checked onchange="_toggleTgAccounts(this)"><div class="toggle-track"></div></label>'
+    + '</div>'
+    + '<div id="af-tg-accounts" style="padding:6px 0;font-size:11px;color:var(--text2)">Loading Telegram accounts...</div>'
     + '</div>'
     + '</div>'
-    // ══ TAB 2: SCHEDULE ═══════════════════════════════════════════
+
+    // ══ TAB 2: RISK & EXIT ════════════════════════════════════════
+    + '<div id="ft-risk" style="display:none">'
+
+    // Stop loss
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--border)">Stop Loss</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>Stop Loss ₹</label><input type="number" id="af-sl-rupees" value="18" min="5" max="500"><div class="field-hint">Exit when combined premium rises ₹X above entry. Default ₹18.</div></div>'
+    + '<div class="field"><label>Auto Exit Time</label><input type="time" id="af-exit" value="14:00"><div class="field-hint">Force close all positions at this time regardless of P&L.</div></div>'
+    + '</div>'
+
+    // VWAP / EMA SL tuning
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:12px 0 8px;border-bottom:1px solid var(--border)">SL Layer Sensitivity</div>'
+    + '<div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5">The 3-layer SL uses VWAP and EMA75 as dynamic exit levels. These buffers add breathing room above those levels — reduce them for tighter exits, increase for more tolerance.</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>VWAP SL Buffer</label><select id="af-vwapbuf"><option value="2">2% — tight</option><option value="3">3%</option><option value="5" selected>5% — standard</option><option value="7">7%</option><option value="10">10% — relaxed</option></select><div class="field-hint">Layer 2a: exits if premium &gt; VWAP × (1 + buffer)</div></div>'
+    + '<div class="field"><label>EMA75 SL Buffer</label><select id="af-emabuf"><option value="0.5">0.5%</option><option value="1" selected>1% — standard</option><option value="2">2%</option><option value="3">3% — relaxed</option></select><div class="field-hint">Layer 2b: activates after 75 candles</div></div>'
+    + '</div>'
+
+    // Profit target by DTE
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:12px 0 8px;border-bottom:1px solid var(--border)">Profit Target by DTE</div>'
+    + '<div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5">Set the % premium decay at which to exit per day. On expiry day (DTE 0) theta decay is fastest — set higher to hold longer and capture more. Default 40% for all days.</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">'
+    + '<div><div style="font-size:11px;color:var(--text2);margin-bottom:4px">DTE 0 — Expiry</div><input type="number" id="af-dte0" value="40" min="10" max="90" style="width:100%"></div>'
+    + '<div><div style="font-size:11px;color:var(--text2);margin-bottom:4px">DTE 1</div><input type="number" id="af-dte1" value="40" min="10" max="90" style="width:100%"></div>'
+    + '<div><div style="font-size:11px;color:var(--text2);margin-bottom:4px">DTE 2</div><input type="number" id="af-dte2" value="40" min="10" max="90" style="width:100%"></div>'
+    + '<div><div style="font-size:11px;color:var(--text2);margin-bottom:4px">DTE 3+</div><input type="number" id="af-dte3" value="40" min="10" max="90" style="width:100%"></div>'
+    + '</div>'
+    + '<div class="field-hint" style="margin-top:6px">e.g. DTE 0 → 65%, DTE 1 → 50%, DTE 2+ → 40%</div>'
+    + '</div>'
+
+    // ══ TAB 3: SCHEDULE ═══════════════════════════════════════════
     + '<div id="ft-schedule" style="display:none">'
-    + '<div class="field"><label>Days to Run <span style="font-size:10px;color:var(--text2);font-weight:400">— tap to toggle</span></label>'
-    + '<div class="day-picker" id="af-days" style="margin-top:8px">'
+
+    // Run days
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--border)">Run Days</div>'
+    + '<div class="field"><div class="day-picker" id="af-days" style="margin-top:4px">'
     + '<button class="day-btn active" data-day="0" onclick="toggleDay(this)">Mon</button>'
     + '<button class="day-btn active" data-day="1" onclick="toggleDay(this)">Tue</button>'
     + '<button class="day-btn active" data-day="2" onclick="toggleDay(this)">Wed</button>'
     + '<button class="day-btn active" data-day="3" onclick="toggleDay(this)">Thu</button>'
     + '<button class="day-btn active" data-day="4" onclick="toggleDay(this)">Fri</button>'
     + '</div>'
-    + '<div class="field-hint">Deselect Thursday to skip expiry (S9). Most traders run all 5 days.</div></div>'
-    + '<div class="alert alert-info" style="margin-top:8px;font-size:11px">Skip specific dates (RBI days, holidays, budget) in the <strong>Guard Rails</strong> tab. Switch there to add them.</div>'
+    + '<div class="field-hint" style="margin-top:6px">Deselect Thursday to skip expiry (S9). Most traders run all 5 days.</div></div>'
+
+    // Daily trade limits
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:12px 0 8px;border-bottom:1px solid var(--border)">Daily Trade Limits</div>'
+    + '<div class="field-row">'
+    + '<div class="field"><label>Max Trades / Day</label>'
+    + '<select id="af-maxtrades" onchange="_checkReentryConflict()">'
+    + '<option value="1" selected>1 — recommended</option>'
+    + '<option value="2">2</option>'
+    + '<option value="3">3</option>'
+    + '<option value="0">Unlimited</option>'
+    + '</select>'
+    + '<div class="field-hint">Counts initial trade + any re-entries together.</div></div>'
     + '</div>'
-    // ══ TAB 3: GUARD RAILS ════════════════════════════════════════
+
+    // Re-entry
+    + '<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+    + '<div><div style="font-size:13px;font-weight:500">Re-entry after SL <span id="af-reentry-badge" style="font-size:10px;color:var(--text2);font-weight:400">— off</span></div>'
+    + '<div style="font-size:11px;color:var(--text2);margin-top:2px">When VWAP/EMA SL fires, re-enter at a shifted strike with momentum</div></div>'
+    + '<label class="toggle" style="flex-shrink:0"><input type="checkbox" id="af-reentry" onchange="_checkReentryConflict();document.getElementById(\'af-reentry-badge\').textContent=this.checked?\' — on\':\' — off\';document.getElementById(\'af-reentry-opts\').style.display=this.checked?\'\':\' none\'"><div class="toggle-track"></div></label>'
+    + '</div>'
+    + '<div id="reentry-conflict-warn" style="display:none;padding:8px 10px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:6px;font-size:11px;color:#f59e0b;margin-bottom:8px">'
+    + '⚠️ Max Trades is set to 1. Re-entry uses a trade slot — set Max Trades to 2 or more, otherwise re-entry will be silently blocked.'
+    + '</div>'
+    + '<div id="af-reentry-opts" style="display:none">'
+    +   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:4px">'
+    +     '<div><div style="font-size:11px;color:var(--text2);margin-bottom:3px">Strike offset</div>'
+    +       '<select id="af-reentry-offset"><option value="1">1 strike (50pts)</option><option value="2" selected>2 strikes (100pts)</option><option value="3">3 strikes (150pts)</option><option value="4">4 strikes (200pts)</option></select></div>'
+    +     '<div><div style="font-size:11px;color:var(--text2);margin-bottom:3px">Max (normal day)</div>'
+    +       '<select id="af-reentry-max"><option value="1">1 time</option><option value="2" selected>2 times</option><option value="3">3 times</option></select></div>'
+    +     '<div><div style="font-size:11px;color:var(--text2);margin-bottom:3px">Max (expiry day)</div>'
+    +       '<select id="af-reentry-maxexp"><option value="0">None</option><option value="1" selected>1 time</option><option value="2">2 times</option></select></div>'
+    +   '</div>'
+    + '</div>'
+    + '</div>'
+
+    // Skip dates + event calendar
+    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:16px 0 8px;border-bottom:1px solid var(--border)">Date Overrides</div>'
+    + '<div class="guard-row" style="margin-top:8px">'
+    + '<div class="guard-icon">🚫</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Skip Dates <span style="font-size:10px;color:var(--text2);font-weight:400">— tap any date to block it</span></div>'
+    + '<div class="guard-desc">Mark specific dates to skip (shown in red). Use for RBI policy days, budget, Diwali muhurat, market holidays.</div>'
+    + '<div class="skip-cal-wrap" id="skip-calendar" style="margin-top:8px"></div>'
+    + '</div></div>'
+    + '<div class="guard-row">'
+    + '<div class="guard-icon">🗓️</div>'
+    + '<div class="guard-info">'
+    + '<div class="guard-label">Event Calendar Gate</div>'
+    + '<div class="guard-desc">Events marked "suspend trading" in the Event Calendar automatically pause all automations on that day.</div>'
+    + '<div style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="hideAutoForm();nav(\'events\')">Open Event Calendar →</button></div>'
+    + '</div></div>'
+    + '</div>'
+
+    // ══ TAB 4: GUARDS ════════════════════════════════════════════
     + '<div id="ft-guards" style="display:none">'
-    // Live guard status (shown when editing a running automation)
     + '<div id="guard-live-status" style="display:none;margin-bottom:12px"></div>'
     + '<div style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.5">'
-    + 'Guard rails automatically block trading when market conditions are risky. '
-    + 'Configure all guards here. When a guard fires, the automation card shows exactly which guard blocked trading and why.'
+    + 'These guards check market conditions at 9:15 AM and during the day. When one fires, the engine skips signals and shows the reason on the automation card.'
     + '</div>'
     // VIX guard
     + '<div class="guard-row">'
     + '<div class="guard-icon">📊</div>'
     + '<div class="guard-info">'
     + '<div class="guard-label">VIX Guard</div>'
-    + '<div class="guard-desc">Skip all signals if India VIX is above this level at market open. High VIX = volatile, unpredictable markets — best to stay out.</div>'
-    + '<select id="af-vixmax" style="margin-top:4px"><option value="15">15 — conservative</option><option value="17" selected>17 — standard</option><option value="20">20 — relaxed</option><option value="99">Off (no VIX guard)</option></select>'
+    + '<div class="guard-desc">Skip all signals if India VIX is above this level at open. High VIX = volatile, unpredictable premium behavior.</div>'
+    + '<select id="af-vixmax" style="margin-top:4px"><option value="15">15 — conservative</option><option value="17" selected>17 — standard</option><option value="20">20 — relaxed</option><option value="99">Off</option></select>'
     + '</div></div>'
     // Drift guard
     + '<div class="guard-row">'
     + '<div class="guard-icon">↕️</div>'
     + '<div class="guard-info">'
     + '<div class="guard-label">Drift Guard</div>'
-    + '<div class="guard-desc">Suspend signals if spot moves more than this % from open during the day. Protects against trending days where premium selling is dangerous.</div>'
-    + '<select id="af-driftmax" style="margin-top:4px"><option value="1.0">1.0% — tight</option><option value="1.5" selected>1.5% — standard</option><option value="2.0">2.0% — relaxed</option><option value="99">Off (no drift guard)</option></select>'
+    + '<div class="guard-desc">Suspend signals if spot moves more than this % from open intraday. Protects against trending days where selling is dangerous.</div>'
+    + '<select id="af-driftmax" style="margin-top:4px"><option value="1.0">1.0% — tight</option><option value="1.5" selected>1.5% — standard</option><option value="2.0">2.0% — relaxed</option><option value="99">Off</option></select>'
     + '</div></div>'
     // Gap skip guard
     + '<div class="guard-row">'
     + '<div class="guard-icon">⚡</div>'
     + '<div class="guard-info">'
     + '<div class="guard-label">Gap Day Guard</div>'
-    + '<div class="guard-desc">Suspend SELL strategies on days when market opens with a large gap. Gap days are unpredictable for premium sellers. S10 (buy) still runs.</div>'
+    + '<div class="guard-desc">Suspend SELL strategies when market opens with a large gap. S10 (directional buy) still runs on gap days.</div>'
     + '<select id="af-gapskip" style="margin-top:4px"><option value="0" selected>Off</option><option value="1.0">1.0% gap</option><option value="1.5">1.5% gap</option><option value="2.0">2.0% gap</option></select>'
     + '</div></div>'
     // Prev move guard
@@ -2222,7 +2607,7 @@ function showAutoForm(auto) {
     + '<div class="guard-icon">📅</div>'
     + '<div class="guard-info">'
     + '<div class="guard-label">Prev-Day Move Guard</div>'
-    + '<div class="guard-desc">Skip SELL strategies if yesterday\'s close-to-close move was large. Big moves often carry momentum into the next day, making selling risky.</div>'
+    + '<div class="guard-desc">Skip selling if yesterday\'s close-to-close move was large. Big prior-day moves often carry momentum into the next session.</div>'
     + '<select id="af-prevskip" style="margin-top:4px"><option value="0" selected>Off</option><option value="1.5">1.5%</option><option value="2.0">2.0%</option><option value="3.0">3.0%</option></select>'
     + '</div></div>'
     // AI news gate
@@ -2230,67 +2615,64 @@ function showAutoForm(auto) {
     + '<div class="guard-icon">🤖</div>'
     + '<div class="guard-info">'
     + '<div class="guard-label">AI News Gate</div>'
-    + '<div class="guard-desc">Gemini AI reads morning news at 9:15. If market risk is above your threshold, all signals are suspended for the day. Requires Gemini API key in Profile.</div>'
+    + '<div class="guard-desc">Gemini AI reads morning news at 9:15 AM. If market risk exceeds your threshold, signals are suspended for the day. Requires Gemini API key in Profile.</div>'
     + '<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'
-    + '<label class="toggle" style="flex-shrink:0"><input type="checkbox" id="af-ainews"><div class="toggle-track"></div></label>'
+    + '<label class="toggle" style="flex-shrink:0"><input type="checkbox" id="af-ainews" onchange="document.getElementById(\'af-ainews-opts\').style.display=this.checked?\'\':\' none\'"><div class="toggle-track"></div></label>'
     + '<span style="font-size:12px;color:var(--text2)">Enable AI News Gate</span>'
     + '</div>'
     + '<div id="af-ainews-opts" style="margin-top:8px;display:none">'
     + '<label style="font-size:12px;font-weight:500">Block when risk is:</label>'
-    + '<select id="af-aithreshold" style="margin-top:4px"><option value="high">High risk only (least blocking)</option><option value="medium" selected>Medium or higher</option><option value="any">Any flag (most protective)</option></select>'
+    + '<select id="af-aithreshold" style="margin-top:4px"><option value="high">High risk only</option><option value="medium" selected>Medium or higher</option><option value="any">Any flag (most protective)</option></select>'
     + '</div>'
-    + '</div></div>'
-    // ── SL Tuning ──────────────────────────────────────────────
-    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:6px">Exit Tuning — Stop Loss Levels</div>'
-    + '<div class="guard-row">'
-    + '<div class="guard-icon">📉</div>'
-    + '<div class="guard-info">'
-    + '<div class="guard-label">VWAP SL Buffer %</div>'
-    + '<div class="guard-desc">Layer 2a: exit if combined premium rises above VWAP × (1 + buffer). Lower = tighter exit. Higher = more room for noise before stopping out. Default 5%.</div>'
-    + '<select id="af-vwapbuf" style="margin-top:4px"><option value="2">2% — tight</option><option value="3">3%</option><option value="5" selected>5% — standard</option><option value="7">7%</option><option value="10">10% — relaxed</option></select>'
-    + '</div></div>'
-    + '<div class="guard-row">'
-    + '<div class="guard-icon">📊</div>'
-    + '<div class="guard-info">'
-    + '<div class="guard-label">EMA75 SL Buffer %</div>'
-    + '<div class="guard-desc">After 75 candles, EMA75 replaces VWAP as the exit level. Buffer controls sensitivity. Keep at 1% — EMA75 is already a responsive indicator. Default 1%.</div>'
-    + '<select id="af-emabuf" style="margin-top:4px"><option value="0.5">0.5%</option><option value="1" selected>1% — standard</option><option value="2">2%</option><option value="3">3% — relaxed</option></select>'
-    + '</div></div>'
-    + '<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:6px">Date Overrides</div>'
-    // Event calendar gate
-    + '<div class="guard-row">'
-    + '<div class="guard-icon">🗓️</div>'
-    + '<div class="guard-info">'
-    + '<div class="guard-label">Event Calendar Gate</div>'
-    + '<div class="guard-desc">Specific events (RBI policy, budget, earnings) can be marked as "suspend trading" in the Event Calendar. When that day arrives, all automations pause automatically.</div>'
-    + '<div style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="hideAutoForm();nav(\'events\')">Open Event Calendar →</button></div>'
-    + '</div></div>'
-    // Skip dates calendar
-    + '<div class="guard-row">'
-    + '<div class="guard-icon">🚫</div>'
-    + '<div class="guard-info">'
-    + '<div class="guard-label">Skip Dates <span style="font-size:10px;color:var(--text2);font-weight:400">— tap any date to block it</span></div>'
-    + '<div class="guard-desc">Mark specific dates to skip (shown in red). Engine auto-skips these days. Add RBI policy days, budget, Diwali muhurat, market holidays.</div>'
-    + '<div class="skip-cal-wrap" id="skip-calendar" style="margin-top:8px"></div>'
     + '</div></div>'
     + '<div class="alert" style="margin-top:12px;font-size:11px;background:rgba(99,102,241,.1);border-color:rgba(99,102,241,.3);color:var(--text2)">'
-    + '💡 When any guard blocks trading, the automation card shows exactly which guard fired and why — so you always know why a trade was skipped.'
+    + '💡 When a guard blocks trading, the automation card shows exactly which guard fired and why.'
     + '</div>'
     + '</div>'
-    // ── Save buttons (always visible) ────────────────────────────
-    + '<div class="alert alert-warn" style="margin-top:16px;margin-bottom:12px"><svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Start in Paper mode first. Review Results after 1 week before going Live.</div>'
-    + '<div class="btn-row">'
-    + (_editAutoId
-        ? '<button class="btn btn-primary" style="flex:1" onclick="saveAuto(\'paper\')">&#9998; Update</button>'
-        : '<button class="btn btn-ghost" style="flex:1" onclick="saveAuto(\'paper\')">Save as Paper</button><button class="btn btn-danger" style="flex:1" onclick="saveAuto(\'live\')">Go Live</button>')
-    + '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">Cancel</button>'
+    // ── Bottom hint — floating bar is the primary save action ────
+    + '<div style="margin-top:20px;padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px">'
+    +   '<div style="font-size:11px;color:var(--text2)">💾 Use the <strong style="color:var(--text)">save bar at the bottom</strong> when you\'re ready — or cancel to discard changes.</div>'
+    +   '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()" style="flex-shrink:0">✕ Discard</button>'
     + '</div>'
     + '</div></div>';
-  el.scrollIntoView({behavior:'smooth'});
-  // Calendar lives in Guard Rails tab — will render when user switches to it.
+  // ── Editing state: highlight selected card, dim others ──────
+  document.querySelectorAll('#autos-list [data-autoid]').forEach(function(c) {
+    c.classList.remove('auto-card-dim','auto-card-editing');
+    if (_editAutoId) {
+      if (c.dataset.autoid === _editAutoId) c.classList.add('auto-card-editing');
+      else c.classList.add('auto-card-dim');
+    }
+  });
+  // ── Floating save bar ─────────────────────────────────────
+  var fsb = document.getElementById('auto-save-bar');
+  var fsbName = document.getElementById('fsb-name');
+  var fsbSave = document.getElementById('fsb-save-btn');
+  var fsbBtns = document.getElementById('fsb-buttons');
+  if (fsb) {
+    if (fsbName) fsbName.textContent = auto ? auto.name : 'New Automation';
+    if (fsbSave && fsbBtns) {
+      if (_editAutoId) {
+        fsbBtns.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">✕ Cancel</button>'
+          + '<button class="btn btn-primary" onclick="saveAuto(\'paper\')" style="font-weight:700">✓ Update</button>';
+      } else {
+        fsbBtns.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="hideAutoForm()">✕ Cancel</button>'
+          + '<button class="btn btn-ghost btn-sm" onclick="saveAuto(\'paper\')">Save Paper</button>'
+          + '<button class="btn btn-danger" onclick="saveAuto(\'live\')" style="font-weight:700">🔴 Go Live</button>';
+      }
+    }
+    fsb.style.display = 'flex';
+    // Double RAF: first frame paints element (off-screen at translateY(100%)),
+    // second frame triggers transition to translateY(0)
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){ fsb.classList.add('visible'); }); });
+  }
+  // ── Scroll to form ────────────────────────────────────────
+  setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120);
+  // Calendar lives in Schedule tab — will render when user switches to it.
   // Pre-init state so it's ready:
   _calYear = new Date().getFullYear();
   _calMonth = new Date().getMonth();
+  // Load Telegram accounts for per-automation selector
+  _loadTgAccountsForForm(auto);
   // Wire AI news gate toggle
   var ainewsEl = document.getElementById('af-ainews');
   if (ainewsEl) {
@@ -2306,14 +2688,18 @@ function showAutoForm(auto) {
     var lo = document.getElementById('af-lots'); if (lo && cfg.lots) lo.value = cfg.lots;
     var ls = document.getElementById('af-lotsize'); if (ls && cfg.lot_size) ls.value = cfg.lot_size;
     var ex = document.getElementById('af-exit'); if (ex && cfg.auto_exit_time) ex.value = cfg.auto_exit_time;
-    var ml = document.getElementById('af-maxloss'); if (ml && cfg.max_loss_pct) ml.value = cfg.max_loss_pct;
-    var pt = document.getElementById('af-profit'); if (pt && cfg.profit_target_pct) pt.value = cfg.profit_target_pct;
+    var slr = document.getElementById('af-sl-rupees'); if (slr) slr.value = cfg.sl_rupees||18;
+    var _dm = cfg.dte_profit_map||{};
+    var d0 = document.getElementById('af-dte0'); if (d0) d0.value = _dm['0']||40;
+    var d1 = document.getElementById('af-dte1'); if (d1) d1.value = _dm['1']||40;
+    var d2 = document.getElementById('af-dte2'); if (d2) d2.value = _dm['2']||40;
+    var d3 = document.getElementById('af-dte3'); if (d3) d3.value = _dm['3']||40;
     var mt = document.getElementById('af-maxtrades'); if (mt && cfg.max_trades_per_day != null) mt.value = cfg.max_trades_per_day;
     var dm = document.getElementById('af-driftmax'); if (dm && cfg.drift_max_pct) dm.value = cfg.drift_max_pct;
     var vm = document.getElementById('af-vixmax'); if (vm && cfg.vix_max) vm.value = cfg.vix_max;
     var sz = document.getElementById('af-sizing'); if (sz && cfg.position_sizing) sz.value = cfg.position_sizing;
     var sh = document.getElementById('af-shadow'); if (sh) sh.checked = auto.shadow_mode !== false;
-    var tg = document.getElementById('af-tg'); if (tg) tg.checked = auto.telegram_alerts !== false;
+    var tg = document.getElementById('af-tg'); if (tg) { tg.checked = auto.telegram_alerts !== false; _toggleTgAccounts(tg); }
     // Pre-fill run days
     if (cfg.run_days) {
       document.querySelectorAll('#af-days .day-btn').forEach(function(btn) {
@@ -2343,11 +2729,69 @@ function showAutoForm(auto) {
     // Pre-fill SL buffers
     var vb = document.getElementById('af-vwapbuf'); if (vb && cfg.vwap_buffer_pct != null) vb.value = cfg.vwap_buffer_pct;
     var eb = document.getElementById('af-emabuf');  if (eb && cfg.ema_buffer_pct  != null) eb.value = cfg.ema_buffer_pct;
+    // Pre-fill re-entry settings
+    var re = document.getElementById('af-reentry');
+    if (re) {
+      re.checked = !!cfg.reentry_on_sl;
+      document.getElementById('af-reentry-badge').textContent = re.checked ? ' — on' : ' — off';
+      document.getElementById('af-reentry-opts').style.display = re.checked ? '' : 'none';
+    }
+    var ro = document.getElementById('af-reentry-offset');  if (ro && cfg.reentry_offset    != null) ro.value = cfg.reentry_offset;
+    var rm = document.getElementById('af-reentry-max');     if (rm && cfg.reentry_max_count != null) rm.value = cfg.reentry_max_count;
+    var rx = document.getElementById('af-reentry-maxexp'); if (rx && cfg.reentry_max_expiry != null) rx.value = cfg.reentry_max_expiry;
   }
 }
 
 function hideAutoForm() {
-  document.getElementById('auto-form').style.display = 'none';
+  var autoForm = document.getElementById('auto-form');
+  if (autoForm) autoForm.style.display = 'none';
+  _showingAutoForm = false;
+  _editAutoId = null;
+  // Clear editing state from all cards
+  document.querySelectorAll('#autos-list [data-autoid]').forEach(function(c) {
+    c.classList.remove('auto-card-dim', 'auto-card-editing');
+  });
+  // Hide floating save bar
+  var fsb = document.getElementById('auto-save-bar');
+  if (fsb) { fsb.classList.remove('visible'); setTimeout(function(){ fsb.style.display = 'none'; }, 320); }
+}
+
+function _toggleTgAccounts(cb) {
+  var el = document.getElementById('af-tg-accounts');
+  if (el) el.style.opacity = cb.checked ? '1' : '0.4';
+}
+
+async function _loadTgAccountsForForm(auto) {
+  var el = document.getElementById('af-tg-accounts');
+  if (!el) return;
+  try {
+    var r = await api('GET', '/api/telegram/accounts');
+    var accounts = r.accounts || [];
+    if (!accounts.length) {
+      el.innerHTML = '<div style="color:var(--text2)">No Telegram accounts configured. '
+        + '<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="nav(\'profile\')">Add in Profile →</button></div>';
+      return;
+    }
+    var savedIds = (auto && (auto.telegram_account_ids || (auto.config && auto.config.telegram_accounts))) || [];
+    var useAll = !savedIds.length;
+    var html = '<div style="font-size:10px;color:var(--text2);margin-bottom:6px">'
+      + (useAll ? '✓ Using all active accounts (global default). Check specific accounts to override:' : 'Override: only these accounts will be notified:')
+      + '</div>';
+    accounts.forEach(function(acct) {
+      var checked = useAll ? (acct.active ? ' checked' : '') : (savedIds.indexOf(acct.id) >= 0 ? ' checked' : '');
+      html += '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">'
+        + '<input type="checkbox" class="af-tg-acct" data-id="' + esc(acct.id) + '"' + checked + '>'
+        + '<span style="font-size:12px">' + esc(acct.name) + '</span>'
+        + (acct.active
+          ? '<span style="color:var(--green);font-size:10px">● active</span>'
+          : '<span style="color:var(--text2);font-size:10px">○ inactive</span>')
+        + '</label>';
+    });
+    html += '<div style="font-size:10px;color:var(--text2);margin-top:4px">Uncheck all to use global active accounts.</div>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--text2)">Could not load Telegram accounts</div>';
+  }
 }
 
 function toggleStrat(code) {
@@ -2381,8 +2825,13 @@ async function saveAuto(mode) {
     config: {
       lots: parseInt(document.getElementById('af-lots').value)||1,
       lot_size: parseInt(document.getElementById('af-lotsize').value)||65,
-      max_loss_pct: parseInt(document.getElementById('af-maxloss').value)||30,
-      profit_target_pct: parseInt(document.getElementById('af-profit').value)||50,
+      sl_rupees: parseInt(document.getElementById('af-sl-rupees').value)||18,
+      dte_profit_map: {
+        "0": parseInt(document.getElementById('af-dte0').value)||40,
+        "1": parseInt(document.getElementById('af-dte1').value)||40,
+        "2": parseInt(document.getElementById('af-dte2').value)||40,
+        "3": parseInt(document.getElementById('af-dte3').value)||40,
+      },
       auto_exit_time: document.getElementById('af-exit').value||'14:00',
       run_days: _getSelectedDays(),
       skip_dates: _skipDates.slice(),
@@ -2396,6 +2845,14 @@ async function saveAuto(mode) {
       ai_news_threshold: (document.getElementById('af-aithreshold')||{}).value||'medium',
       vwap_buffer_pct: parseFloat((document.getElementById('af-vwapbuf')||{}).value)||5,
       ema_buffer_pct: parseFloat((document.getElementById('af-emabuf')||{}).value)||1,
+      reentry_on_sl:       !!(document.getElementById('af-reentry')||{}).checked,
+      reentry_offset:      parseInt((document.getElementById('af-reentry-offset')||{}).value)||2,
+      reentry_max_count:   parseInt((document.getElementById('af-reentry-max')||{}).value)||2,
+      reentry_max_expiry:  parseInt((document.getElementById('af-reentry-maxexp')||{}).value)||1,
+      telegram_accounts:   (function(){
+        var cbs = document.querySelectorAll('.af-tg-acct:checked');
+        return Array.from(cbs).map(function(c){ return c.dataset.id; });
+      })(),
     }
   };
   try {
@@ -2421,7 +2878,7 @@ async function startAuto(autoId) {
 
 async function stopAuto(autoId) {
   try {
-    await api('POST', '/api/engine/stop');
+    await api('POST', '/api/engine/stop', {automation_id: autoId});
     toast('Engine stopped', 'success');
     renderAutomate();
   } catch(e) { toast(e.message, 'error'); }
@@ -2776,7 +3233,7 @@ async function loadUnifiedTrades() {
             + '<div><span style="color:var(--text2)">Strategy: </span>'+esc(t.signal_name||t.strategy)+'</div>'
             + '<div><span style="color:var(--text2)">Time: </span>'+fmtTime(t.entry_time)+' IST</div>'
             + '<div><span style="color:var(--text2)">ATM Strike: </span>'+esc(String(t.atm_strike||'\u2014'))+'</div>'
-            + '<div><span style="color:var(--text2)">Hedge: </span>\u00b1'+esc(String(t.hedge_width||2))+' strikes ('+esc(String((t.hedge_width||2)*50))+'pt wings)</div>'
+            + '<div><span style="color:var(--text2)">Hedge: </span>\u00b1'+esc(String(t.hedge_width||20))+' strikes ('+esc(String((t.hedge_width||20)*50))+'pt wings)</div>'
             + '<div><span style="color:var(--text2)">Combined: </span><strong>\u20b9'+esc(String(t.entry_combined))+'</strong></div>'
             + '<div><span style="color:var(--text2)">Spot: </span>'+esc(String(t.entry_spot||'\u2014'))+'</div>'
             + '<div style="grid-column:span 2;color:var(--text2)">Signal: '+esc(t.entry_reason||'ORB condition met')+'</div>'
@@ -2887,7 +3344,7 @@ function _buildLegsHtml(t) {
       return {side:o.side||'?', symbol:o.symbol||'', id:o.order_id||'PAPER'};
     });
   } else if (t.atm_strike) {
-    var s = t.atm_strike, hw = t.hedge_width||2, gap = 50;
+    var s = t.atm_strike, hw = t.hedge_width||20, gap = 50;
     legs = [
       {side:'SELL', symbol:'CE '+s+' (ATM)', id:''},
       {side:'SELL', symbol:'PE '+s+' (ATM)', id:''},
@@ -4328,11 +4785,11 @@ var _activeStrat = null;
 var _activeHedge = 2;
 
 var STRATS = {
-  S1:{color:'#448aff',name:'ORB Breakdown Iron Fly',when:'9:22 AM \u2013 2:00 PM',market:'Any trending day',hedge:'\u00b12 (auto)',fires:'Most days \u2014 most reliable',condition:'Any strike\'s combined premium drops below its Opening Range Low (built 9:15\u20139:21 AM). ATM strike preferred.',orders:'Sell ATM CE + PE. Buy CE 2 strikes up, PE 2 strikes down (Iron Fly \u00b12).',margin:'~\u20b945-55K per lot',tip:'Best starting strategy. Pair with S8 to cover gap days too.'},
-  S7:{color:'#ce93d8',name:'All-Strike Butterfly',when:'9:22 \u2013 10:00 AM',market:'Strong bearish open',hedge:'\u00b12 (auto)',fires:'1\u20132x per week on strong opens',condition:'ALL monitored strikes break ORB low simultaneously. Very high conviction signal.',orders:'Iron Fly at ATM. All strikes confirming means strong directional conviction.',margin:'~\u20b945-55K per lot',tip:'Highest conviction signal. Fires less often but very reliable when it does.'},
+  S1:{color:'#448aff',name:'ORB Breakdown Iron Fly',when:'9:22 AM \u2013 2:00 PM',market:'Any trending day',hedge:'\u00b120 (auto, 1000pts)',fires:'Most days \u2014 most reliable',condition:'Any strike\'s combined premium drops below its Opening Range Low (built 9:15\u20139:21 AM). ATM strike preferred.',orders:'Sell ATM CE + PE. Buy CE 20 strikes up, PE 20 strikes down (Iron Fly \u00b11000pts).',margin:'~\u20b945-55K per lot',tip:'Best starting strategy. Pair with S8 to cover gap days too.'},
+  S7:{color:'#ce93d8',name:'All-Strike Butterfly',when:'9:22 \u2013 10:00 AM',market:'Strong bearish open',hedge:'\u00b120 (auto, 1000pts)',fires:'1\u20132x per week on strong opens',condition:'ALL monitored strikes break ORB low simultaneously. Very high conviction signal.',orders:'Iron Fly at ATM. All strikes confirming means strong directional conviction.',margin:'~\u20b945-55K per lot',tip:'Highest conviction signal. Fires less often but very reliable when it does.'},
   S8:{color:'#448aff',name:'Gap Fade Iron Condor',when:'9:22 \u2013 9:45 AM',market:'Gap day (>0.4% open)',hedge:'\u00b13 (auto, wider)',fires:'On clear gap days',condition:'Market opens >0.4% from previous close. Premium inflated from overnight gap.',orders:'Sell ATM CE + PE. Buy \u00b13 strikes (wider buffer for initial gap volatility).',margin:'~\u20b935-45K per lot',tip:'Gaps fade 80% of the time. Wider hedge gives room for initial volatility to settle.'},
-  S2:{color:'#ce93d8',name:'VWAP Squeeze Iron Fly',when:'9:22 \u2013 10:30 AM',market:'Bearish with VWAP',hedge:'\u00b12 (auto)',fires:'S1 fallback on slow days',condition:'Combined premium below VWAP AND EMA75 also below VWAP. Both must confirm together.',orders:'Sell ATM CE + PE. Buy \u00b12 Iron Fly hedge.',margin:'~\u20b945-55K per lot',tip:'Add alongside S1. If S1 doesn\'t fire by 10:30, S2 gives a second chance on bearish days.'},
-  S3:{color:'#9090b0',name:'Breakout Reversal',when:'9:22 AM \u2013 2:00 PM',market:'Failed breakout day',hedge:'\u00b12 (auto)',fires:'When false breakout reverses',condition:'Combined spikes above VWAP\u00d71.05 in last 5 candles then falls back below VWAP. Sell the reversal.',orders:'Sell ATM CE + PE. Buy \u00b12 hedge.',margin:'~\u20b945-55K per lot',tip:'Opportunistic. Good for days with a lot of intraday noise and reversals.'},
+  S2:{color:'#ce93d8',name:'VWAP Squeeze Iron Fly',when:'9:22 \u2013 10:30 AM',market:'Bearish with VWAP',hedge:'\u00b120 (auto, 1000pts)',fires:'S1 fallback on slow days',condition:'Combined premium below VWAP AND EMA75 also below VWAP. Both must confirm together.',orders:'Sell ATM CE + PE. Buy \u00b120 strikes Iron Fly hedge (±1000pts).',margin:'~\u20b945-55K per lot',tip:'Add alongside S1. If S1 doesn\'t fire by 10:30, S2 gives a second chance on bearish days.'},
+  S3:{color:'#9090b0',name:'Breakout Reversal',when:'9:22 AM \u2013 2:00 PM',market:'Failed breakout day',hedge:'\u00b120 (auto, 1000pts)',fires:'When false breakout reverses',condition:'Combined spikes above VWAP\u00d71.05 in last 5 candles then falls back below VWAP. Sell the reversal.',orders:'Sell ATM CE + PE. Buy \u00b120 strikes hedge (±1000pts).',margin:'~\u20b945-55K per lot',tip:'Opportunistic. Good for days with a lot of intraday noise and reversals.'},
   S4:{color:'#9090b0',name:'Iron Condor',when:'9:30 \u2013 10:00 AM',market:'Range-bound, low VIX',hedge:'sell\u00b11/buy\u00b13',fires:'Flat consolidation days',condition:'Combined premium range in last 15 candles is less than 8% of current value. Market is stable.',orders:'Sell CE 1 strike OTM + PE 1 strike OTM. Buy CE 3 strikes out + PE 3 strikes out.',margin:'~\u20b935-45K per lot',tip:'Best when VIX is below 13 and market has been consolidating for several days.'},
   S6:{color:'#9090b0',name:'Theta Decay Wide Condor',when:'9:45 \u2013 10:30 AM',market:'High IV, elevated premium',hedge:'sell\u00b11/buy\u00b14',fires:'High IV days',condition:'Premium at or above ORB high at 9:45 AM. IV is elevated, premium has not decayed.',orders:'Sell CE 1 strike OTM + PE 1 strike OTM. Buy \u00b14 wide wings (max premium).',margin:'~\u20b930-40K per lot',tip:'Sell while IV is high and wait for IV crush + theta decay. Best after events like RBI policy.'},
   S9:{color:'#ffab40',name:'Pre-Expiry Theta Crush',when:'11:00 AM \u2013 12:00 PM',market:'Thursday (expiry) only',hedge:'\u00b11 tight (auto)',fires:'Every Thursday',condition:'Expiry day only. ATM options lose 50\u201370% in the last 2 hours as theta crushes.',orders:'Sell ATM CE + PE. Buy \u00b11 tight hedge (movement very limited near expiry).',margin:'~\u20b930-40K per lot',tip:'Run as a separate automation. Tight hedge because expiry day movement is minimal.'},
@@ -4394,8 +4851,8 @@ function buildHelpPage() {
   + '</div></div>'
 
   // SL explained
-  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Stop loss \u2014 four automatic layers</div></div><div class="card-body">'
-  + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">All exits based on <strong style="color:var(--text)">combined premium (CE + PE)</strong> monitored every 60 seconds. Never spot price. Never individual legs. S10 (buy strategy) has its own separate SL.</p>'
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Stop loss \u2014 three automatic layers + profit target</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">All exits based on <strong style="color:var(--text)">combined premium (CE + PE)</strong> monitored every 60 seconds. Never spot price. Never individual legs. S10 (buy strategy) has its own separate 4-layer SL — see S10 in the Strategy Explorer.</p>'
   + '<div style="display:flex;flex-direction:column;gap:8px">'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--green)">'
   + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:4px">Layer 1 \u2014 Ratchet Profit Lock (stepped guarantee)</div>'
@@ -4405,20 +4862,20 @@ function buildHelpPage() {
   + '<div>\u25b6 <strong style="color:var(--green)">25% decay</strong> \u2192 SL at entry \u00d7 0.90 (10% profit locked)</div>'
   + '<div>\u25b6 <strong style="color:var(--green)">35% decay</strong> \u2192 SL at entry \u00d7 0.75 (25% profit locked)</div>'
   + '</div>'
-  + '<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">Example:</strong> Entry \u20b9600. Decays to \u20b9450 (25% down) \u2192 profit lock at \u20b9540. If market spikes back to \u20b9540 \u2192 exit with 10% profit locked. Lock never resets back once set.</div>'
+  + '<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">Example:</strong> Entry \u20b9600. Decays to \u20b9450 (25%) \u2192 profit lock at \u20b9540. If market spikes back to \u20b9540 \u2192 exit with 10% profit locked. Lock never resets.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--blue)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP SL (dynamic exit \u2014 buffer configurable per automation)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above VWAP \u00d7 (1 + VWAP Buffer %) \u2192 exit. Default 5% buffer. VWAP tracks combined premium from 9:15 AM. After 75 candles, EMA75 replaces VWAP (buffer controlled separately by EMA75 Buffer %). Configure both in Guard Rails \u2192 Exit Tuning.</div>'
-  + '<div style="font-size:11px;color:var(--amber);margin-top:4px">\u26a0\ufe0f VWAP SL is suppressed when a profit lock is active (prevents exiting at a loss when profit is already locked). Re-enables if premium rebounds 15%+ from its low.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Layer 2 \u2014 VWAP / EMA75 SL (dynamic exit)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above VWAP \u00d7 (1 + VWAP Buffer %) \u2192 exit. Default 5% buffer. After 75 candles, EMA75 replaces VWAP (separate 1% buffer). Configure both in the <strong style="color:var(--text)">Risk & Exit tab</strong> of your automation.</div>'
+  + '<div style="font-size:11px;color:var(--amber);margin-top:4px">\u26a0\ufe0f Suppressed when a profit lock is active. Re-enables if premium rebounds 15%+ from its low.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:4px">Layer 3 \u2014 Max Loss Backstop (always fires)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">If combined rises above entry + max_loss% \u2192 hard exit. Always fires regardless of profit lock. Entry \u20b9600 with 30% limit \u2192 backstop at \u20b9780. Configure 20\u201340% in Advanced settings. Gaps can breach this level \u2014 it is a target, not a guaranteed fill.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:4px">Layer 3 \u2014 Stop Loss ₹ Backstop (always fires)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Hard exit if combined premium rises more than <strong style="color:var(--text)">₹X above entry</strong>. Default ₹18. Set in the <strong style="color:var(--text)">Risk & Exit tab</strong>. Always fires regardless of profit lock. <strong>Example:</strong> Entry ₹60 with ₹18 SL \u2192 backstop fires at ₹78. Gaps can breach this — it is a target, not a guaranteed fill price.</div>'
   + '</div>'
   + '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--amber)">'
-  + '<div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:4px">Profit Target (auto-exit on win)</div>'
-  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Exit when combined decays 50% from entry. Entry \u20b9600 \u2192 exit at \u20b9300. You captured 50% of maximum possible premium. Configure 30\u201360% in Advanced settings.</div>'
+  + '<div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:4px">Profit Target — DTE-based (auto-exit on win)</div>'
+  + '<div style="font-size:11px;color:var(--text2);line-height:1.6">Exit when combined premium decays by the configured %. Set <strong style="color:var(--text)">per DTE (days to expiry)</strong> in the Risk & Exit tab. Default 40% for all days. Example for DTE 0: 65% target = exit when ₹60 entry decays to ₹21, capturing max theta on expiry day. Recommended: DTE 0 → 60-70%, DTE 1 → 50%, DTE 2+ → 40%.</div>'
   + '</div>'
   + '</div></div></div>'
 
@@ -4433,28 +4890,41 @@ function buildHelpPage() {
   + '<div class="alert alert-warn" style="margin-top:10px">NIFTY lot size is 65 (effective Jan 2026). Margins are approximate \u2014 use your broker SPAN calculator before going live.</div>'
 
 
-  // ── Automation Feature Guide ──────────────────────────────
+  // ── Automation editor — 4-tab guide ──────────────────────
+  + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Automation Editor — 4 Tabs Explained</div></div><div class="card-body">'
+  + '<p style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">The automation editor has four tabs. Only <strong style="color:var(--green)">① Strategy</strong> is required — the other three have smart defaults and are optional.</p>'
+  + '<div style="display:grid;gap:8px">'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--green)"><div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:4px">① Strategy — Required</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Name · Symbol · Broker · Strategy picker · Lots · Lot Size · Position Sizing · Shadow Mode · Telegram Alerts. This is everything you need to start a paper simulation.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--blue)"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:4px">② Risk & Exit — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Stop Loss ₹ (default ₹18) · Auto Exit Time (default 14:00) · VWAP/EMA SL buffer % · Profit Target % per DTE. Defaults are sensible — adjust once you have paper trade data.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--amber)"><div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:4px">③ Schedule — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Run Days (Mon–Fri) · Max Trades / Day · Re-entry after SL · Skip Dates · Event Calendar link. Note: Re-entry uses a trade slot — if Max Trades = 1 and Re-entry is ON, a warning appears.</div></div>'
+  + '<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border-left:3px solid var(--red)"><div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px">④ Guards — Optional</div><div style="font-size:11px;color:var(--text2);line-height:1.6">Market condition blockers only: VIX Guard · Drift Guard · Gap Day Guard · Prev-Day Guard · AI News Gate. When a guard fires, the automation card shows exactly which guard blocked trading and why.</div></div>'
+  + '</div></div></div>'
+
+  // ── Automation Settings field guide ──────────────────────
   + '<div class="card" style="margin-bottom:12px"><div class="card-header">'
   + '<div class="card-title">Automation Settings — What Each Field Does</div></div>'
   + '<div class="card-body">'
   + '<div style="display:grid;gap:10px">'
-  + _helpField('Symbol','Which index to trade. NIFTY = NSE large-cap index. BankNifty = banking sector. Choose based on which you have margin for.','Always NIFTY 50 for beginners — tightest spreads, lowest slippage.')
-  + _helpField('Strategies','Which signal to look for. Multiple can be selected — engine tries in priority order every 60s and takes the first one that fires.','Start with S1 (ORB Breakdown) alone. Add S8 (Gap Fade) for gap days.')
-  + _helpField('Mode','Paper = simulate only, no real orders. Live = real orders placed via your broker.','Always run Paper for at least 20 trading days before going Live.')
-  + _helpField('Lots','Number of contracts per trade. 1 lot NIFTY = 65 units. More lots = more profit and more risk proportionally.','Start with 1 lot. Only increase after consistent paper profit.')
-  + _helpField('Lot Size','Units per contract set by SEBI. NIFTY=65, BankNifty=30, FinNifty=60 (Jan 2026 values). Never change unless SEBI revises.','Leave at default. Updated automatically when SEBI changes it.')
-  + _helpField('Max Loss %','Stop-loss level as % above entry combined premium. 30% standard = exit if premium rises 30% above entry.','30% is industry standard for Iron Fly. 20% for tight risk. 40% for more breathing room.')
-  + _helpField('Profit Target %','Exit when combined premium decays by this %. 50% standard = exit when you have captured half the premium.','50% is optimal — balances capture vs holding risk. Never go below 40%.')
-  + _helpField('Auto Exit Time','Force-close any open position at this time regardless of P&L. Prevents overnight risk.','14:00 is safe. 14:30 captures more theta but more risk near close.')
-  + _helpField('Max Trades Per Day','How many times the engine can enter per day. Industry standard is 1.','Keep at 1. Re-entry after a loss compounds risk on a bad day.')
-  + _helpField('Max Spot Drift %','Guard: if NIFTY moves more than this % from the opening price, all signals are suspended for the day.','1.5% is standard. On 19 Mar NIFTY fell 3.26% — drift guard would have prevented all losing trades.')
-  + _helpField('Max VIX','Guard: if India VIX is above this at open, all signals are suspended. High VIX = expensive to buy back options.','17 is standard. Above 17 the premium collected is rarely worth the risk of adverse moves.')
-  + _helpField('Days to Run','Select which weekdays this automation is active. Deselect Thursday to skip expiry day if you do not want S9 firing.','Most traders run all 5 days. Deselect Monday if you find Monday gaps unreliable.')
-  + _helpField('Skip Dates','Add specific dates to skip — RBI policy, budget, Diwali muhurat, market holidays. Engine skips automatically on those dates.','Add all RBI and US Fed dates upfront. Use Event Calendar page to pre-load 2026 dates automatically.')
-  + _helpField('Automation Name','Give each automation a meaningful name so you can tell them apart. E.g. NIFTY Morning S1, BankNifty Expiry, Gap Fade Only.','Name by strategy + symbol + mode. Makes the Live Monitor and Results page much easier to read.')
-  + _helpField('VWAP SL Buffer %','Layer 2a stop loss: exit if combined premium rises above VWAP × (1 + buffer). At 5% buffer, VWAP = ₹200 → exit triggers above ₹210. Found in Guard Rails → Exit Tuning.','5% standard. Lower (2-3%) = tighter exits. Higher (7-10%) = gives more room but more risk.')
-  + _helpField('EMA75 SL Buffer %','After 75 candles EMA75 replaces VWAP as the exit level. Same logic: exit if combined > EMA75 × (1 + buffer). Found in Guard Rails → Exit Tuning.','Keep at 1%. EMA75 is already more responsive than VWAP — adding buffer on top is usually not needed.')
-  + _helpField('AI News Gate','Per-automation toggle. When ON, the engine reads the morning AI assessment at 9:15. If AI flags the day as risky above your threshold, signals are suspended for that automation. Configure in Guard Rails tab.','Set to Medium or Higher for balanced protection. Use High only if you prefer the AI to rarely block.')
+  + _helpField('Automation Name','Give each automation a meaningful name. E.g. NIFTY Morning S1, Gap Fade Only, BankNifty Expiry. Shown on Live Monitor and Results.','Name by strategy + symbol + mode — makes reports much easier to read.')
+  + _helpField('Symbol','Which index to trade. NIFTY = NSE large-cap index. BankNifty = banking sector. Choose based on available margin.','Always NIFTY 50 for beginners — tightest spreads, lowest slippage.')
+  + _helpField('Strategies (① Strategy tab)','Which signals to look for. Multiple can be selected — engine tries in priority order every 60s and takes the first one that fires.','Start with S1 (ORB Breakdown) alone. Add S8 (Gap Fade) for gap days. S10 can run as a separate automation.')
+  + _helpField('Mode','Paper = simulate only, no real orders placed. Live = real orders placed via your connected broker.','Always run Paper for at least 20 trading days before going Live.')
+  + _helpField('Lots','Number of contracts per trade. 1 lot NIFTY = 65 units. More lots = proportionally more profit and risk.','Start with 1 lot. Only increase after consistent paper results across 20+ trades.')
+  + _helpField('Lot Size','Units per contract set by SEBI. NIFTY=65, BankNifty=30, FinNifty=60 (Jan 2026 values).','Leave at default. Change only if SEBI revises the lot size.')
+  + _helpField('Stop Loss ₹ (② Risk & Exit tab)','Hard backstop in rupees above entry combined premium. Default ₹18. Entry ₹60 → backstop fires at ₹78. This is Layer 3 — always fires regardless of profit lock.','₹18 is the standard starting point. Increase only if your strategy generates higher combined premium entries.')
+  + _helpField('Profit Target % by DTE (② Risk & Exit tab)','Exit when combined decays by this % — set separately for each DTE (days to expiry). DTE 0 = expiry day, DTE 3+ = 3 or more days out. Default 40% for all.','DTE 0 → 60-70% (hold longer, max theta day). DTE 1 → 50%. DTE 2+ → 40%. Higher % = hold longer = more capture but more reversal risk.')
+  + _helpField('Auto Exit Time (② Risk & Exit tab)','Force-close any open position at this exact time regardless of P&L. Prevents overnight risk.','14:00 is safe. 14:30 captures more theta but leaves less time for slippage management.')
+  + _helpField('VWAP SL Buffer % (② Risk & Exit tab)','Layer 2a: exit if combined rises above VWAP × (1 + buffer%). At 5% buffer, VWAP ₹200 → exit above ₹210.','5% standard. Lower (2-3%) = tighter exits. Higher (7-10%) = more room for noise.')
+  + _helpField('EMA75 SL Buffer % (② Risk & Exit tab)','After 75 candles, EMA75 replaces VWAP as the Layer 2 exit level. Buffer adds tolerance.','Keep at 1%. EMA75 is already a responsive indicator — extra buffer rarely needed.')
+  + _helpField('Max Trades / Day (③ Schedule tab)','How many times the engine can enter per day including re-entries. Industry standard is 1.','Keep at 1. If Re-entry is ON, set this to 2 — otherwise re-entry is silently blocked.')
+  + _helpField('Re-entry after SL (③ Schedule tab)','When VWAP/EMA SL fires, re-enter at a shifted strike with momentum. Counts against Max Trades / Day.','Enable only after 50+ paper trades show consistent re-entry profitability. Set strike offset to 2 (100pts).')
+  + _helpField('Days to Run (③ Schedule tab)','Select which weekdays this automation is active. Deselect Thursday to skip expiry if you do not want S9 firing.','Most traders run all 5 days. Deselect Monday if you find Monday gap opens unreliable.')
+  + _helpField('Skip Dates (③ Schedule tab)','Mark specific dates to skip — RBI policy, budget, Diwali muhurat, market holidays. Engine auto-skips on those dates.','Add all RBI and US Fed dates upfront. Use Event Calendar page to pre-load 2026 dates automatically.')
+  + _helpField('VIX Guard (④ Guards tab)','Suspends all selling signals if India VIX is above this level at open. High VIX = volatile markets = SL hits more likely.','17 is standard. Above 17 the premium collected rarely justifies the IV expansion risk.')
+  + _helpField('Drift Guard (④ Guards tab)','Suspends signals if NIFTY spot moves more than this % from opening price intraday. Catches crash days.','1.5% standard. On 19 Mar 2025, NIFTY fell 3.26% — drift guard would have prevented all losing trades.')
+  + _helpField('Gap Day Guard (④ Guards tab)','Suspends SELL strategies if today gaps more than X% from yesterday. S10 (directional buy) still runs on gap days.','Start with Off. Enable at 1.5% after you observe how your strategies behave on gap days.')
+  + _helpField('Prev-Day Guard (④ Guards tab)','Skips selling if yesterday\'s close-to-close move was large. Big prior-day moves often carry momentum next session.','Start with Off. Enable at 2% if you find Monday/post-event days frequently trigger your SL.')
+  + _helpField('AI News Gate (④ Guards tab)','Gemini AI reads morning context at 9:15 AM. If market risk exceeds your threshold, signals suspend for that automation.','Set to Medium or Higher. Requires free Gemini API key from aistudio.google.com → Profile → AI Trading Assistant.')
   + '</div></div></div>'
 
   + '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">&#128197; Event Calendar — auto-suspend on event days</div></div><div class="card-body">'

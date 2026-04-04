@@ -121,10 +121,10 @@ class SLState:
     def update(self, current: float, vwap: float, ema75: float,
                ema_count: int, config: dict):
         self.candles += 1
-        max_loss_pct  = config.get("max_loss_pct",      30) / 100
+        sl_rupees     = config.get("sl_rupees",         18)
         vwap_buf      = config.get("vwap_buffer_pct",    5) / 100  # M10: 2%→5%
         ema_buf       = config.get("ema_buffer_pct",     1) / 100
-        target_pct    = config.get("profit_target_pct", 50) / 100
+        target_pct    = config.get("dte_profit_pct",    40) / 100
 
         # Track lowest premium seen (for ratchet and rebound cap)
         if current < self.trailing_low:
@@ -169,10 +169,10 @@ class SLState:
                     return True, f"EMA75_SL combined={current:.1f} ema75={ema75:.1f}"
 
         # ── Layer 3: Max loss backstop (always fires) ─────────────
-        if current > self.entry_combined * (1 + max_loss_pct):
+        if current > self.entry_combined + sl_rupees:
             self.sl_type = "MAX_LOSS"
             return True, (f"MAX_LOSS combined={current:.1f} "
-                         f"entry={self.entry_combined:.1f} limit={max_loss_pct*100:.0f}%")
+                         f"entry={self.entry_combined:.1f} sl=₹{sl_rupees:.0f}")
 
         # ── Profit target ─────────────────────────────────────────
         if current <= self.entry_combined * (1 - target_pct):
@@ -206,6 +206,12 @@ class EngineState:
         # One trade per automation per day gate
         self.traded_today: bool = False
         self.trade_count:  int  = 0
+        # Re-entry after VWAP/EMA SL
+        self.reentry_count:     int  = 0
+        self.reentry_pending:   bool = False
+        self.reentry_direction: str  = ""  # "UP" or "DOWN"
+        # Expiry weekday from live options data (0=Mon…6=Sun), None = not yet known
+        self.expiry_weekday:    Optional[int] = None
 
     @property
     def atm(self) -> Optional[StrikeState]:
@@ -410,6 +416,48 @@ def _build_legs(strategy: str, sell_strike: StrikeState,
     }
 
 
+def _reentry_signal(state: "EngineState", direction: str,
+                    offset: int = 2) -> Optional[dict]:
+    """
+    Generate a re-entry signal after VWAP/EMA SL.
+    Shifts sell strike in the direction the market moved, so we trade with
+    momentum rather than fighting it.
+
+    direction: "UP"  → sell offset strikes above live ATM (CE side moves away)
+               "DOWN"→ sell offset strikes below live ATM (PE side moves away)
+    offset   : number of strikes to shift (default 2 = 100pts)
+    """
+    if not state.spot_history:
+        return None
+    sb = _sb(state)
+    if not sb:
+        return None
+
+    shift = +offset if direction == "UP" else -offset
+    # Try shifted strike, fall back toward ATM if not available
+    sell_strike = (sb.get(shift) or
+                   sb.get(shift - (1 if shift > 0 else -1)) or
+                   sb.get(0))
+    if not sell_strike or not sell_strike.ce_symbol or not sell_strike.pe_symbol:
+        return None
+
+    legs = _build_legs("S1_RE", sell_strike, sb, hedge_width=20)
+    dir_pts = f"+{shift*50}pts" if shift > 0 else f"{shift*50}pts"
+    return {
+        "code":              "S1_RE",
+        "name":              "Re-entry (Post SL)",
+        "structure":         f"Iron Fly re-entry, sell at ATM{dir_pts}, ±20 hedge",
+        "is_reentry":        True,
+        "reentry_direction": direction,
+        "strike":            sell_strike.strike,
+        "combined":          sell_strike.current,
+        "reason":            (f"Re-entry after SL — market moved {direction}, "
+                              f"sell at {sell_strike.strike} ({dir_pts} from live ATM)"),
+        "margin_note":       "Defined risk, ~50% margin vs naked",
+        **legs,
+    }
+
+
 # ── Strategy checks ───────────────────────────────────────────────
 
 def check_all_strategies(state: EngineState, now: datetime) -> Optional[dict]:
@@ -517,13 +565,22 @@ def check_sl(state: EngineState) -> Optional[str]:
     if not state.position: return None
     atm = state.atm
     if not atm: return None
+
+    # Resolve DTE-based profit target
+    from datetime import date as _date
+    _today_wd  = _date.today().weekday()
+    _expiry_wd = state.expiry_weekday if state.expiry_weekday is not None else 3  # default Thursday
+    _dte       = min((_expiry_wd - _today_wd) % 7, 3)  # cap at 3 for "3+" bucket
+    _dte_map   = state.config.get("dte_profit_map", {})
+    _dte_profit_pct = _dte_map.get(str(_dte), _dte_map.get("default", 40))
+
     config = {
-        "max_loss_pct":      state.config.get("max_loss_pct",      30),
+        "sl_rupees":         state.config.get("sl_rupees",         18),
         "trail_pct":         state.config.get("trail_pct",         20),
         "min_profit_pct":    state.config.get("min_profit_pct",    15),
         "vwap_buffer_pct":   state.config.get("vwap_buffer_pct",    2),
         "ema_buffer_pct":    state.config.get("ema_buffer_pct",     1),
-        "profit_target_pct": state.config.get("profit_target_pct", 50),
+        "dte_profit_pct":    _dte_profit_pct,
     }
     exit_, reason = state.sl_state.update(
         atm.current, atm.vwap_val, atm.ema75, atm._ema_count, config)
@@ -575,7 +632,7 @@ def _s7(state, t, now):
     legs = _build_legs("S7", atm, sb, hedge_width=20)
     return {
         "code":"S7", "name":"All-Strike Iron Butterfly",
-        "structure":"Iron Fly (ATM sell, ±2 hedge)",
+        "structure":"Iron Fly (ATM sell, ±20 hedge)",
         "strike": atm.strike,
         "combined": atm.current,
         "reason": f"All {len(broken)} strikes below ORB low — drift {_drift_strikes(state):.0f} strikes",
@@ -649,7 +706,7 @@ def _s1(state, t, now):
     legs = _build_legs("S1", morning_atm_strike, sb, hedge_width=20)
     return {
         "code":"S1", "name":"ORB Breakdown Iron Fly",
-        "structure":"Iron Fly (morning ATM sell, ±2 hedge)",
+        "structure":"Iron Fly (morning ATM sell, ±20 hedge)",
         "strike": morning_atm_strike.strike,
         "combined": morning_atm_strike.current,
         "reason": (f"Morning ATM {morning_atm_strike.strike} broke ORB low "
@@ -802,7 +859,7 @@ def _s2(state, t, now):
     spike_high = max(recent_10)
     return {
         "code":"S2", "name":"VWAP Squeeze Iron Fly",
-        "structure":"Iron Fly (current ATM, ±2 hedge)",
+        "structure":"Iron Fly (current ATM, ±20 hedge)",
         "strike": atm_to_use.strike,
         "combined": atm_to_use.current,
         "reason": (f"VWAP squeeze: spiked to {spike_high:.1f}, "

@@ -635,6 +635,8 @@ def _get_fyers(user: User, db: Session) -> Optional[FyersConnection]:
         secret_key=fields.get("secret_key", ""),
         pin=fields.get("pin", ""),
         redirect_uri=fields.get("redirect_uri", ""),
+        fyers_id=fields.get("fyers_id", ""),
+        totp_key=fields.get("totp_key", ""),
         access_token_enc=bc.access_token_enc,
         refresh_token_enc=bc.refresh_token_enc,
         mode=bc.mode or "paper",
@@ -885,82 +887,141 @@ async def _market_data_service():
             is_mkt = dtime(9,15) <= t <= dtime(15,30) and now.weekday() < 5
 
             if not is_mkt:
-                # Market closed — but still refresh tokens for all connected users
-                # so that at 9:15 the token is valid and data flows immediately
+                # Market closed.
+                # SEBI April 2026: tokens expire at 3 AM IST daily.
+                # At 8:00–9:14 AM IST: do daily TOTP headless re-auth for each user.
+                # Outside that window: just keep cache fresh with last known spot.
                 db_tok = SessionLocal()
                 try:
+                    # Include ALL Fyers connections that have credentials stored.
+                    # TOTP-configured brokers self-heal even if is_connected=False
+                    # (token expired at 3 AM is not a manual disconnect).
+                    # Brokers without encrypted_fields have nothing to work with.
                     bcs_tok = db_tok.query(BrokerConnection).filter(
                         BrokerConnection.broker_id == "fyers",
-                        BrokerConnection.is_connected == True
+                        BrokerConnection.encrypted_fields != None,  # noqa
                     ).all()
+                    # Re-auth window: 3:05 AM → 9:14 AM IST.
+                    # Starts 5 min after token expires (3 AM) so it's fresh
+                    # well before market opens. Wide window = plenty of retry time.
+                    _reauth_window = dtime(3, 5) <= t <= dtime(9, 14)
+
                     for bc_tok in bcs_tok:
                         user_tok = db_tok.query(User).filter(
                             User.id == bc_tok.user_id,
                             User.is_active == True).first()
-                        if not user_tok or not bc_tok.refresh_token_enc:
+                        if not user_tok:
                             continue
                         try:
                             fields_tok = {k.replace("_enc",""):decrypt(user_tok.id,v)
                                       for k,v in (bc_tok.encrypted_fields or {}).items()}
-                            conn_tok = FyersConnection(
-                                user_id=user_tok.id,
-                                client_id=fields_tok.get("client_id",""),
-                                secret_key=fields_tok.get("secret_key",""),
-                                pin=fields_tok.get("pin",""),
-                                redirect_uri=fields_tok.get("redirect_uri",""),
-                                access_token_enc=bc_tok.access_token_enc,
-                                refresh_token_enc=bc_tok.refresh_token_enc,
-                            )
-                            refresh_result = await conn_tok.refresh_token()
-                            if refresh_result.get("ok"):
-                                if refresh_result.get("access_token_enc"):
-                                    bc_tok.access_token_enc = refresh_result["access_token_enc"]
-                                if refresh_result.get("refresh_token_enc"):
-                                    bc_tok.refresh_token_enc = refresh_result["refresh_token_enc"]
-                                bc_tok.last_token_refresh = datetime.utcnow()
-                                db_tok.commit()
-                            # Fetch last-known spot outside market hours so
-                            # dashboard shows price on login (not "—")
-                            _closed_spot = user_market_cache.get(user_tok.id, {}).get("spot", 0)
-                            if not _closed_spot:
-                                try:
-                                    _sq = await conn_tok.get_quotes(["NSE:NIFTY50-INDEX"])
-                                    if _sq.get("ok"):
-                                        _sq_d = _sq["quotes"].get("NSE:NIFTY50-INDEX", {})
-                                        _closed_spot = _sq_d.get("ltp", 0)
-                                        _closed_atm  = round(_closed_spot / 50) * 50 if _closed_spot else 0
-                                except Exception:
-                                    pass
-                            # Update cache status to closed (preserve vix/prev_close)
-                            user_market_cache[user_tok.id] = {
-                                **user_market_cache.get(user_tok.id, {}),
-                                "spot":    _closed_spot or user_market_cache.get(user_tok.id, {}).get("spot", 0),
-                                "atm":     (round(_closed_spot/50)*50) if _closed_spot else user_market_cache.get(user_tok.id, {}).get("atm", 0),
-                                "status":  "closed",
-                                "message": f"Market closed · {_next_market_open_msg()}",
-                            }
+
+                            # ── Check if today's re-auth is needed ───────────
+                            _reauth_needed = True
+                            if bc_tok.last_token_refresh:
+                                import pytz as _ptz
+                                _last_ist = (bc_tok.last_token_refresh
+                                             .replace(tzinfo=_ptz.utc)
+                                             .astimezone(ist))
+                                _reauth_needed = _last_ist.date() < now.date()
+
+                            # ── 8:00–9:14 AM IST: TOTP daily re-auth ────────
+                            if _reauth_window and _reauth_needed:
+                                _has_totp = (fields_tok.get("totp_key")
+                                             and fields_tok.get("fyers_id"))
+                                if _has_totp:
+                                    conn_tok = FyersConnection(
+                                        user_id=user_tok.id,
+                                        client_id=fields_tok.get("client_id",""),
+                                        secret_key=fields_tok.get("secret_key",""),
+                                        pin=fields_tok.get("pin",""),
+                                        redirect_uri=fields_tok.get("redirect_uri",""),
+                                        fyers_id=fields_tok.get("fyers_id",""),
+                                        totp_key=fields_tok.get("totp_key",""),
+                                        access_token_enc=bc_tok.access_token_enc,
+                                    )
+                                    login_result = await conn_tok.headless_login()
+                                    if login_result.get("ok"):
+                                        bc_tok.access_token_enc       = login_result["access_token_enc"]
+                                        bc_tok.refresh_token_enc      = login_result.get("refresh_token_enc") or ""
+                                        bc_tok.last_token_refresh     = datetime.utcnow()
+                                        bc_tok.refresh_token_issued_at = datetime.utcnow()
+                                        bc_tok.is_connected           = True
+                                        db_tok.commit()
+                                        log.info(f"[{user_tok.email}] Daily TOTP re-auth OK")
+                                    else:
+                                        _msg = login_result.get("message","")
+                                        log.error(f"[{user_tok.email}] TOTP re-auth FAILED: {_msg}")
+                                        try:
+                                            await _send_telegram_all(user_tok,
+                                                f"⚠️ AlgoDesk: Daily Fyers re-auth FAILED.\n"
+                                                f"Reason: {_msg}\n"
+                                                f"Fix your TOTP key in My Brokers before market opens at 9:15 AM.")
+                                        except Exception:
+                                            pass
+                                else:
+                                    # No TOTP key configured — warn user, cannot auto re-auth
+                                    # validate-refresh-token is DISABLED by Fyers (SEBI April 2026)
+                                    log.warning(f"[{user_tok.email}] No TOTP key configured — "
+                                                f"cannot auto re-auth. Add fyers_id + totp_key in My Brokers.")
+
+                            # ── Update dashboard spot price cache ────────────
+                            # Only attempt if token was refreshed today (valid until 3 AM)
+                            if not _reauth_needed and bc_tok.access_token_enc:
+                                conn_spot = FyersConnection(
+                                    user_id=user_tok.id,
+                                    client_id=fields_tok.get("client_id",""),
+                                    secret_key=fields_tok.get("secret_key",""),
+                                    pin=fields_tok.get("pin",""),
+                                    redirect_uri=fields_tok.get("redirect_uri",""),
+                                    fyers_id=fields_tok.get("fyers_id",""),
+                                    totp_key=fields_tok.get("totp_key",""),
+                                    access_token_enc=bc_tok.access_token_enc,
+                                )
+                                _closed_spot = user_market_cache.get(user_tok.id, {}).get("spot", 0)
+                                if not _closed_spot:
+                                    try:
+                                        _sq = await conn_spot.get_quotes(["NSE:NIFTY50-INDEX"])
+                                        if _sq.get("ok"):
+                                            _sq_d = _sq["quotes"].get("NSE:NIFTY50-INDEX", {})
+                                            _closed_spot = _sq_d.get("ltp", 0)
+                                    except Exception:
+                                        pass
+                                user_market_cache[user_tok.id] = {
+                                    **user_market_cache.get(user_tok.id, {}),
+                                    "spot":   _closed_spot or user_market_cache.get(user_tok.id, {}).get("spot", 0),
+                                    "atm":    (round(_closed_spot/50)*50) if _closed_spot
+                                              else user_market_cache.get(user_tok.id, {}).get("atm", 0),
+                                    "status":  "closed",
+                                    "message": f"Market closed · {_next_market_open_msg()}",
+                                }
                         except Exception as tok_e:
-                            log.debug(f"Token refresh (closed): {user_tok.email}: {tok_e}")
+                            log.debug(f"Closed-market service [{user_tok.email}]: {tok_e}")
                 except Exception as e:
-                    log.error(f"Token refresh service (closed): {e}")
+                    log.error(f"Closed-market service error: {e}")
                 finally:
                     db_tok.close()
-                await asyncio.sleep(300)  # refresh every 5 min when closed
+                await asyncio.sleep(300)  # check every 5 min when closed
                 continue
 
             db = SessionLocal()
             try:
-                # Get all users with connected Fyers broker
+                # Get all users with connected Fyers broker.
+                # Include brokers re-authed today via TOTP (is_connected may lag by 1 tick).
+                from datetime import date as _date
+                _today_utc_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
                 bcs = db.query(BrokerConnection).filter(
                     BrokerConnection.broker_id == "fyers",
-                    BrokerConnection.is_connected == True
+                    (BrokerConnection.is_connected == True) |
+                    (BrokerConnection.last_token_refresh >= _today_utc_start)
                 ).all()
 
                 for bc in bcs:
                     user = db.query(User).filter(
                         User.id == bc.user_id,
                         User.is_active == True).first()
-                    if not user or not bc.refresh_token_enc:
+                    # Allow TOTP-only brokers (no refresh_token_enc) as long as access_token_enc exists
+                    if not user or not bc.access_token_enc:
                         continue
 
                     # Build connection for this user
@@ -972,6 +1033,8 @@ async def _market_data_service():
                         secret_key=fields.get("secret_key",""),
                         pin=fields.get("pin",""),
                         redirect_uri=fields.get("redirect_uri",""),
+                        fyers_id=fields.get("fyers_id",""),
+                        totp_key=fields.get("totp_key",""),
                         access_token_enc=bc.access_token_enc,
                         refresh_token_enc=bc.refresh_token_enc,
                     )
@@ -1124,11 +1187,16 @@ async def _market_data_service():
                             "status": "error",
                             "message": msg,
                         }
-                        # If token expired, mark disconnected so user knows to reconnect
-                        if "token" in msg.lower() or "expired" in msg.lower():
+                        # Only hard-disconnect on definitive permanent auth failures.
+                        # Normal 3 AM token expiry is expected under SEBI April 2026 rules
+                        # and is recovered automatically by the 8:30 AM TOTP re-auth.
+                        _hard_fail = ("invalid" in msg.lower() and "token" in msg.lower()) or \
+                                     "revoked" in msg.lower() or \
+                                     "not authorized" in msg.lower()
+                        if _hard_fail:
                             bc.is_connected = False
                             user_market_cache[user.id]["message"] = (
-                                "Token expired. Please reconnect in My Brokers.")
+                                "Fyers authorisation revoked — please reconnect in My Brokers.")
                         log.warning(f"[{user.email}] Market data error: {msg}")
 
                 db.commit()
@@ -1418,12 +1486,15 @@ def list_brokers(user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     brokers = db.query(BrokerConnection).filter(
         BrokerConnection.user_id == user.id).all()
+    def _has_field(b, key):
+        return (key + "_enc") in (b.encrypted_fields or {})
     return {"brokers": [
         {"id": b.id, "broker_id": b.broker_id,
          "broker_name": b.broker_name, "market": b.market,
          "mode": b.mode, "is_connected": b.is_connected,
          "last_token_refresh": b.last_token_refresh.isoformat()
              if b.last_token_refresh else None,
+         "totp_configured": (_has_field(b, "totp_key") and _has_field(b, "fyers_id")),
          "fields_count": len(b.encrypted_fields or {})}
         for b in brokers]}
 
@@ -1483,7 +1554,9 @@ def fyers_login_url(user: User = Depends(get_current_user),
         secret_key=fields.get("secret_key", ""),
         pin=fields.get("pin", ""),
         redirect_uri=fields.get("redirect_uri",
-            "https://trade.fyers.in/api-login/redirect-uri/index.html"))
+            "https://trade.fyers.in/api-login/redirect-uri/index.html"),
+        fyers_id=fields.get("fyers_id", ""),
+        totp_key=fields.get("totp_key", ""))
     if not conn.client_id:
         raise HTTPException(400, "Client ID not saved")
     url_str = conn.login_url()
@@ -1510,18 +1583,56 @@ async def fyers_connect(req: FyersConnectReq,
         secret_key=fields.get("secret_key", ""),
         pin=fields.get("pin", ""),
         redirect_uri=fields.get("redirect_uri",
-            "https://trade.fyers.in/api-login/redirect-uri/index.html"))
+            "https://trade.fyers.in/api-login/redirect-uri/index.html"),
+        fyers_id=fields.get("fyers_id", ""),
+        totp_key=fields.get("totp_key", ""))
 
     result = await conn.exchange_auth_code(req.auth_code.strip())
     if result["ok"]:
-        bc.access_token_enc   = result["access_token_enc"]
-        bc.refresh_token_enc  = result["refresh_token_enc"]
-        bc.is_connected       = True
-        bc.last_token_refresh = datetime.utcnow()
+        bc.access_token_enc        = result["access_token_enc"]
+        bc.refresh_token_enc       = result["refresh_token_enc"]
+        bc.is_connected            = True
+        bc.last_token_refresh      = datetime.utcnow()
+        bc.refresh_token_issued_at = datetime.utcnow()
         db.commit()
-        return {"ok": True, "message": "Fyers connected! Token auto-refreshes on every use.",
+        return {"ok": True,
+                "message": ("Fyers connected! ✅ Set up your TOTP Key in My Brokers for "
+                            "automated daily re-auth (SEBI April 2026 requirement)."),
                 "connected": True}
     return {"ok": False, "message": result["message"], "connected": False}
+
+@app.post("/api/brokers/fyers/test-auth")
+async def fyers_test_auth(user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Trigger a manual TOTP re-auth attempt right now (for testing outside the 3–9 AM window)."""
+    bc = db.query(BrokerConnection).filter(
+        BrokerConnection.user_id == user.id,
+        BrokerConnection.broker_id == "fyers").first()
+    if not bc:
+        return {"ok": False, "message": "No Fyers connection found"}
+    fields = {k.replace("_enc", ""): decrypt(user.id, v)
+              for k, v in (bc.encrypted_fields or {}).items()}
+    if not fields.get("totp_key") or not fields.get("fyers_id"):
+        return {"ok": False, "message": "totp_key and fyers_id must be set in My Brokers"}
+    conn = FyersConnection(
+        user_id=user.id,
+        client_id=fields.get("client_id", ""),
+        secret_key=fields.get("secret_key", ""),
+        pin=fields.get("pin", ""),
+        redirect_uri=fields.get("redirect_uri",
+            "https://trade.fyers.in/api-login/redirect-uri/index.html"),
+        fyers_id=fields.get("fyers_id", ""),
+        totp_key=fields.get("totp_key", ""),
+        access_token_enc=bc.access_token_enc)
+    result = await conn.headless_login()
+    if result.get("ok"):
+        bc.access_token_enc       = result["access_token_enc"]
+        bc.refresh_token_enc      = result.get("refresh_token_enc") or ""
+        bc.last_token_refresh     = datetime.utcnow()
+        bc.is_connected           = True
+        db.commit()
+        return {"ok": True, "message": "✅ TOTP re-auth successful — token refreshed"}
+    return {"ok": False, "message": result.get("message", "Re-auth failed")}
 
 @app.delete("/api/brokers/{broker_id}")
 def delete_broker(broker_id: str, user: User = Depends(get_current_user),
@@ -1573,7 +1684,35 @@ async def market_live(symbol: str = "NSE:NIFTY50-INDEX",
             "status":"live",
             "message":f"Live · {datetime.now().strftime('%H:%M:%S')}",
         }
-    return result
+        return result
+
+    # ── Market closed or options chain unavailable ────────────────
+    # Fall back to profile + quotes to verify token is valid 24/7
+    profile = await conn.get_profile()
+    if not profile.get("ok"):
+        return {"ok": False, "spot": 0, "atm": 0, "chain": {},
+                "status": "error",
+                "message": profile.get("message", "Token invalid — reconnect broker")}
+
+    # Token is valid — try to get spot price via quotes endpoint
+    spot = 0.0
+    try:
+        quotes = await conn.get_quotes([symbol])
+        if quotes.get("ok"):
+            q = quotes["quotes"].get(symbol, {})
+            spot = q.get("ltp", 0.0) or q.get("prev_close", 0.0)
+    except Exception:
+        pass
+
+    name = profile.get("data", {}).get("name", "")
+    return {
+        "ok": True,
+        "spot": spot,
+        "atm": 0,
+        "chain": {},
+        "status": "closed",
+        "message": f"Broker connected ({name}) — market closed, options chain unavailable",
+    }
 
 
 @app.get("/api/market/status")
@@ -1682,14 +1821,15 @@ async def market_profile(user: User = Depends(get_current_user),
     conn = _get_fyers(user, db)
     if not conn:
         return {"ok": False, "message": "No broker connected"}
-    # Just refresh token to test
-    result = await conn.refresh_token()
-    if result["ok"]:
-        _save_tokens(user.id, conn, result, db)
+    # Token is valid all day (until 3 AM IST); no refresh needed — just use it directly
+    try:
         profile = await conn.get_profile()
+        if profile.get("_error"):
+            return {"ok": False, "connected": False, "message": profile["_error"]}
         return {"ok": True, "connected": True, "profile": profile.get("data", {}),
                 "message": "Fyers connected ✓"}
-    return {"ok": False, "connected": False, "message": result["message"]}
+    except Exception as e:
+        return {"ok": False, "connected": False, "message": str(e)}
 
 @app.get("/api/market/funds")
 async def market_funds(user: User = Depends(get_current_user),
@@ -1704,7 +1844,6 @@ async def market_funds(user: User = Depends(get_current_user),
                 "message": "No broker connected — add Fyers in My Brokers"}
 
     try:
-        await conn.refresh_token()
         funds = await conn.get_funds()
     except Exception as e:
         return {"ok": False, "funds": {}, "available_balance": 0,
@@ -2002,16 +2141,31 @@ async def start_engine(req: dict, user: User = Depends(get_current_user),
     return {"ok": True, "message": f"Engine started: {auto.name}"}
 
 @app.post("/api/engine/stop")
-async def stop_engine(user: User = Depends(get_current_user),
+async def stop_engine(req: dict = None, user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
-    for eng in _all_engines(user.id):
-        eng.is_running = False
-    if user.id in active_engines:
-        del active_engines[user.id]
-    db.query(Automation).filter(
-        Automation.user_id == user.id,
-        Automation.status == "RUNNING"
-    ).update({"status": "IDLE"})
+    auto_id = (req or {}).get("automation_id")
+
+    if auto_id:
+        # Stop only this specific automation
+        eng = _get_engine(user.id, auto_id)
+        if eng:
+            eng.is_running = False
+        _del_engine(user.id, auto_id)
+        db.query(Automation).filter(
+            Automation.id == auto_id,
+            Automation.user_id == user.id
+        ).update({"status": "IDLE"})
+    else:
+        # No specific id — stop ALL (emergency stop from Live Monitor)
+        for eng in _all_engines(user.id):
+            eng.is_running = False
+        if user.id in active_engines:
+            del active_engines[user.id]
+        db.query(Automation).filter(
+            Automation.user_id == user.id,
+            Automation.status == "RUNNING"
+        ).update({"status": "IDLE"})
+
     db.commit()
     return {"ok": True}
 
@@ -3141,16 +3295,21 @@ async def _send_telegram(bot_token: str, chat_id: str, msg: str):
     except Exception as e:
         log.error(f"Telegram: {e}")
 
-async def _send_telegram_all(user: User, msg: str):
-    """Send to all active Telegram accounts configured by this user."""
+async def _send_telegram_all(user: User, msg: str, account_ids: list = None):
+    """Send to Telegram accounts for this user.
+    account_ids: if non-empty list, only send to those account IDs.
+                 If None or empty, send to all active accounts.
+    """
     sent = 0
-    # New multi-account list
+    filter_ids = account_ids if account_ids else None
     for acct in (user.telegram_accounts or []):
+        if filter_ids and acct.get("id") not in filter_ids:
+            continue
         if acct.get("active") and acct.get("token") and acct.get("chat"):
             await _send_telegram(acct["token"], acct["chat"], msg)
             sent += 1
-    # Legacy single account fallback
-    if sent == 0 and user.telegram_token and user.telegram_chat:
+    # Legacy single account fallback (only when no account_ids filter)
+    if sent == 0 and not filter_ids and user.telegram_token and user.telegram_chat:
         await _send_telegram(user.telegram_token, user.telegram_chat, msg)
 
 import httpx
@@ -3383,6 +3542,8 @@ async def telegram_webhook(req: dict, db: Session = Depends(get_db)):
                     secret_key=fields.get("secret_key", ""),
                     pin=fields.get("pin", ""),
                     redirect_uri=fields.get("redirect_uri", ""),
+                    fyers_id=fields.get("fyers_id", ""),
+                    totp_key=fields.get("totp_key", ""),
                     access_token_enc=bc.access_token_enc,
                     refresh_token_enc=bc.refresh_token_enc,
                 )
@@ -3822,13 +3983,15 @@ async def _run_shadow_trade(user_id: str, auto: Automation,
         if auto.telegram_alerts:
             user = db.query(User).filter(User.id == user_id).first()
             if user:
+                _tg_ids = (auto.config or {}).get("telegram_accounts", [])
                 await _send_telegram_all(user,
                     f"📋 [PAPER MODE] {signal['code']}: {signal['name']}\n"
                     f"Symbol: {auto.symbol}\n"
                     f"Strike: {signal.get('strike')}\n"
                     f"Combined: ₹{entry_combined:.1f}\n"
                     f"Time: {datetime.now(ist).strftime('%H:%M')} IST\n"
-                    f"⚠️ This is a simulation — no real orders placed.")
+                    f"⚠️ This is a simulation — no real orders placed.",
+                    account_ids=_tg_ids if _tg_ids else None)
     finally:
         db.close()
 
@@ -3936,6 +4099,7 @@ async def _close_shadow_trade(trade_id, user_id, reason,
             user = db.query(User).filter(User.id == user_id).first()
             if user:
                 emoji = "✅" if t.net_pnl > 0 else "🔴"
+                _tg_ids2 = (auto.config or {}).get("telegram_accounts", [])
                 await _send_telegram_all(user,
                     f"{emoji} [PAPER MODE] Trade Closed\n"
                     f"Strategy: {t.strategy_code}\n"
@@ -3949,7 +4113,8 @@ async def _close_shadow_trade(trade_id, user_id, reason,
                     f"GST ₹{charges['gst']:.0f})\n"
                     f"Net P&L:   ₹{t.net_pnl:+.0f}\n"
                     f"Exit: {reason}\n"
-                    f"⚠️ Simulation only — no real money")
+                    f"⚠️ Simulation only — no real money",
+                    account_ids=_tg_ids2 if _tg_ids2 else None)
     finally:
         db.close()
 
@@ -4167,8 +4332,6 @@ async def capital_check(
 
     if conn:
         try:
-            # Always refresh token before fetching — works for both paper and live connections
-            await conn.refresh_token()
             funds = await conn.get_funds()
             if not funds:
                 funds_error = "Fyers returned empty funds — token may be expired"
@@ -4653,6 +4816,44 @@ async def _run_engine(user_id: str, auto: Automation,
 
     ist = pytz.timezone("Asia/Kolkata")
 
+    # ── Defensive re-auth on engine start ─────────────────────────────────
+    # Safety net: if morning TOTP re-auth failed or server restarted after 3 AM,
+    # attempt re-auth now before entering the main loop so we don't trade on a
+    # dead token.
+    if auto.mode != "paper" and conn.fyers_id and conn.totp_key:
+        _db_ra = SessionLocal()
+        try:
+            _bc_ra = _db_ra.query(BrokerConnection).filter(
+                BrokerConnection.user_id == user_id,
+                BrokerConnection.broker_id == "fyers").first()
+            _reauth_needed = True
+            if _bc_ra and _bc_ra.last_token_refresh:
+                import pytz as _ptz
+                _last_ist = (_bc_ra.last_token_refresh
+                             .replace(tzinfo=_ptz.utc)
+                             .astimezone(ist))
+                _reauth_needed = _last_ist.date() < datetime.now(ist).date()
+            if _reauth_needed:
+                state.emit("Token not refreshed today — attempting TOTP re-auth before start…", "INFO")
+                _ra_result = await conn.headless_login()
+                if _ra_result.get("ok"):
+                    conn._access = decrypt(user_id, _ra_result["access_token_enc"])
+                    conn._refresh = ""
+                    if _bc_ra:
+                        _bc_ra.access_token_enc       = _ra_result["access_token_enc"]
+                        _bc_ra.refresh_token_enc      = _ra_result.get("refresh_token_enc") or ""
+                        _bc_ra.last_token_refresh     = datetime.utcnow()
+                        _bc_ra.refresh_token_issued_at = datetime.utcnow()
+                        _bc_ra.is_connected           = True
+                        _db_ra.commit()
+                    state.emit("TOTP re-auth successful — token is fresh", "OK")
+                else:
+                    state.emit(f"TOTP re-auth failed: {_ra_result.get('message','')} — will attempt data calls anyway", "WARN")
+        except Exception as _ra_e:
+            state.emit(f"Re-auth check error: {_ra_e}", "WARN")
+        finally:
+            _db_ra.close()
+
     while state.is_running:
         try:
             now = datetime.now(ist)
@@ -4820,7 +5021,15 @@ async def _run_engine(user_id: str, auto: Automation,
                         strike=state.atm_strike + i * gap,
                         offset=i, is_atm=(i == 0))
                     state.strikes.append(sk)
-                state.emit(f"ATM locked: {state.atm_strike} | Spot: {spot:.1f}", "OK")
+                # Capture expiry weekday from live options data (once per day)
+                if state.expiry_weekday is None and data.get("expiry_weekday") is not None:
+                    state.expiry_weekday = data["expiry_weekday"]
+                    _expiry_day_name = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][state.expiry_weekday]
+                    state.emit(
+                        f"ATM locked: {state.atm_strike} | Spot: {spot:.1f} | "
+                        f"Expiry: {data.get('expiry_date','')} ({_expiry_day_name})", "OK")
+                else:
+                    state.emit(f"ATM locked: {state.atm_strike} | Spot: {spot:.1f}", "OK")
 
             # ── Inject VIX + prev_close into engine config ──
             # No time gate — retries every tick until data lands in market cache.
@@ -4910,6 +5119,10 @@ async def _run_engine(user_id: str, auto: Automation,
                 state.spot_history    = []
                 state.sl_state        = SLState()
                 state._strikes_refreshed = False
+                state.reentry_count     = 0
+                state.reentry_pending   = False
+                state.reentry_direction = ""
+                state.expiry_weekday    = None  # re-read from live options data each day
                 # Clear daily injected config values so they re-lock today
                 state.config.pop("vix_open", None)
                 state.config.pop("prev_close", None)
@@ -4934,16 +5147,39 @@ async def _run_engine(user_id: str, auto: Automation,
                     entry_spot = state.position.get("entry_spot", 0)
                     cur_ltp    = (atm.ce_ltp if direction == "CE" else atm.pe_ltp) if atm else 0
 
+                    # Update peak LTP (ratchet — never goes down)
+                    if cur_ltp > 0:
+                        prev_peak = state.position.get("s10_peak_ltp", entry_ltp)
+                        state.position["s10_peak_ltp"] = max(prev_peak, cur_ltp)
+                    peak_ltp = state.position.get("s10_peak_ltp", entry_ltp)
+
+                    # Arm cost SL once +20% reached (only once, never disarms)
+                    if entry_ltp > 0 and not state.position.get("s10_cost_armed"):
+                        if cur_ltp >= entry_ltp * 1.20:
+                            state.position["s10_cost_armed"] = True
+                            state.emit(
+                                f"S10 +20% reached (entry={entry_ltp:.1f} now={cur_ltp:.1f}) "
+                                f"— SL moved to cost ₹{entry_ltp:.1f}", "INFO")
+
+                    # Arm trail SL once +50% reached (only once, never disarms)
+                    if entry_ltp > 0 and not state.position.get("s10_trail_armed"):
+                        if cur_ltp >= entry_ltp * 1.50:
+                            state.position["s10_trail_armed"] = True
+                            trail_sl = entry_ltp + 0.5 * (peak_ltp - entry_ltp)
+                            state.emit(
+                                f"S10 +50% reached (entry={entry_ltp:.1f} now={cur_ltp:.1f}) "
+                                f"— Trail SL armed at ₹{trail_sl:.1f}", "INFO")
+
+                    # Compute current trail SL level (entry + 50% of peak profit)
+                    trail_sl = (entry_ltp + 0.5 * (peak_ltp - entry_ltp)
+                                if state.position.get("s10_trail_armed") else None)
+
                     # Hard exit at 11:00 AM
                     if t >= dtime(11, 0):
                         await _close_position(state, conn, "S10_HARD_EXIT_11AM",
                                                lot_sz, lots, user_id)
-                    # Premium SL: 40% loss
-                    elif cur_ltp > 0 and cur_ltp <= entry_ltp * 0.60:
-                        await _close_position(state, conn,
-                            f"S10_PREMIUM_SL entry={entry_ltp:.1f} now={cur_ltp:.1f}",
-                            lot_sz, lots, user_id)
-                    # Spot reversal SL: 30pts against direction
+
+                    # Spot reversal SL: 30pts against direction (checked before premium SLs)
                     elif entry_spot and state.spot_history:
                         cur_spot = state.spot_history[-1]
                         reversal = cur_spot - entry_spot
@@ -4956,11 +5192,32 @@ async def _run_engine(user_id: str, auto: Automation,
                                 f"S10_SPOT_REVERSAL entry={entry_spot:.0f} now={cur_spot:.0f}",
                                 lot_sz, lots, user_id)
 
+                    # Trail SL: price fell back to entry + 50% of peak profit
+                    elif trail_sl is not None and cur_ltp > 0 and cur_ltp <= trail_sl:
+                        await _close_position(state, conn,
+                            f"S10_TRAIL_SL peak={peak_ltp:.1f} trail={trail_sl:.1f} now={cur_ltp:.1f}",
+                            lot_sz, lots, user_id)
+
+                    # Cost SL: once +20% hit, don't let it fall back below entry
+                    elif state.position.get("s10_cost_armed") and cur_ltp > 0 and cur_ltp <= entry_ltp:
+                        await _close_position(state, conn,
+                            f"S10_COST_SL entry={entry_ltp:.1f} now={cur_ltp:.1f}",
+                            lot_sz, lots, user_id)
+
+                    # Loss SL: before +20% hit, cap loss at 40%
+                    elif not state.position.get("s10_cost_armed") and cur_ltp > 0 and cur_ltp <= entry_ltp * 0.60:
+                        await _close_position(state, conn,
+                            f"S10_PREMIUM_SL entry={entry_ltp:.1f} now={cur_ltp:.1f}",
+                            lot_sz, lots, user_id)
+
                 else:
                     # Standard SL for selling strategies
                     reason = check_sl(state)
                     if reason or state.position.get("force_exit"):
                         reason = reason or "FORCE_EXIT"
+                        # Save entry_spot before _close_position wipes state.position
+                        _pre_entry_spot = (state.position or {}).get(
+                            "entry_spot", state.atm_strike or 0)
                         await _close_position(state, conn, reason,
                                                lot_sz, lots, user_id)
                         db2 = SessionLocal()
@@ -4968,13 +5225,63 @@ async def _run_engine(user_id: str, auto: Automation,
                             u = db2.query(User).filter(User.id == user_id).first()
                             if u:
                                 mode_tag = "🔴 LIVE" if auto.mode == "live" else "📋 PAPER"
+                                _tg_close = (auto.config or {}).get("telegram_accounts", [])
                                 await _send_telegram_all(u,
-                                    f"{mode_tag} Position closed\nReason: {reason}\nP&L: ₹{state.day_pnl:.0f}")
+                                    f"{mode_tag} Position closed\nReason: {reason}\nP&L: ₹{state.day_pnl:.0f}",
+                                    account_ids=_tg_close if _tg_close else None)
                         finally:
                             db2.close()
 
-            # Check signals — respects max_trades_per_day config
+                        # ── Re-entry after VWAP/EMA SL ──────────────────────
+                        if (state.config.get("reentry_on_sl", False) and
+                                ("VWAP" in reason or "EMA" in reason)):
+                            # Use expiry weekday from live options data if available,
+                            # else fall back to known defaults: NIFTY=Tue(1), SENSEX=Thu(3)
+                            _expiry_wd = state.expiry_weekday
+                            _is_expiry = (now.weekday() == _expiry_wd
+                                          if _expiry_wd is not None
+                                          else now.weekday() in (1, 3))
+                            _remax = int(state.config.get(
+                                "reentry_max_expiry" if _is_expiry else "reentry_max_count",
+                                1 if _is_expiry else 2))
+                            if state.reentry_count < _remax:
+                                _live_spot = (state.spot_history[-1]
+                                              if state.spot_history else _pre_entry_spot)
+                                _direction = "UP" if _live_spot > _pre_entry_spot else "DOWN"
+                                state.reentry_count    += 1
+                                state.reentry_pending   = True
+                                state.reentry_direction = _direction
+                                state.traded_today      = False  # re-open the gate
+                                state.emit(
+                                    f"Re-entry {state.reentry_count}/{_remax} queued — "
+                                    f"market moved {_direction} "
+                                    f"(entry spot {_pre_entry_spot:.0f} → now {_live_spot:.0f}). "
+                                    f"Will enter {state.config.get('reentry_offset', 2)} strikes "
+                                    f"{'above' if _direction == 'UP' else 'below'} live ATM "
+                                    f"on next tick.", "INFO")
+
+            # Check signals — re-entry takes priority, then normal strategy signals
             elif state.orb_complete:
+                # ── Fire pending re-entry first ────────────────────────────
+                if state.reentry_pending and not state.position:
+                    state.reentry_pending = False
+                    from engine import _reentry_signal
+                    _re_offset = int(state.config.get("reentry_offset", 2))
+                    signal = _reentry_signal(state, state.reentry_direction, _re_offset)
+                    if signal:
+                        signal["hedge_width"] = 20
+                        state.emit(
+                            f"Re-entry signal: sell at {signal['strike']} "
+                            f"({state.reentry_direction}, {_re_offset} strikes "
+                            f"from live ATM {nearest_strike(state.spot_history[-1]) if state.spot_history else '?'})",
+                            "SIGNAL")
+                        await _open_position(state, conn, signal, lot_sz, lots, user_id, auto.id)
+                    else:
+                        state.emit("Re-entry signal skipped — strike unavailable", "WARN")
+                    await asyncio.sleep(60)
+                    continue
+
+                # ── Normal signal flow ──────────────────────────────────────
                 max_trades = int(state.config.get("max_trades_per_day", 1))
                 at_limit = (max_trades > 0 and state.trade_count >= max_trades)
                 if at_limit:
@@ -4983,9 +5290,19 @@ async def _run_engine(user_id: str, auto: Automation,
                             f"Trade limit reached: {state.trade_count}/{max_trades} today — watching but will not re-enter", "INFO")
                 signal = check_all_strategies(state, now) if not at_limit else None
                 if signal:
-                    # Auto-set hedge width per strategy if not overridden
-                    auto_hedges = {"S9":1,"S8":3,"S6":4,"S4":20}
-                    hw = auto_hedges.get(signal["code"], state.config.get("hedge_width",2))
+                    # Authoritative hedge width per strategy.
+                    # Signal already carries hedge_width from _build_legs — this
+                    # dict ensures the DB record and SL calculation match the
+                    # actual order placement regardless of user config defaults.
+                    auto_hedges = {
+                        "S1":20, "S1_RE":20,           # ±1000pt Iron Fly
+                        "S2":20, "S3":20, "S7":20,     # ±1000pt Iron Fly variants
+                        "S4":20, "S6":4, "S8":3,       # Condors / gap fade
+                        "S9":1,                         # Expiry tight hedge
+                    }
+                    hw = auto_hedges.get(signal["code"],
+                                        signal.get("hedge_width",
+                                        state.config.get("hedge_width", 20)))
                     signal["hedge_width"] = hw
                     state.emit(f"SIGNAL [{signal['code']}]: {signal['reason']} | hedge=±{hw}", "SIGNAL")
                     await _open_position(state, conn, signal,
@@ -4995,12 +5312,12 @@ async def _run_engine(user_id: str, auto: Automation,
                         u = db3.query(User).filter(User.id == user_id).first()
                         if u:
                             mode_tag = "🔴 LIVE" if auto.mode=="live" else "📋 PAPER"
-                            tg_ids = auto.config.get("telegram_accounts", [])
+                            tg_ids = (auto.config or {}).get("telegram_accounts", [])
                             msg = (f"{mode_tag} Signal: {signal['code']} — {signal['name']}\n"
                                    f"Strike: {signal.get('strike','')} | Combined: ₹{signal.get('combined',0):.1f}\n"
-                                   f"Hedge: ±{signal.get('hedge_width',2)} | Reason: {signal.get('reason','')}\n"
+                                   f"Hedge: ±{signal.get('hedge_width',20)} | Reason: {signal.get('reason','')}\n"
                                    f"{'⚠️ Simulation only' if auto.mode=='paper' else '✅ Live order placed'}")
-                            await _send_telegram_all(u, msg)
+                            await _send_telegram_all(u, msg, account_ids=tg_ids if tg_ids else None)
                     finally:
                         db3.close()
             else:
@@ -5225,21 +5542,28 @@ async def _open_position(state, conn, signal, lot_sz, lots, user_id, auto_id):
     }
 
     # ── CRITICAL: Activate SL with real entry price ───────────────
-    # SLState.activate() takes raw percentages (30, not 0.30)
+    from datetime import date as _date
+    _today_wd  = _date.today().weekday()
+    _expiry_wd = state.expiry_weekday if state.expiry_weekday is not None else 3
+    _dte       = min((_expiry_wd - _today_wd) % 7, 3)
+    _dte_map   = state.config.get("dte_profit_map", {})
+    _dte_profit_pct = _dte_map.get(str(_dte), _dte_map.get("default", 40))
+    _sl_rupees = state.config.get("sl_rupees", 18)
+
     _sl_cfg = {
-        "max_loss_pct":      state.config.get("max_loss_pct",      30),
+        "sl_rupees":         _sl_rupees,
         "trail_pct":         state.config.get("trail_pct",         20),
         "min_profit_pct":    state.config.get("min_profit_pct",    15),
         "vwap_buffer_pct":   state.config.get("vwap_buffer_pct",    2),
         "ema_buffer_pct":    state.config.get("ema_buffer_pct",     1),
-        "profit_target_pct": state.config.get("profit_target_pct", 50),
+        "dte_profit_pct":    _dte_profit_pct,
     }
     state.sl_state.reset()
     state.sl_state.activate(combined, _sl_cfg)
     state.emit(
         f"SL armed: entry=₹{combined:.1f} | "
-        f"max_loss=₹{combined*(1+_sl_cfg['max_loss_pct']/100):.1f} | "
-        f"target=₹{combined*(1-_sl_cfg['profit_target_pct']/100):.1f} | "
+        f"max_loss=₹{combined + _sl_rupees:.1f} (+₹{_sl_rupees}) | "
+        f"target=₹{combined*(1-_dte_profit_pct/100):.1f} ({_dte_profit_pct}% decay, DTE {_dte}) | "
         f"trail at ₹{combined*(1-_sl_cfg['min_profit_pct']/100):.1f}",
         "OK")
 

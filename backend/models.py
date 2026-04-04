@@ -117,8 +117,9 @@ class BrokerConnection(Base):
     token_expires_at   = Column(DateTime, nullable=True)
     is_connected       = Column(Boolean, default=False)
     last_tested        = Column(DateTime, nullable=True)
-    last_token_refresh = Column(DateTime, nullable=True)
-    created_at         = Column(DateTime, default=datetime.utcnow)
+    last_token_refresh      = Column(DateTime, nullable=True)
+    refresh_token_issued_at = Column(DateTime, nullable=True)  # when refresh token was first issued (15-day clock)
+    created_at              = Column(DateTime, default=datetime.utcnow)
     user               = relationship("User", back_populates="brokers")
     __table_args__     = (UniqueConstraint("user_id", "broker_id"),)
 
@@ -330,6 +331,10 @@ MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_amount FLOAT DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_notes TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifecycle_stage VARCHAR(20) DEFAULT 'DEMO'",
+    # SEBI April 2026: track when full daily re-auth was last done
+    "ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS refresh_token_issued_at TIMESTAMP",
+    # SEBI April 2026: add fyers_id + totp_key fields to Fyers broker definition
+    "UPDATE broker_definitions SET fields_config = '[{\"key\":\"fyers_id\",\"label\":\"Fyers User ID\",\"hint\":\"Your Fyers login ID (e.g. TK01248)\",\"secret\":false},{\"key\":\"client_id\",\"label\":\"App Client ID\",\"hint\":\"myapi.fyers.in app Client ID (format: FYXXXXX-100)\",\"secret\":false},{\"key\":\"secret_key\",\"label\":\"App Secret Key\",\"hint\":\"myapi.fyers.in app Secret Key\",\"secret\":true},{\"key\":\"pin\",\"label\":\"4-digit PIN\",\"hint\":\"Your Fyers trading PIN\",\"secret\":true},{\"key\":\"totp_key\",\"label\":\"TOTP Key (External 2FA)\",\"hint\":\"myaccount.fyers.in External 2FA key — required for daily auto re-auth (SEBI April 2026)\",\"secret\":true},{\"key\":\"redirect_uri\",\"label\":\"Redirect URI\",\"hint\":\"Must match your Fyers app settings\",\"default\":\"https://trade.fyers.in/api-login/redirect-uri/index.html\",\"secret\":false}]' WHERE broker_id = 'fyers'",
     # server_settings table
     """CREATE TABLE IF NOT EXISTS server_settings (
         id VARCHAR(36) PRIMARY KEY,

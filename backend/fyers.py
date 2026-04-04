@@ -45,21 +45,26 @@ def decrypt(user_id: str, value: str) -> str:
 
 class FyersConnection:
     """
-    One instance per user. Matches N8N flow exactly.
-    Token refreshed before every data call.
+    One instance per user.
+    SEBI April 2026: tokens expire at 3 AM daily.
+    Use headless_login(totp_key) for daily re-auth instead of validate-refresh-token.
     """
 
     def __init__(self, user_id: str, client_id: str, secret_key: str,
                  pin: str, redirect_uri: str,
                  access_token_enc: Optional[str] = None,
                  refresh_token_enc: Optional[str] = None,
-                 mode: str = "paper"):
+                 mode: str = "paper",
+                 fyers_id: str = "",    # Fyers trading account ID (e.g. TK01248) — for TOTP flow
+                 totp_key: str = ""):   # TOTP secret from myaccount.fyers.in External 2FA
         self.user_id      = user_id
         self.client_id    = client_id
         self.secret_key   = secret_key
         self.pin          = pin
         self.redirect_uri = redirect_uri
         self.mode         = mode
+        self.fyers_id     = fyers_id
+        self.totp_key     = totp_key
         self._access      = decrypt(user_id, access_token_enc)  if access_token_enc  else None
         self._refresh     = decrypt(user_id, refresh_token_enc) if refresh_token_enc else None
 
@@ -106,7 +111,141 @@ class FyersConnection:
             msg = "Auth code expired — please get a fresh one (valid ~60 seconds)"
         return {"ok": False, "message": msg}
 
-    # ── EVERY CALL: refresh token first (matches N8N) ─────────
+    # ── DAILY: SEBI-mandated TOTP re-auth (replaces refresh_token) ──
+
+    @staticmethod
+    def _totp(key: str) -> str:
+        """Generate 6-digit TOTP code — no pyotp dependency needed."""
+        import base64, struct, hmac as _hmac, time
+        padded   = key.upper() + "=" * ((8 - len(key) % 8) % 8)
+        key_b    = base64.b32decode(padded)
+        counter  = struct.pack(">Q", int(time.time()) // 30)
+        mac      = _hmac.new(key_b, counter, "sha1").digest()
+        offset   = mac[-1] & 0x0F
+        binary   = struct.unpack(">L", mac[offset: offset + 4])[0] & 0x7FFFFFFF
+        return str(binary % 1_000_000).zfill(6)
+
+    async def headless_login(self) -> dict:
+        """
+        5-step TOTP headless login — SEBI April 2026 daily re-auth.
+        Requires fyers_id (trading account ID) and totp_key (External 2FA secret).
+        Runs at 8:30 AM IST daily; tokens valid until 3:00 AM next day.
+
+        Returns same shape as exchange_auth_code():
+          {"ok": True, "access_token_enc": "...", "refresh_token_enc": "..."}
+        """
+        if not self.fyers_id:
+            return {"ok": False, "message": "fyers_id not set — add your Fyers user ID in My Brokers"}
+        if not self.totp_key:
+            return {"ok": False, "message": "totp_key not set — add TOTP key from myaccount.fyers.in External 2FA"}
+
+        from urllib.parse import urlparse, parse_qs
+        VAGATOR = "https://api-t2.fyers.in/vagator/v2"
+        hdrs    = {
+            "Accept":       "application/json",
+            "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30, headers=hdrs,
+                                         follow_redirects=False) as c:
+                # Step 1 — send_login_otp_v2
+                import base64 as _b64
+                fy_id_b64 = _b64.b64encode(self.fyers_id.encode()).decode()
+                r1 = await c.post(f"{VAGATOR}/send_login_otp_v2",
+                    content=f'{{"fy_id":"{fy_id_b64}","app_id":"2"}}')
+                d1 = r1.json()
+                if "request_key" not in d1:
+                    return {"ok": False,
+                            "message": f"TOTP step 1 failed: {d1.get('message', d1)}"}
+                rk = d1["request_key"]
+
+                # Step 2 — verify_otp (TOTP code as integer in JSON)
+                otp = self._totp(self.totp_key)
+                r2  = await c.post(f"{VAGATOR}/verify_otp",
+                    content=f'{{"request_key":"{rk}","otp":{otp}}}')
+                d2  = r2.json()
+                if "request_key" not in d2:
+                    return {"ok": False,
+                            "message": f"TOTP step 2 failed (wrong TOTP key?): {d2.get('message', d2)}"}
+                rk = d2["request_key"]
+
+                # Step 3 — verify_pin_v2 (PIN base64-encoded)
+                pin_b64 = _b64.b64encode(str(self.pin).encode()).decode()
+                r3  = await c.post(f"{VAGATOR}/verify_pin_v2",
+                    content=f'{{"request_key":"{rk}","identity_type":"pin","identifier":"{pin_b64}"}}')
+                d3  = r3.json()
+                trade_token = (d3.get("data") or {}).get("access_token", "")
+                if not trade_token:
+                    return {"ok": False,
+                            "message": f"TOTP step 3 failed (wrong PIN?): {d3.get('message', d3)}"}
+
+                # Step 4 — get auth_code via POST /api/v3/token (Fyers v3, expects HTTP 308)
+                # Fyers v3 uses the FULL client_id (with -100) as app_id in this step.
+                # The short form (without -100) was v2 convention and returns -16 on v3.
+                import json as _json, re as _re
+                client_id_clean = self.client_id.strip()
+                # client_id format: "APPCODE-200" or "APPCODE-100"
+                # app_id = base part ("APPCODE"), appType = numeric suffix ("200"/"100")
+                _m = _re.match(r'^(.+?)-(\d+)$', client_id_clean)
+                if _m:
+                    app_id_for_token = _m.group(1)
+                    app_type_str     = _m.group(2)
+                else:
+                    app_id_for_token = client_id_clean
+                    app_type_str     = "100"
+                step4_payload = {
+                    "fyers_id":       self.fyers_id.strip(),
+                    "app_id":         app_id_for_token,
+                    "redirect_uri":   self.redirect_uri.strip(),
+                    "appType":        app_type_str,  # string, extracted from client_id suffix
+                    "code_challenge": "",
+                    "state":          "algodesk",
+                    "scope":          "",
+                    "nonce":          "",
+                    "response_type":  "code",
+                    "create_cookie":  True,
+                }
+                log.info(f"[fyers:{self.user_id}] step4 payload={_json.dumps(step4_payload)[:300]}")
+                r4 = await c.post("https://api-t1.fyers.in/api/v3/token",
+                    headers={
+                        "Authorization":  f"Bearer {trade_token}",
+                        "Content-Type":   "application/json",
+                    },
+                    content=_json.dumps(step4_payload))
+                log.info(f"[fyers:{self.user_id}] step4 status={r4.status_code} body={r4.text[:300]}")
+                if r4.status_code not in (308, 302, 301):
+                    return {"ok": False,
+                            "message": (f"TOTP step 4 status {r4.status_code}: "
+                                        f"{r4.text[:300]}")}
+                # Try JSON body first (Fyers returns {"Url":"..."} on 308)
+                redirect_url = ""
+                try:
+                    redirect_url = r4.json().get("Url", "") or r4.json().get("url", "")
+                except Exception:
+                    pass
+                # Fallback: Location header for standard HTTP redirects
+                if not redirect_url:
+                    redirect_url = r4.headers.get("Location", "")
+                auth_code    = parse_qs(urlparse(redirect_url).query).get("auth_code", [None])[0]
+                if not auth_code:
+                    return {"ok": False,
+                            "message": (f"TOTP step 4: auth_code not in redirect URL. "
+                                        f"URL preview: {redirect_url[:120] if redirect_url else 'empty'}")}
+
+                # Step 5 — exchange auth_code (reuse existing method)
+                result = await self.exchange_auth_code(auth_code)
+                if result.get("ok"):
+                    log.info(f"[fyers:{self.user_id}] TOTP daily re-auth OK")
+                else:
+                    log.error(f"[fyers:{self.user_id}] TOTP step 5 failed: {result.get('message')}")
+                return result
+
+        except Exception as e:
+            log.error(f"[fyers:{self.user_id}] headless_login error: {e}")
+            return {"ok": False, "message": str(e)}
+
+    # ── LEGACY: refresh token (kept as fallback for transition period) ────
 
     async def refresh_token(self) -> dict:
         """
@@ -149,10 +288,13 @@ class FyersConnection:
         Matches N8N 'SPOT Price with Option Chain' node.
         Single call to options-chain-v3 returns everything.
         """
-        # Refresh token first — every time (N8N approach)
-        refresh = await self.refresh_token()
-        if not refresh["ok"]:
-            return {"ok": False, "message": refresh["message"]}
+        # SEBI April 2026: validate-refresh-token endpoint is DISABLED by Fyers.
+        # Access token from OAuth exchange or morning TOTP re-auth is valid all day
+        # (until 3 AM). No mid-day refresh needed — use it directly.
+        if not self._access:
+            return {"ok": False,
+                    "message": "No access token — complete Fyers OAuth or wait for 3:05 AM TOTP re-auth"}
+        refresh = {}   # nothing to save back
 
         try:
             async with httpx.AsyncClient(timeout=15) as c:
@@ -196,10 +338,27 @@ class FyersConnection:
             for s in chain.values():
                 s["combined"] = round(s["ce_ltp"] + s["pe_ltp"], 2)
 
+            # Extract nearest expiry weekday from API expiryData
+            expiry_date    = ""
+            expiry_weekday = None
+            expiry_data    = d.get("data", {}).get("expiryData", [])
+            if expiry_data:
+                raw_date = expiry_data[0].get("date", "")
+                if raw_date:
+                    try:
+                        from datetime import datetime as _dt
+                        _exp = _dt.strptime(raw_date, "%d-%m-%Y")
+                        expiry_date    = raw_date
+                        expiry_weekday = _exp.weekday()  # 0=Mon … 6=Sun
+                    except Exception:
+                        pass
+
             return {
                 "ok": True, "spot": spot, "atm": atm,
                 "chain": chain,
-                "refresh_tokens": refresh,  # return new tokens for DB update
+                "expiry_date":    expiry_date,
+                "expiry_weekday": expiry_weekday,
+                "refresh_tokens": refresh or None,  # None in TOTP mode — _save_tokens skips update
                 "time": datetime.now().isoformat(),
             }
         except Exception as e:
